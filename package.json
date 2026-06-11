@@ -1,0 +1,56 @@
+{
+  "name": "vengaicode",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VengaiCode — Build any app in 30 minutes. Zero coding. 100% open-source. 🐯",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:desktop": "turbo run dev --filter=@vengaicode/desktop",
+    "dev:mobile": "turbo run dev --filter=@vengaicode/mobile",
+    "dev:marketplace": "turbo run dev --filter=@vengaicode/marketplace",
+    "dev:backend": "turbo run dev --filter=@vengaicode/backend",
+    "dev:admin": "turbo run dev --filter=@vengaicode/admin",
+    "build": "turbo run build",
+    "build:desktop": "turbo run tauri:build --filter=@vengaicode/desktop",
+    "build:marketplace": "turbo run build --filter=@vengaicode/marketplace",
+    "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "test:e2e": "turbo run test:e2e",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
+    "format": "turbo run format",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "clean:cache": "turbo run clean --force",
+    "prepare": "husky install",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "turbo run build --filter=docs^... && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.2.4",
+    "turbo": "^1.12.4",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.1",
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yaml,yml}": [
+      "prettier --write"
+    ],
+    "*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ]
+  }
+}

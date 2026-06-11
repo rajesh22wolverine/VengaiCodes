@@ -1,0 +1,275 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+ 
+/* ═══════════════════════════════════════════════════
+   VengaiCode Design System — CSS Variables
+   Vengai (வேங்கை) = Tiger in Tamil 🐯
+═══════════════════════════════════════════════════ */
+ 
+/* Light Theme */
+:root,
+[data-theme="light"] {
+  --color-background: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-surface-raised: #F1F5F9;
+  --color-border: #E2E8F0;
+  --color-border-subtle: #F1F5F9;
+ 
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #94A3B8;
+  --color-text-disabled: #CBD5E1;
+ 
+  --color-primary: #2563EB;
+  --color-primary-hover: #1D4ED8;
+  --color-primary-light: #EFF6FF;
+  --color-secondary: #0D9488;
+  --color-secondary-hover: #0F766E;
+  --color-secondary-light: #F0FDFA;
+  --color-accent: #F59E0B;
+  --color-accent-light: #FFFBEB;
+ 
+  --color-success: #22C55E;
+  --color-success-light: #F0FDF4;
+  --color-error: #EF4444;
+  --color-error-light: #FEF2F2;
+  --color-warning: #F59E0B;
+  --color-warning-light: #FFFBEB;
+  --color-info: #2563EB;
+  --color-info-light: #EFF6FF;
+ 
+  /* Baby Tiger colours 🐯 */
+  --color-tiger-orange: #FF8C00;
+  --color-tiger-black: #1A1A1A;
+  --color-tiger-bg: #FFF8F0;
+ 
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+ 
+  /* Glass morphism */
+  --glass-background: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(255, 255, 255, 0.5);
+  --glass-backdrop: blur(12px);
+}
+ 
+/* Dark Theme */
+[data-theme="dark"],
+.dark {
+  --color-background: #0F172A;
+  --color-surface: #1E293B;
+  --color-surface-raised: #263548;
+  --color-border: #334155;
+  --color-border-subtle: #1E293B;
+ 
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #94A3B8;
+  --color-text-tertiary: #64748B;
+  --color-text-disabled: #475569;
+ 
+  --color-primary: #3B82F6;
+  --color-primary-hover: #60A5FA;
+  --color-primary-light: #1E3A8A;
+  --color-secondary: #14B8A6;
+  --color-secondary-hover: #2DD4BF;
+  --color-secondary-light: #042F2E;
+  --color-accent: #F59E0B;
+  --color-accent-light: #451A03;
+ 
+  --color-success: #22C55E;
+  --color-success-light: #052E16;
+  --color-error: #EF4444;
+  --color-error-light: #450A0A;
+  --color-warning: #F59E0B;
+  --color-warning-light: #451A03;
+  --color-info: #3B82F6;
+  --color-info-light: #1E3A8A;
+ 
+  --color-tiger-orange: #FF9A1F;
+  --color-tiger-black: #F0E6D3;
+  --color-tiger-bg: #1A120A;
+ 
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+ 
+  --glass-background: rgba(30, 41, 59, 0.8);
+  --glass-border: rgba(51, 65, 85, 0.5);
+  --glass-backdrop: blur(12px);
+}
+ 
+/* ═══════════════════════════════════════════════════
+   Base Styles
+═══════════════════════════════════════════════════ */
+ 
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+ 
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+ 
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevent text selection on desktop UI elements */
+  user-select: none;
+}
+ 
+/* Allow text selection in inputs and content areas */
+input, textarea, [contenteditable], .selectable {
+  user-select: text;
+}
+ 
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+ 
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+ 
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+ 
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+ 
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+ 
+/* ═══════════════════════════════════════════════════
+   Utility Classes
+═══════════════════════════════════════════════════ */
+ 
+.glass {
+  background: var(--glass-background);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+}
+ 
+.surface {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+ 
+.surface-raised {
+  background-color: var(--color-surface-raised);
+}
+ 
+/* Tiger stamp badge 🐯 */
+.tiger-stamp {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+ 
+.tiger-stamp:hover {
+  transform: scale(1.1);
+}
+ 
+/* Animated background for login screen */
+.animated-bg {
+  background: linear-gradient(
+    135deg,
+    var(--color-primary) 0%,
+    var(--color-secondary) 50%,
+    var(--color-primary) 100%
+  );
+  background-size: 400% 400%;
+  animation: gradientShift 8s ease infinite;
+}
+ 
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+ 
+/* Particle animation for login screen */
+.particle {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  animation: float var(--duration, 6s) ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+ 
+@keyframes float {
+  0%, 100% { transform: translateY(0px) rotate(0deg); opacity: 0.5; }
+  50% { transform: translateY(-30px) rotate(180deg); opacity: 0.8; }
+}
+ 
+/* Phase progress indicator */
+.phase-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+ 
+.phase-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-border);
+  transition: all 0.3s ease;
+}
+ 
+.phase-dot.completed {
+  background: var(--color-success);
+}
+ 
+.phase-dot.active {
+  background: var(--color-primary);
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
+  animation: pulseGlow 2s infinite;
+}
+ 
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 5px rgba(37, 99, 235, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(37, 99, 235, 0.6); }
+}
+ 
+/* Code font for all code areas */
+code, pre, .code-font {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+ 
+/* Smooth transitions everywhere */
+*, *::before, *::after {
+  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+ 
+/* Disable transitions during theme switch to prevent flash */
+.no-transition * {
+  transition: none !important;
+}

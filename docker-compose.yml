@@ -1,0 +1,415 @@
+version: "3.9"
+
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Local Development Docker Compose
+#  Vengai (வேங்கை) = Tiger in Tamil 🐯
+#
+#  Usage:
+#    Start all:     docker compose up -d
+#    Start one:     docker compose up -d postgres
+#    Stop all:      docker compose down
+#    View logs:     docker compose logs -f backend
+#    Reset all:     docker compose down -v
+# ═══════════════════════════════════════════════════════════════
+
+networks:
+  vengaicode_network:
+    driver: bridge
+    name: vengaicode_network
+
+volumes:
+  postgres_data:
+    name: vengaicode_postgres_data
+  redis_data:
+    name: vengaicode_redis_data
+  ollama_data:
+    name: vengaicode_ollama_data
+  meilisearch_data:
+    name: vengaicode_meilisearch_data
+  gitea_data:
+    name: vengaicode_gitea_data
+  woodpecker_data:
+    name: vengaicode_woodpecker_data
+  sonarqube_data:
+    name: vengaicode_sonarqube_data
+  sonarqube_logs:
+    name: vengaicode_sonarqube_logs
+  sonarqube_extensions:
+    name: vengaicode_sonarqube_extensions
+
+services:
+
+  # ─────────────────────────────────────────────
+  #  PostgreSQL — Marketplace Database
+  #  Access: localhost:5432
+  #  GUI: http://localhost:8090 (Adminer)
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: vengaicode_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vengaicode
+      POSTGRES_USER: vengaicode_user
+      POSTGRES_PASSWORD: vengaicode_pass_dev
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./apps/backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - vengaicode_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vengaicode_user -d vengaicode"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─────────────────────────────────────────────
+  #  Redis — Caching & Session Storage
+  #  Access: localhost:6379
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: vengaicode_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass vengaicode_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - vengaicode_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "vengaicode_redis_dev", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  #  Ollama — Local AI Engine 🤖
+  #  Access: localhost:11434
+  #  Models: deepseek-coder, qwen2.5-coder, phi3
+  #  Pull model: docker exec vengaicode_ollama ollama pull deepseek-coder
+  # ─────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vengaicode_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - vengaicode_network
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=*
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Remove deploy section if no GPU available
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ─────────────────────────────────────────────
+  #  MeiliSearch — Marketplace Search Engine
+  #  Access: localhost:7700
+  #  Dashboard: http://localhost:7700
+  # ─────────────────────────────────────────────
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: vengaicode_meilisearch
+    restart: unless-stopped
+    ports:
+      - "7700:7700"
+    volumes:
+      - meilisearch_data:/meili_data
+    networks:
+      - vengaicode_network
+    environment:
+      MEILI_MASTER_KEY: vengaicode_meili_dev_key
+      MEILI_ENV: development
+      MEILI_DB_PATH: /meili_data
+      MEILI_LOG_LEVEL: WARN
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7700/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  #  Gitea — Self-Hosted Git Server
+  #  Access: http://localhost:3000
+  #  Use for: local git repos + backup mirror
+  # ─────────────────────────────────────────────
+  gitea:
+    image: gitea/gitea:1.21-rootless
+    container_name: vengaicode_gitea
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "2222:2222"
+    volumes:
+      - gitea_data:/var/lib/gitea
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - vengaicode_network
+    environment:
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__database__PATH=/var/lib/gitea/data/gitea.db
+      - GITEA__server__ROOT_URL=http://localhost:3000
+      - GITEA__server__SSH_DOMAIN=localhost
+      - GITEA__server__SSH_PORT=2222
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__security__INSTALL_LOCK=false
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────
+  #  Woodpecker CI — Lightweight CI/CD Pipeline
+  #  Access: http://localhost:8080
+  #  Connects to Gitea for automated builds
+  # ─────────────────────────────────────────────
+  woodpecker-server:
+    image: woodpeckerci/woodpecker-server:latest
+    container_name: vengaicode_woodpecker
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    volumes:
+      - woodpecker_data:/var/lib/woodpecker
+    networks:
+      - vengaicode_network
+    environment:
+      - WOODPECKER_OPEN=true
+      - WOODPECKER_HOST=http://localhost:8080
+      - WOODPECKER_GITEA=true
+      - WOODPECKER_GITEA_URL=http://gitea:3000
+      - WOODPECKER_GITEA_CLIENT=vengaicode_woodpecker
+      - WOODPECKER_GITEA_SECRET=vengaicode_woodpecker_secret
+      - WOODPECKER_AGENT_SECRET=vengaicode_agent_secret_dev
+      - WOODPECKER_DATABASE_DRIVER=sqlite3
+      - WOODPECKER_DATABASE_DATASOURCE=/var/lib/woodpecker/woodpecker.sqlite
+    depends_on:
+      - gitea
+
+  woodpecker-agent:
+    image: woodpeckerci/woodpecker-agent:latest
+    container_name: vengaicode_woodpecker_agent
+    restart: unless-stopped
+    command: agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - vengaicode_network
+    environment:
+      - WOODPECKER_SERVER=woodpecker-server:9000
+      - WOODPECKER_AGENT_SECRET=vengaicode_agent_secret_dev
+      - WOODPECKER_MAX_WORKFLOWS=4
+    depends_on:
+      - woodpecker-server
+
+  # ─────────────────────────────────────────────
+  #  SonarQube — Code Quality Analysis
+  #  Access: http://localhost:9000
+  #  Default login: admin / admin
+  #  Supports 30+ languages including all VengaiCode languages
+  # ─────────────────────────────────────────────
+  sonarqube:
+    image: sonarqube:community
+    container_name: vengaicode_sonarqube
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+    networks:
+      - vengaicode_network
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://postgres:5432/sonarqube
+      SONAR_JDBC_USERNAME: vengaicode_user
+      SONAR_JDBC_PASSWORD: vengaicode_pass_dev
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────
+  #  FastAPI Backend — VengaiCode API
+  #  Access: http://localhost:8000
+  #  Swagger UI: http://localhost:8000/docs
+  #  ReDoc: http://localhost:8000/redoc
+  # ─────────────────────────────────────────────
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: vengaicode_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/backend:/app
+      - /app/__pycache__
+      - /app/.venv
+    networks:
+      - vengaicode_network
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql://vengaicode_user:vengaicode_pass_dev@postgres:5432/vengaicode
+      - REDIS_URL=redis://:vengaicode_redis_dev@redis:6379/0
+      - OLLAMA_HOST=http://ollama:11434
+      - MEILISEARCH_HOST=http://meilisearch:7700
+      - MEILISEARCH_KEY=vengaicode_meili_dev_key
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - DIGIO_API_KEY=${DIGIO_API_KEY}
+      - DIGIO_API_SECRET=${DIGIO_API_SECRET}
+      - MSG91_API_KEY=${MSG91_API_KEY}
+      - MSG91_SENDER_ID=${MSG91_SENDER_ID}
+      - RESEND_API_KEY=${RESEND_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SENTRY_DSN=${SENTRY_DSN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ─────────────────────────────────────────────
+  #  Adminer — Database GUI
+  #  Access: http://localhost:8090
+  #  Server: postgres | DB: vengaicode
+  #  User: vengaicode_user | Pass: vengaicode_pass_dev
+  # ─────────────────────────────────────────────
+  adminer:
+    image: adminer:latest
+    container_name: vengaicode_adminer
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    networks:
+      - vengaicode_network
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: dracula
+    depends_on:
+      - postgres
+
+  # ─────────────────────────────────────────────
+  #  Redis Commander — Redis GUI
+  #  Access: http://localhost:8091
+  # ─────────────────────────────────────────────
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: vengaicode_redis_commander
+    restart: unless-stopped
+    ports:
+      - "8091:8081"
+    networks:
+      - vengaicode_network
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:vengaicode_redis_dev
+    depends_on:
+      - redis
+
+  # ─────────────────────────────────────────────
+  #  Mailpit — Local Email Testing
+  #  SMTP: localhost:1025
+  #  Web UI: http://localhost:8025
+  #  Captures all emails sent during development
+  # ─────────────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: vengaicode_mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - vengaicode_network
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+  # ─────────────────────────────────────────────
+  #  Prometheus — Metrics Collection
+  #  Access: http://localhost:9090
+  # ─────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: vengaicode_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./scripts/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - vengaicode_network
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+
+  # ─────────────────────────────────────────────
+  #  Grafana — Metrics Dashboard
+  #  Access: http://localhost:3001
+  #  Default login: admin / admin
+  # ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vengaicode_grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    networks:
+      - vengaicode_network
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=vengaicode_grafana_dev
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - ./scripts/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./scripts/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus

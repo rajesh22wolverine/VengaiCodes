@@ -1,0 +1,170 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["**/.env.*local"],
+  "globalEnv": [
+    "NODE_ENV",
+    "GROQ_API_KEY",
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_KEY",
+    "UPSTASH_REDIS_URL",
+    "UPSTASH_REDIS_TOKEN",
+    "CLOUDFLARE_R2_ACCESS_KEY",
+    "CLOUDFLARE_R2_SECRET",
+    "CLOUDFLARE_R2_BUCKET",
+    "RAZORPAY_KEY_ID",
+    "RAZORPAY_KEY_SECRET",
+    "DIGIO_API_KEY",
+    "DIGIO_API_SECRET",
+    "MSG91_API_KEY",
+    "MSG91_SENDER_ID",
+    "RESEND_API_KEY",
+    "JWT_SECRET",
+    "JWT_ALGORITHM",
+    "ENCRYPTION_KEY",
+    "SENTRY_DSN",
+    "APP_NAME",
+    "APP_VERSION",
+    "ENVIRONMENT"
+  ],
+  "pipeline": {
+
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**",
+        "build/**",
+        "out/**"
+      ],
+      "env": [
+        "NODE_ENV",
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_RAZORPAY_KEY_ID",
+        "NEXT_PUBLIC_MEILISEARCH_HOST",
+        "NEXT_PUBLIC_MEILISEARCH_KEY",
+        "NEXT_PUBLIC_SENTRY_DSN"
+      ]
+    },
+
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "env": [
+        "NODE_ENV",
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_RAZORPAY_KEY_ID",
+        "NEXT_PUBLIC_MEILISEARCH_HOST",
+        "NEXT_PUBLIC_MEILISEARCH_KEY"
+      ]
+    },
+
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "coverage/**",
+        "test-results/**"
+      ],
+      "env": ["NODE_ENV"]
+    },
+
+    "test:e2e": {
+      "dependsOn": ["build"],
+      "outputs": ["playwright-report/**", "test-results/**"],
+      "cache": false
+    },
+
+    "test:unit": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+
+    "lint": {
+      "outputs": []
+    },
+
+    "lint:fix": {
+      "outputs": [],
+      "cache": false
+    },
+
+    "format": {
+      "outputs": [],
+      "cache": false
+    },
+
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+
+    "clean": {
+      "cache": false
+    },
+
+    "tauri:dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": ["^build"]
+    },
+
+    "tauri:build": {
+      "dependsOn": ["build"],
+      "outputs": [
+        "src-tauri/target/release/bundle/**"
+      ]
+    },
+
+    "deploy": {
+      "dependsOn": ["build", "test", "lint"],
+      "outputs": [],
+      "cache": false
+    },
+
+    "@vengaicode/desktop#dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": [
+        "@vengaicode/ui#build",
+        "@vengaicode/utils#build",
+        "@vengaicode/types#build",
+        "@vengaicode/ai#build"
+      ]
+    },
+
+    "@vengaicode/marketplace#dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": [
+        "@vengaicode/ui#build",
+        "@vengaicode/utils#build",
+        "@vengaicode/types#build"
+      ]
+    },
+
+    "@vengaicode/mobile#dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": [
+        "@vengaicode/ui#build",
+        "@vengaicode/utils#build",
+        "@vengaicode/types#build"
+      ]
+    },
+
+    "@vengaicode/admin#dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": [
+        "@vengaicode/ui#build",
+        "@vengaicode/utils#build",
+        "@vengaicode/types#build"
+      ]
+    }
+  }
+}

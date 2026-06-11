@@ -1,0 +1,6 @@
+packages:
+  # All applications
+  - "apps/*"
+
+  # All shared packages
+  - "packages/*"
