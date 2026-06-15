@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth
+from app.api.v1 import auth, projects
 
 # ───────────────────────────────────────────────
 #  Main v1 Router
@@ -21,17 +21,18 @@ api_router.include_router(
     tags=["Authentication"],
 )
 
+# ── Projects ──
+# /api/v1/projects, /api/v1/projects/{id}
+api_router.include_router(
+    projects.router,
+    prefix="/projects",
+    tags=["Projects"],
+)
+
 # ───────────────────────────────────────────────
 #  Future routers — uncomment as each module is built
-#  Each module follows the same pattern as auth above
+#  Each module follows the same pattern as auth/projects above
 # ───────────────────────────────────────────────
-
-# from app.api.v1 import projects
-# api_router.include_router(
-#     projects.router,
-#     prefix="/projects",
-#     tags=["Projects"],
-# )
 
 # from app.api.v1 import ai
 # api_router.include_router(
@@ -59,6 +60,13 @@ api_router.include_router(
 #     payments.router,
 #     prefix="/payments",
 #     tags=["Payments"],
+# )
+
+# from app.api.v1 import notifications
+# api_router.include_router(
+#     notifications.router,
+#     prefix="/notifications",
+#     tags=["Notifications"],
 # )
 
 # from app.api.v1 import users
