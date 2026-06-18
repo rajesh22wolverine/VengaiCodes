@@ -114,7 +114,6 @@ class User(Base):
         Enum(UserTier),
         default=UserTier.FREE,
         nullable=False,
-        index=True,
     )
     tier_expires_at: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
     projects_used: int = Column(Integer, default=0, nullable=False)
@@ -139,7 +138,6 @@ class User(Base):
         Enum(UserStatus),
         default=UserStatus.ACTIVE,
         nullable=False,
-        index=True,
     )
     restriction_level: RestrictionLevel = Column(
         Enum(RestrictionLevel),
