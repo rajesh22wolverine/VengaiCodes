@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
     # Create all database tables
     try:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(lambda conn: Base.metadata.create_all(conn, checkfirst=True))
         logger.info("✅ Database tables created/verified")
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
