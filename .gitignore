@@ -1,0 +1,44 @@
+# Environment — never commit real secrets
+.env
+.env.local
+.env.production
+apps/backend/.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Database
+*.db
+*.sqlite3
+
+# Keys
+keys/
+*.pem
+
+# Node
+node_modules/
+.next/
+out/
+
+# Tauri
+src-tauri/target/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
