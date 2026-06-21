@@ -11,7 +11,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from sqlalchemy import text, event
+from sqlalchemy.schema import CreateIndex
 
 from app.config import settings
 from app.core.database import Base, engine
@@ -51,6 +52,66 @@ logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger("vengaicode")
 
 
+async def init_db():
+    """
+    Initialize database tables and indexes safely.
+
+    Root cause of the duplicate index bug:
+    SQLAlchemy's create_all() always emits CREATE INDEX for every Index()
+    defined in __table_args__, PLUS for every column with index=True.
+    When both exist for the same column, SQLite gets duplicate CREATE INDEX
+    calls and crashes — checkfirst=True on create_all() only skips tables,
+    not indexes.
+
+    Fix: use CREATE TABLE only (no indexes), then create all indexes
+    manually using SQLite's native "CREATE INDEX IF NOT EXISTS" syntax
+    which is guaranteed to never fail on duplicates.
+    """
+    # Step 1 — collect all indexes from metadata, then temporarily remove
+    # them so create_all() creates tables only (no index DDL emitted)
+    all_indexes = {}
+    for table in Base.metadata.tables.values():
+        all_indexes[table.name] = list(table.indexes)
+        table.indexes.clear()
+
+    try:
+        # Step 2 — create tables only, no indexes
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda c: Base.metadata.create_all(c, checkfirst=True)
+            )
+        logger.info("✅ Database tables created/verified")
+    finally:
+        # Step 3 — restore indexes to metadata (important for ORM queries)
+        for table in Base.metadata.tables.values():
+            if table.name in all_indexes:
+                for idx in all_indexes[table.name]:
+                    table.indexes.add(idx)
+
+    # Step 4 — create indexes using native SQLite IF NOT EXISTS
+    # This never fails regardless of duplicates
+    async with engine.begin() as conn:
+        for table_name, indexes in all_indexes.items():
+            seen = set()  # deduplicate by index name
+            for index in indexes:
+                if index.name in seen:
+                    continue
+                seen.add(index.name)
+                cols = ", ".join(col.name for col in index.columns)
+                unique = "UNIQUE " if index.unique else ""
+                sql = (
+                    f"CREATE {unique}INDEX IF NOT EXISTS "
+                    f"{index.name} ON {table_name} ({cols})"
+                )
+                try:
+                    await conn.execute(text(sql))
+                    logger.debug(f"Index ensured: {index.name}")
+                except Exception as e:
+                    logger.warning(f"Index {index.name} skipped: {e}")
+
+    logger.info("✅ Database indexes created/verified")
+
+
 # ─── Lifespan ────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,38 +124,14 @@ async def lifespan(app: FastAPI):
     logger.info(f"   Debug mode:  {settings.DEBUG}")
     logger.info(f"   App version: {settings.APP_VERSION}")
 
-    # ── Database Initialization ──
+    # ── Database ──
     try:
-        # Step 1 — Create all tables (skips existing tables safely)
-        async with engine.begin() as conn:
-            await conn.run_sync(
-                lambda c: Base.metadata.create_all(c, checkfirst=True)
-            )
-
-        # Step 2 — Create indexes using raw SQL with IF NOT EXISTS
-        # This is the only reliable fix for SQLite + aiosqlite + SQLAlchemy 2.0
-        # idx.create(checkfirst=True) does NOT suppress the error on SQLite
-        # but native SQLite "CREATE INDEX IF NOT EXISTS" does.
-        async with engine.begin() as conn:
-            for table in Base.metadata.tables.values():
-                for index in table.indexes:
-                    cols = ", ".join(col.name for col in index.columns)
-                    unique = "UNIQUE " if index.unique else ""
-                    sql = (
-                        f"CREATE {unique}INDEX IF NOT EXISTS "
-                        f"{index.name} ON {table.name} ({cols})"
-                    )
-                    try:
-                        await conn.execute(text(sql))
-                    except Exception as idx_err:
-                        logger.debug(f"Skipping index {index.name}: {idx_err}")
-
-        logger.info("✅ Database tables created/verified")
+        await init_db()
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         raise
 
-    # ── Redis Connection (optional) ──
+    # ── Redis (optional) ──
     try:
         from app.core.redis import get_redis
         redis = await get_redis()
@@ -109,20 +146,13 @@ async def lifespan(app: FastAPI):
         ai_status = await check_ai_availability()
         if ai_status["ollama"]:
             models = ai_status.get("ollama_models", [])
-            logger.info(
-                f"✅ Ollama connected — {len(models)} model(s) available: "
-                f"{', '.join(models[:3]) or 'none pulled yet'}"
-            )
+            logger.info(f"✅ Ollama connected — {len(models)} model(s) available")
         else:
             logger.warning("⚠️  Ollama not available — will use Groq cloud fallback")
-
         if ai_status["groq"]:
             logger.info("✅ Groq API key configured — cloud fallback ready")
         else:
-            logger.warning(
-                "⚠️  Groq API key not set — AI features will be limited. "
-                "Set GROQ_API_KEY in .env to enable cloud fallback."
-            )
+            logger.warning("⚠️  Groq API key not set — set GROQ_API_KEY in .env")
     except Exception as e:
         logger.warning(f"⚠️  AI status check failed: {e}")
 
