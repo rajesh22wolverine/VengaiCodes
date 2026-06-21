@@ -319,12 +319,12 @@ class Project(Base):
 
     # ── Relationships ──
     user = relationship("User", back_populates="projects")
-    licences = relationship(
-       # "Licence",
+    """licences = relationship(
+       "Licence",
         back_populates="project",
         cascade="all, delete-orphan",
         lazy="dynamic",
-    )
+    )"""
 
     # ── Helper Methods ──
     def get_progress_percent(self) -> float:
