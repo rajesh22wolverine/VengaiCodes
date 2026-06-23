@@ -93,7 +93,7 @@ async def get_current_user(
     if user is None or user.deleted_at is not None:
         raise credentials_exception
 
-    if user.status in (UserStatus.BANNED, UserStatus.ACCOUNT_SUSPENDED):
+    if user.status in (UserStatus.BANNED, UserStatus.SUSPENDED):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been restricted. "
