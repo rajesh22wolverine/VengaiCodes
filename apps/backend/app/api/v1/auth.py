@@ -162,7 +162,7 @@ async def get_token_for_swagger(
             detail="Please verify your email before logging in.",
         )
 
-    if user.status in (UserStatus.BANNED, UserStatus.ACCOUNT_SUSPENDED):
+    if user.status in (UserStatus.BANNED, UserStatus.SUSPENDED):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been restricted. Contact support@vengaicode.com",
@@ -494,7 +494,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Please verify your email before logging in.",
         )
-    if user.status in (UserStatus.BANNED, UserStatus.ACCOUNT_SUSPENDED):
+    if user.status in (UserStatus.BANNED, UserStatus.SUSPENDED):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -557,7 +557,7 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found."
         )
 
-    if user.status in (UserStatus.BANNED, UserStatus.ACCOUNT_SUSPENDED):
+    if user.status in (UserStatus.BANNED, UserStatus.SUSPENDED):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been restricted.",
