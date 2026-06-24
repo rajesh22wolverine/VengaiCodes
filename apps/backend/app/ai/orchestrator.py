@@ -128,6 +128,9 @@ async def generate_text(prompt: str, model: str | None = None) -> dict:
         }
     except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
         logger.error(f"Groq also failed: {e}")
+        print(f"[DEBUG] Groq error details: {e}", flush=True)
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"[DEBUG] Groq response body: {e.response.text}", flush=True)
         raise AIError(
             "Both local AI (Ollama) and cloud AI (Groq) are unavailable. "
             "Baby Tiger can't think right now! 🐯💭 Please check your "
