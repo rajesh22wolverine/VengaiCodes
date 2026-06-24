@@ -1,10 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — AI Orchestrator (Minimal Sprint 1 Version)
-#  ai/orchestrator.py — Calls Ollama (local) with Groq (cloud) fallback
-#
-#  This is the seed of the full Smart Parallel Generation engine.
-#  For now: one function, one prompt in, one text response out.
-#  Proves the local-AI-first / cloud-fallback architecture works.
+#  VengaiCode — AI Orchestrator
+#  ai/orchestrator.py — Ollama (local) first, Groq (cloud) fallback
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -23,11 +19,7 @@ class AIError(Exception):
 
 
 async def _call_ollama(prompt: str, model: str | None = None) -> tuple[str, float]:
-    """
-    Call local Ollama instance.
-    Returns (response_text, duration_ms).
-    Raises httpx errors on failure — caller handles fallback.
-    """
+    """Call local Ollama instance."""
     model = model or settings.OLLAMA_CHAT_MODEL
     start = time.perf_counter()
 
@@ -45,27 +37,27 @@ async def _call_ollama(prompt: str, model: str | None = None) -> tuple[str, floa
         )
     response.raise_for_status()
     data = response.json()
-
     duration_ms = (time.perf_counter() - start) * 1000
     return data.get("response", "").strip(), duration_ms
 
 
-async def _call_groq(prompt: str, model: str | None = None) -> tuple[str, float]:
-    """
-    Call Groq cloud API (OpenAI-compatible chat completions).
-    Returns (response_text, duration_ms).
-    Raises httpx errors on failure.
-    """
+async def _call_groq(prompt: str) -> tuple[str, float]:
+    """Call Groq cloud API."""
     if not settings.GROQ_API_KEY:
-        raise AIError("Groq API key not configured — no fallback available")
+        raise AIError("Groq API key not configured")
 
-    model = model or settings.GROQ_DEFAULT_MODEL
+    model = settings.GROQ_DEFAULT_MODEL
     start = time.perf_counter()
 
-    async with httpx.AsyncClient(timeout=settings.GROQ_TIMEOUT) as client:
+    print(f"[DEBUG] Calling Groq with model={model}, key={settings.GROQ_API_KEY[:10]}...", flush=True)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
             f"{settings.GROQ_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+            headers={
+                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -73,9 +65,14 @@ async def _call_groq(prompt: str, model: str | None = None) -> tuple[str, float]
                 "max_tokens": settings.AI_MAX_TOKENS,
             },
         )
-    response.raise_for_status()
-    data = response.json()
 
+    print(f"[DEBUG] Groq response status: {response.status_code}", flush=True)
+
+    if response.status_code != 200:
+        print(f"[DEBUG] Groq error body: {response.text}", flush=True)
+        response.raise_for_status()
+
+    data = response.json()
     duration_ms = (time.perf_counter() - start) * 1000
     text = data["choices"][0]["message"]["content"].strip()
     return text, duration_ms
@@ -83,72 +80,44 @@ async def _call_groq(prompt: str, model: str | None = None) -> tuple[str, float]
 
 async def generate_text(prompt: str, model: str | None = None) -> dict:
     """
-    Generate text using local Ollama first, falling back to Groq cloud
-    if Ollama is unavailable or responds too slowly.
-
-    Returns:
-        {
-            "text": str,
-            "source": "ollama" | "groq",
-            "duration_ms": float,
-            "model": str,
-        }
-
-    Raises AIError if both sources fail.
+    Generate text using local Ollama first, falling back to Groq cloud.
     """
-    # ── Try Ollama first (local, free, private) ──
+    # ── Try Ollama first ──
     try:
         text, duration_ms = await _call_ollama(prompt, model)
+        return {
+            "text": text,
+            "source": "ollama",
+            "duration_ms": duration_ms,
+            "model": model or settings.OLLAMA_CHAT_MODEL,
+        }
+    except Exception as e:
+        print(f"[DEBUG] Ollama failed: {e}", flush=True)
+        logger.warning(f"Ollama unavailable: {e} — trying Groq fallback")
 
-        if duration_ms <= settings.AI_CRITICAL_RESPONSE_THRESHOLD_MS:
-            return {
-                "text": text,
-                "source": "ollama",
-                "duration_ms": duration_ms,
-                "model": model or settings.OLLAMA_CHAT_MODEL,
-            }
-
-        logger.warning(
-            f"Ollama responded in {duration_ms:.0f}ms "
-            f"(over {settings.AI_CRITICAL_RESPONSE_THRESHOLD_MS}ms threshold) "
-            f"— trying Groq fallback"
-        )
-    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
-        logger.warning(f"Ollama unavailable ({e}) — trying Groq fallback")
-        text = None
-
-    # ── Fallback to Groq (cloud) ──
+    # ── Fallback to Groq ──
     try:
-        text, duration_ms = await _call_groq(prompt, model=None)
+        text, duration_ms = await _call_groq(prompt)
         return {
             "text": text,
             "source": "groq",
             "duration_ms": duration_ms,
             "model": settings.GROQ_DEFAULT_MODEL,
         }
-    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
-        logger.error(f"Groq also failed: {e}")
-        print(f"[DEBUG] Groq error details: {e}", flush=True)
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"[DEBUG] Groq response body: {e.response.text}", flush=True)
+    except AIError:
+        raise
+    except Exception as e:
+        print(f"[DEBUG] Groq failed: {type(e).__name__}: {e}", flush=True)
+        logger.error(f"Groq failed: {e}")
         raise AIError(
             "Both local AI (Ollama) and cloud AI (Groq) are unavailable. "
             "Baby Tiger can't think right now! 🐯💭 Please check your "
             "Ollama installation or Groq API key configuration."
         )
-    except AIError:
-        # Groq not configured at all, and Ollama already failed above
-        raise AIError(
-            "Local AI (Ollama) is unavailable and no cloud fallback (Groq) "
-            "is configured. Please start Ollama or set GROQ_API_KEY."
-        )
 
 
 async def check_ai_availability() -> dict:
-    """
-    Health check — which AI sources are currently reachable.
-    Used by /health/detailed and the AI status endpoint.
-    """
+    """Health check — which AI sources are currently reachable."""
     status_info = {"ollama": False, "groq": False, "ollama_models": []}
 
     try:
@@ -163,5 +132,4 @@ async def check_ai_availability() -> dict:
         pass
 
     status_info["groq"] = bool(settings.GROQ_API_KEY)
-
     return status_info
