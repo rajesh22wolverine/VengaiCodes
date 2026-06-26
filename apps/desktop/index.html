@@ -8,13 +8,10 @@
       name="description"
       content="VengaiCode — Build any app in 30 minutes. Zero coding. 100% open-source. 🐯"
     />
-
-    <!-- Content Security Policy — Tauri security best practice -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://localhost:* http://127.0.0.1:* https://api.groq.com ws://localhost:*;"
+      content="default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://localhost:* http://127.0.0.1:* https://api.groq.com https://vengaicode-backend.onrender.com wss://vengaicode-backend.onrender.com ws://localhost:*;"
     />
-
     <title>VengaiCode — Build Any App in 30 Minutes 🐯</title>
   </head>
   <body>
