@@ -195,12 +195,26 @@ class Settings(BaseSettings):
         "http://localhost:3002,"
         "tauri://localhost,"
         "https://vengaicode.com,"
-        "https://admin.vengaicode.com"
+        "https://admin.vengaicode.com,"
+        "https://vengaicode-backend.onrender.com"
     )
+
+    ALLOWED_ORIGINS_PATTERNS: list = [
+        "github.dev",
+        "gitpod.io",
+        "app.github.dev",
+    ]
 
     @property
     def ALLOWED_ORIGINS(self) -> List[str]:
-        return [o.strip() for o in self.ALLOWED_ORIGINS_STR.split(",") if o.strip()]
+        origins = [o.strip() for o in self.ALLOWED_ORIGINS_STR.split(",") if o.strip()]
+        # Always allow GitHub Codespaces and Gitpod in development
+        if self.ENVIRONMENT == "development":
+            origins.extend([
+                "https://*.app.github.dev",
+                "https://*.gitpod.io",
+            ])
+        return origins
 
     # ───────────────────────────────────────────
     #  Pricing Tiers
