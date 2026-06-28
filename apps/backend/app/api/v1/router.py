@@ -105,3 +105,11 @@ api_router.include_router(
 #     prefix="/webhooks",
 #     tags=["Webhooks"],
 # )
+
+# ── Wizard ──
+from app.api.v1 import wizard
+api_router.include_router(
+    wizard.router,
+    prefix="/wizard",
+    tags=["Wizard"],
+)
