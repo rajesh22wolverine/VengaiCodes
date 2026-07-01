@@ -113,3 +113,11 @@ api_router.include_router(
     prefix="/wizard",
     tags=["Wizard"],
 )
+
+# ── Requirements ──
+from app.api.v1 import requirements
+api_router.include_router(
+    requirements.router,
+    prefix="/requirements",
+    tags=["Requirements"],
+)
