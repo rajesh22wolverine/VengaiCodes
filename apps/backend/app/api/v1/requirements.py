@@ -222,8 +222,10 @@ async def approve_requirements(
             detail="No requirements document to approve.",
         )
 
-    project.requirements_data["user_approved"] = payload.approved
-    project.requirements_data["approved_at"] = datetime.now(timezone.utc).isoformat()
+    requirements_data = dict(project.requirements_data)
+    requirements_data["user_approved"] = payload.approved
+    requirements_data["approved_at"] = datetime.now(timezone.utc).isoformat()
+    project.requirements_data = requirements_data
 
     if payload.approved:
         phases = project.phases_completed or []
