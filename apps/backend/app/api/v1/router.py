@@ -137,3 +137,11 @@ api_router.include_router(
     prefix="/notifications",
     tags=["Notifications"],
 )
+
+# ── Architecture ──
+from app.api.v1 import architecture
+api_router.include_router(
+    architecture.router,
+    prefix="/architecture",
+    tags=["Architecture"],
+)
