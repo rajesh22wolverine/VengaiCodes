@@ -121,3 +121,11 @@ api_router.include_router(
     prefix="/requirements",
     tags=["Requirements"],
 )
+
+# ── UI/UX ──
+from app.api.v1 import uiux
+api_router.include_router(
+    uiux.router,
+    prefix="/uiux",
+    tags=["UI/UX Design"],
+)
