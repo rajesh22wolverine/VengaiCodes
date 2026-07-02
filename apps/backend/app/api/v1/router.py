@@ -145,3 +145,11 @@ api_router.include_router(
     prefix="/architecture",
     tags=["Architecture"],
 )
+
+# ── Code Generation ──
+from app.api.v1 import codegen
+api_router.include_router(
+    codegen.router,
+    prefix="/codegen",
+    tags=["Code Generation"],
+)
