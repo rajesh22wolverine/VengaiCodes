@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree
+  ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree, Download
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
