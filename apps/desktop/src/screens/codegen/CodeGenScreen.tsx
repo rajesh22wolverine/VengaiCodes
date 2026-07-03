@@ -91,7 +91,7 @@ export default function CodeGenScreen() {
   if (isLoading || isGenerating) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]">
-        <BabyTiger size={100} expression="coding" />
+        <BabyTiger size={100} expression="thinking" />
         <p className="text-[var(--color-text-secondary)] text-sm">
           {isGenerating
             ? "Baby Tiger is writing your code... 💻🐯"
