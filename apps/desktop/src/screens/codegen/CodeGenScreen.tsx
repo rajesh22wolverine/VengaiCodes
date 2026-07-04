@@ -38,6 +38,7 @@ export default function CodeGenScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     loadOrGenerate();
@@ -69,6 +70,28 @@ export default function CodeGenScreen() {
       navigate(`/project/${projectId}/architecture`);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    setIsDownloading(true);
+    try {
+      const response = await apiClient.get(`/export/${projectId}/download`, {
+        responseType: "blob",
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", "vengaicode_export.zip");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Downloaded! Check your Downloads folder 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download files.");
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -212,18 +235,32 @@ export default function CodeGenScreen() {
           <p className="text-xs text-[var(--color-text-tertiary)]">
             This is a starter skeleton — review the structure, then continue to Testing 🧪
           </p>
-          <button
-            onClick={handleApprove}
-            disabled={isApproving}
-            className="px-6 py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-2 flex-shrink-0"
-          >
-            {isApproving ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <ThumbsUp className="w-4 h-4" />
-            )}
-            Approve & Continue
-          </button>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <button
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 flex items-center gap-2"
+            >
+              {isDownloading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              Download ZIP
+            </button>
+            <button
+              onClick={handleApprove}
+              disabled={isApproving}
+              className="px-6 py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-2"
+            >
+              {isApproving ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ThumbsUp className="w-4 h-4" />
+              )}
+              Approve & Continue
+            </button>
+          </div>
         </div>
       </div>
     </div>
