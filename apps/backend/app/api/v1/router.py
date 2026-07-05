@@ -161,3 +161,11 @@ api_router.include_router(
     prefix="/export",
     tags=["Export"],
 )
+
+# ── Testing ──
+from app.api.v1 import testing
+api_router.include_router(
+    testing.router,
+    prefix="/testing",
+    tags=["Testing"],
+)
