@@ -169,3 +169,11 @@ api_router.include_router(
     prefix="/testing",
     tags=["Testing"],
 )
+
+# ── Packaging (Windows installer builds) ──
+from app.api.v1 import packaging
+api_router.include_router(
+    packaging.router,
+    prefix="/packaging",
+    tags=["Packaging"],
+)
