@@ -50,6 +50,12 @@ class Settings(BaseSettings):
 
     # Admin Secret for hidden admin panel
     ADMIN_SECRET_KEY: str = "changeme_admin_secret"
+
+    # ── Packaging (Windows installer builds via GitHub Actions) ──
+    GITHUB_TOKEN: str = ""
+    GITHUB_REPO: str = ""
+    BUILD_SECRET: str = ""
+
     ADMIN_EMAIL: str = ""
 
     # Baby Tiger Stamp Cryptographic Key 🐯
