@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, Layers, Database, Webhook, Packag,
+  ArrowLeft, Layers, Database, Webhook, Package,
   Loader2, ThumbsUp
 } from "lucide-react";
 import toast from "react-hot-toast";
