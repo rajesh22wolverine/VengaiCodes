@@ -23,4 +23,4 @@ jobs:
         run: pnpm install
 
       - name: Build Backend
-        run: turbo run build --filter=@vengaicode/backend
+        run: pnpm exec turbo run build --filter=@vengaicode/backend
