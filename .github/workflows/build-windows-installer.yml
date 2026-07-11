@@ -61,7 +61,7 @@ jobs:
         run: |
           echo "Fetching files for project $PROJECT_ID"
           curl -f -H "X-Build-Secret: $BUILD_SECRET" \
-            "$BACKEND_URL/api/v1/packaging/build/$PROJECT_ID/files" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
             -o project_files.json
           echo "Fetched project_files.json"
           cat project_files.json | head -c 500
