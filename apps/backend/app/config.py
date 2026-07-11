@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     ADMIN_SECRET_KEY: str = "changeme_admin_secret"
 
     # ── Packaging (Windows installer builds via GitHub Actions) ──
-    GITHUB_TOKEN: str = ""
+    GITHUB_TOKEN: str = "REDACTED_TOKEN"
     GITHUB_REPO: str = ""
     BUILD_SECRET: str = ""
 
