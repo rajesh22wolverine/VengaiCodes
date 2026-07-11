@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # ── Packaging (Windows installer builds via GitHub Actions) ──
     GITHUB_TOKEN: str = ""
-    GITHUB_REPO: str = "KalRaj2/VengaiCodes"
+    GITHUB_REPO: str = ""
     BUILD_SECRET: str = ""
 
     ADMIN_EMAIL: str = ""
