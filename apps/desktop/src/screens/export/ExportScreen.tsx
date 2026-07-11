@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Download, Loader2, PartyPopper, FileText,
   Code2, TestTube2, Palette, Layers, CheckCircle2, Package,
-  AlertCircle, ExternalLink
+  AlertCircle, ExternalLink, Monitor
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
@@ -18,6 +18,18 @@ interface ProjectSummary {
   tests_generated: number;
 }
 
+interface BuildArtifact {
+  name: string;
+  size_bytes: number;
+  id: number;
+}
+
+// Poll every 15 seconds — builds take minutes, no need to hammer the API
+const POLL_INTERVAL_MS = 15000;
+// Stop polling after 25 minutes even if GitHub Actions hasn't finished —
+// avoids an infinite spinner if something goes wrong
+const POLL_TIMEOUT_MS = 25 * 60 * 1000;
+
 export default function ExportScreen() {
   const { id: projectId } = useParams();
   const navigate = useNavigate();
@@ -26,8 +38,17 @@ export default function ExportScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
 
+  const [buildStatus, setBuildStatus] = useState<BuildStatus>("idle");
+  const [buildRunUrl, setBuildRunUrl] = useState<string | null>(null);
+  const [isTriggering, setIsTriggering] = useState(false);
+  const [artifacts, setArtifacts] = useState<BuildArtifact[]>([]);
+
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollStartedAtRef = useRef<number | null>(null);
+
   useEffect(() => {
     loadSummary();
+    return () => stopPolling();
   }, [projectId]);
 
   const loadSummary = async () => {
@@ -70,6 +91,80 @@ export default function ExportScreen() {
   const handleFinish = () => {
     toast.success("Nice work! Your project is saved in Completed 🐯", { duration: 4000 });
     navigate("/home");
+  };
+
+  // ── Windows installer build ──
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const checkBuildStatus = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/${projectId}/status`);
+      setBuildRunUrl(data.run_url || null);
+
+      if (data.status === "completed") {
+        stopPolling();
+        if (data.conclusion === "success") {
+          setBuildStatus("completed");
+          toast.success("Your installer is ready! 🐯🎉");
+          fetchArtifacts();
+        } else {
+          setBuildStatus("failed");
+          toast.error("Build failed. Check the build log for details.");
+        }
+        return;
+      }
+
+      setBuildStatus(data.status === "queued" ? "queued" : "in_progress");
+
+      // Safety timeout — stop polling if it's been running too long
+      if (
+        pollStartedAtRef.current &&
+        Date.now() - pollStartedAtRef.current > POLL_TIMEOUT_MS
+      ) {
+        stopPolling();
+        toast.error("Build is taking longer than expected. Check the log directly.");
+      }
+    } catch (error: any) {
+      // Don't stop polling on a single failed check — transient errors happen
+      console.error("Status check failed:", error);
+    }
+  };
+
+  const fetchArtifacts = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/${projectId}/download`);
+      setArtifacts(data.artifacts || []);
+    } catch (error: any) {
+      console.error("Failed to fetch artifacts:", error);
+    }
+  };
+
+  const handleTriggerBuild = async () => {
+    setIsTriggering(true);
+    try {
+      await apiClient.post("/packaging/build", { project_id: projectId });
+      toast.success("Build started! This takes 5-15 minutes 🐯🏗️");
+      setBuildStatus("queued");
+      pollStartedAtRef.current = Date.now();
+      stopPolling();
+      pollIntervalRef.current = setInterval(checkBuildStatus, POLL_INTERVAL_MS);
+      // Check immediately too, don't wait a full interval for first update
+      checkBuildStatus();
+    } catch (error: any) {
+      toast.error(
+        error.message ||
+          "Failed to start build. Windows packaging may not be configured yet."
+      );
+      setBuildStatus("idle");
+    } finally {
+      setIsTriggering(false);
+    }
   };
 
   if (isLoading) {
@@ -159,19 +254,18 @@ export default function ExportScreen() {
           >
             <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
               <span className="font-semibold text-[var(--color-text-primary)]">Good to know: </span>
-              This download includes a starter code skeleton and test stubs — not a
-              finished, runnable application yet. Packaged installers (.exe/.msi/.apk)
-              are coming in a future update. For now, use the generated files as a
-              well-organized starting point.
+              The ZIP contains a starter code skeleton and test stubs — not a finished
+              application. The Windows installer below packages the generated frontend
+              as a desktop app shell; it does not yet bundle a working backend server.
             </p>
           </motion.div>
 
-          {/* Download */}
+          {/* Download ZIP */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="flex flex-col sm:flex-row gap-3"
+            className="flex flex-col sm:flex-row gap-3 mb-6"
           >
             <button
               onClick={handleDownload}
@@ -192,6 +286,169 @@ export default function ExportScreen() {
               <PartyPopper className="w-4 h-4" />
               Finish & Return Home
             </button>
+          </motion.div>
+
+          {/* Windows Installer — build & poll */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5"
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Monitor className="w-4 h-4 text-[var(--color-primary)]" />
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                Windows Installer
+              </h3>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-warning-light)] text-[var(--color-warning)] font-medium">
+                Experimental
+              </span>
+            </div>
+
+            <AnimatePresence mode="wait">
+              {buildStatus === "idle" && (
+                <motion.div
+                  key="idle"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
+                    Build a real Windows .msi/.exe installer from your generated frontend.
+                    This takes 5-15 minutes and requires packaging to be configured on
+                    the backend.
+                  </p>
+                  <button
+                    onClick={handleTriggerBuild}
+                    disabled={isTriggering}
+                    className="w-full py-3 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {isTriggering ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Package className="w-4 h-4" />
+                    )}
+                    Build Windows Installer
+                  </button>
+                </motion.div>
+              )}
+
+              {(buildStatus === "queued" || buildStatus === "in_progress") && (
+                <motion.div
+                  key="building"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex flex-col items-center gap-3 py-4"
+                >
+                  <Loader2 className="w-6 h-6 text-[var(--color-primary)] animate-spin" />
+                  <p className="text-sm text-[var(--color-text-primary)] font-medium">
+                    {buildStatus === "queued" ? "Build queued..." : "Building your installer..."}
+                  </p>
+                  <p className="text-xs text-[var(--color-text-tertiary)] text-center">
+                    This usually takes 5-15 minutes. Feel free to leave this page —
+                    come back and check later.
+                  </p>
+                  {buildRunUrl && (
+                    <a
+                      href={buildRunUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                    >
+                      View live build log <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </motion.div>
+              )}
+
+              {buildStatus === "completed" && (
+                <motion.div
+                  key="completed"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex flex-col gap-3"
+                >
+                  <div className="flex items-center gap-2 text-[var(--color-success)]">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <p className="text-sm font-medium">Build succeeded!</p>
+                  </div>
+                  {artifacts.length > 0 ? (
+                    <div className="space-y-2">
+                      {artifacts.map((artifact) => (
+                        <div
+                          key={artifact.id}
+                          className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+                        >
+                          <span className="text-xs font-mono text-[var(--color-text-primary)]">
+                            {artifact.name}
+                          </span>
+                          <span className="text-xs text-[var(--color-text-tertiary)]">
+                            {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                          </span>
+                        </div>
+                      ))}
+                      {buildRunUrl && (
+                        <a
+                          href={buildRunUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-3 rounded-xl bg-[var(--color-success)] text-white font-semibold text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+                        >
+                          <Download className="w-4 h-4" />
+                          Download from GitHub Actions
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                      <p className="text-xs text-[var(--color-text-tertiary)] text-center">
+                        Opens the build page — download the artifact from there
+                        (requires GitHub login).
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[var(--color-text-tertiary)]">
+                      Build succeeded but no artifact was found. Check the build log.
+                    </p>
+                  )}
+                </motion.div>
+              )}
+
+              {buildStatus === "failed" && (
+                <motion.div
+                  key="failed"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex flex-col gap-3"
+                >
+                  <div className="flex items-center gap-2 text-[var(--color-error)]">
+                    <AlertCircle className="w-4 h-4" />
+                    <p className="text-sm font-medium">Build failed</p>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                    Something went wrong during packaging — this is an experimental
+                    feature and failures are expected while it's being refined.
+                  </p>
+                  {buildRunUrl && (
+                    <a
+                      href={buildRunUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                    >
+                      View build log for details <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                  <button
+                    onClick={() => setBuildStatus("idle")}
+                    className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         </div>
       </div>
