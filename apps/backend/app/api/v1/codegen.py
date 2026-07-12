@@ -94,23 +94,33 @@ Generate a JSON object with EXACTLY these fields (no markdown, no extra text, ju
   "summary": "2-3 sentences on what was generated and what still needs to be built",
   "files": [
     {{
-      "path": "backend/models/example.py",
-      "language": "python",
-      "content": "# actual code here, 20-60 lines, syntactically valid",
-      "description": "1 sentence describing this file"
-    }}
+  "path": "frontend/main.jsx",
+  "language": "javascript",
+  "content": "import React from 'react';",
+  "description": "React entry point"
+}}
   ]
 }}
 
 Rules:
-- Generate ONE file per database table (SQLAlchemy model, matching the fields given)
-- Generate ONE file with FastAPI route stubs covering all the API endpoints (return
-  placeholder/mock data, no real business logic yet — just correct routing structure)
-- Generate ONE file per screen (React functional component, basic JSX structure,
-  no styling logic, just the component shell with a TODO comment for content)
-- Keep each file concise — 20-60 lines
-- All code must be syntactically valid in its language
-- Use realistic import statements matching the tech stack
+
+Frontend (React + Vite):
+- Generate src/main.jsx as the Vite entry point that renders the React app.
+- Generate src/App.jsx as the root component.
+- Generate src/index.css with basic global styles.
+- Generate one React component per screen inside src/screens/.
+- App.jsx must import the screen components and display them.
+- main.jsx must import React, ReactDOM, App.jsx and index.css.
+
+Backend:
+- Generate one SQLAlchemy model per database table.
+- Generate one FastAPI routes file covering all API endpoints.
+- Use placeholder/mock implementations only.
+
+General:
+- Keep each file concise (20–60 lines).
+- All code must be syntactically valid.
+- Return ONLY valid JSON.
 
 Respond with ONLY the JSON object, nothing else."""
 
