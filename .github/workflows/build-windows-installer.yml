@@ -38,11 +38,6 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -110,8 +105,9 @@ jobs:
         working-directory: build
         shell: bash
         run: |
-          pnpm install
-      - name: Verify frontend installation
+          npm install
+      
+          - name: Verify frontend installation
         working-directory: build
         shell: bash
         run: |
@@ -125,7 +121,7 @@ jobs:
           test -f node_modules/.bin/vite || (echo "Vite not installed" && exit 1)
 
           echo "Vite version:"
-          pnpm exec vite --version
+          npx vite --version
       - name: Build Windows installer
         working-directory: build
         shell: bash
