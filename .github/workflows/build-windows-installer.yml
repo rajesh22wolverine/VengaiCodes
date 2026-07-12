@@ -107,7 +107,7 @@ jobs:
         run: |
           npm install
       
-          - name: Verify frontend installation
+      - name: Verify frontend installation
         working-directory: build
         shell: bash
         run: |
