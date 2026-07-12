@@ -60,6 +60,29 @@ jobs:
             -o project_files.json
           echo "Fetched project_files.json"
           cat project_files.json | head -c 500
+      
+      - name: Debug project files
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+
+          with open("project_files.json", encoding="utf-8") as f:
+          data = json.load(f)
+
+          files = data.get("files", [])
+
+          print("=" * 60)
+          print("FILES RECEIVED FROM BACKEND")
+          print("=" * 60)
+          print(f"Total files: {len(files)}")
+          print()
+
+          for file in files:
+          print(file.get("path"))
+
+          print("=" * 60)
+          PY
 
       - name: Copy Tauri template into build directory
         shell: bash
@@ -100,6 +123,36 @@ jobs:
 
           print(f'Injected {written} frontend files into build/src/')
           "
+
+      - name: Verify injected frontend
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Current folder:"
+          pwd
+
+          echo ""
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f
+
+          echo ""
+          echo "Checking required files..."
+
+          if [ -f src/main.jsx ]; then
+          echo "✅ src/main.jsx found"
+          else
+          echo "❌ src/main.jsx NOT FOUND"
+          exit 1
+          fi
+
+          if [ -f index.html ]; then
+          echo "✅ index.html found"
+          else
+          echo "❌ index.html NOT FOUND"
+          exit 1
+          fi
+
+
 
       - name: Install frontend dependencies
         working-directory: build
