@@ -165,6 +165,10 @@ async def generate_code(
         prompt = build_codegen_prompt(project.name, architecture, uiux)
         ai_result = await generate_text(prompt)
         parsed = parse_ai_json(ai_result["text"])
+        print("========== GENERATED FILES ==========")
+        for f in parsed.get("files", []):
+            print(f["path"])
+        print("=====================================")
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except (json.JSONDecodeError, KeyError, IndexError) as e:
