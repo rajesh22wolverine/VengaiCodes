@@ -1,13 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — Code Generation API Routes (Sprint 6)
-#  api/v1/codegen.py — Generate starter code skeleton from
-#  approved architecture (models, API stubs, component shells)
-#
-#  SCOPE: This generates a runnable STARTER SKELETON, not a
-#  finished app. SQLAlchemy models from database_tables, FastAPI
-#  route stubs from api_endpoints, React component shells from
-#  uiux screens. Testing/Export phases (later sprints) refine
-#  and package the real thing.
+#  VengaiCode — Code Generation API Routes (Sprint 6, updated)
+#  api/v1/codegen.py — Generate a runnable starter code skeleton
+#  from approved architecture. Now REQUIRES entry-point wiring
+#  files (main.jsx, App.jsx, package.json, main.py, etc.) so the
+#  output is actually installable and startable, not just fragments.
 # ═══════════════════════════════════════════════════════════════
 
 import json
@@ -71,9 +67,11 @@ def build_codegen_prompt(project_name: str, architecture: dict, uiux: dict) -> s
         f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
         for e in endpoints
     )
+    screen_names = [s.get("name", "Screen") for s in screens]
     screens_text = "\n".join(f"- {s.get('name')}: {s.get('purpose')}" for s in screens)
+    screens_list = ", ".join(screen_names) if screen_names else "Home"
 
-    return f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Based on this approved architecture, generate a STARTER CODE SKELETON — not a finished app, just correct, runnable scaffolding.
+    return f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Based on this approved architecture, generate a STARTER CODE SKELETON that actually builds and runs — not isolated fragments, but a coherent project with the exact wiring files a Vite + React app needs.
 
 App: {project_name}
 Backend: {tech_stack.get('backend', 'FastAPI + Python')}
@@ -102,15 +100,49 @@ Generate a JSON object with EXACTLY these fields (no markdown, no extra text, ju
   ]
 }}
 
+CRITICAL — these EXACT files are REQUIRED. Without them the project cannot start at all:
+
+1. "frontend/src/main.jsx" — the Vite entry point. MUST contain exactly this pattern:
+   import React from 'react';
+   import ReactDOM from 'react-dom/client';
+   import App from './App';
+   ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+2. "frontend/src/App.jsx" — imports EVERY screen component listed below by its EXACT
+   filename and renders them (simple conditional rendering is fine; does not need
+   react-router). Import paths MUST exactly match the screen files you generate in
+   step 8 below (e.g. if you generate "frontend/src/screens/Dashboard.jsx", App.jsx
+   must import from "./screens/Dashboard").
+
+3. "backend/requirements.txt" — every Python package this project needs, pinned to
+   reasonable versions (fastapi, uvicorn, sqlalchemy, python-dotenv, etc.)
+
+4. "backend/main.py" — a real FastAPI entry point that imports every generated model
+   and route file, mounts them, and would actually start with `uvicorn main:app --reload`
+
+5. "frontend/package.json" — every npm package needed (react, react-dom, vite, and
+   the @vitejs/plugin-react dev dependency), with a "dev" script running "vite"
+
+6. "README_SETUP.md" — exact, copy-pasteable terminal commands to install and run
+   both backend and frontend locally
+
+7. ONE file per database table (SQLAlchemy model, imported by backend/main.py)
+
+8. ONE file with FastAPI route stubs covering all the API endpoints (imported by
+   backend/main.py, returning placeholder JSON data)
+
+9. ONE file PER SCREEN, using this EXACT path pattern: "frontend/src/screens/{{ScreenName}}.jsx"
+   — the screens to generate are: {screens_list}
+   Each MUST be a valid React functional component with a default export, and its
+   filename must exactly match the name used when App.jsx imports it.
+
 Rules:
-- Generate ONE file per database table (SQLAlchemy model, matching the fields given)
-- Generate ONE file with FastAPI route stubs covering all the API endpoints (return
-  placeholder/mock data, no real business logic yet — just correct routing structure)
-- Generate ONE file per screen (React functional component, basic JSX structure,
-  no styling logic, just the component shell with a TODO comment for content)
-- Keep each file concise — 20-60 lines
+- File extensions matter: React component files MUST use ".jsx", NOT ".js"
+- Keep each file concise — 20-60 lines (README_SETUP.md may be longer)
 - All code must be syntactically valid in its language
-- Use realistic import statements matching the tech stack
+- Import paths must be internally CONSISTENT across files — if App.jsx imports
+  "./screens/Dashboard", the file "frontend/src/screens/Dashboard.jsx" must exist
+  and export a default component named "Dashboard" (or whatever import name is used)
 
 Respond with ONLY the JSON object, nothing else."""
 
@@ -137,9 +169,8 @@ async def generate_code(
 ):
     """
     Takes the approved architecture and UI/UX design and generates a
-    starter code skeleton — models, API route stubs, component shells.
-
-    NOTE: This is intentionally scaffolding, not a finished app.
+    starter code skeleton — models, API route stubs, component shells,
+    plus the wiring files needed to actually install and run the project.
     """
     result = await db.execute(
         select(Project).where(
@@ -168,7 +199,7 @@ async def generate_code(
         print("===== GENERATED FILES =====")
         for f in parsed.get("files", []):
             print(f["path"])
-            print("===========================")
+        print("===========================")
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except (json.JSONDecodeError, KeyError, IndexError) as e:
