@@ -221,27 +221,20 @@ async def get_build_status(
     )
 
 
-# ═══════════════════════════════════════════════════════════════
-#  GET /packaging/{project_id}/download — get the artifact
-# ═══════════════════════════════════════════════════════════════
 @router.get(
-    "/{project_id}/download",
-    summary="Get the download URL for a completed build",
+    "/{project_id}/artifacts",
+    summary="List available downloadable artifacts for a completed build",
 )
-async def get_build_download(
+async def list_build_artifacts(
     project_id: str,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Fetches the artifact list from the most recent successful
-    workflow run and returns GitHub's artifact download URL.
-
-    NOTE: GitHub artifact download URLs require an authenticated
-    request (they redirect to a signed URL). The frontend cannot
-    hit this directly with a plain link — for now this returns the
-    API URL; a follow-up improvement would have this endpoint proxy
-    the actual file bytes so the frontend can trigger a plain download.
+    Lists available artifacts (.msi zip, .exe zip) from the most recent
+    successful workflow run so the frontend can render download options.
+    Use GET /packaging/{project_id}/artifacts/{artifact_id}/download to
+    actually stream the bytes.
     """
     result = await db.execute(
         select(Project).where(
@@ -297,11 +290,87 @@ async def get_build_download(
     return {
         "success": True,
         "artifacts": [
-            {"name": a["name"], "size_bytes": a["size_in_bytes"], "id": a["id"]}
+            {
+                "id": a["id"],
+                "name": a["name"],
+                "size_bytes": a["size_in_bytes"],
+                # Note: GitHub returns artifacts as .zip wrappers, even for
+                # single-file artifacts like .msi. The user will extract to find
+                # the actual installer inside.
+                "download_filename": f"{a['name']}.zip",
+            }
             for a in artifacts
         ],
-        "note": (
-            "Artifact download requires GitHub authentication. "
-            "This is a known follow-up — see module docstring."
-        ),
     }
+
+
+@router.get(
+    "/{project_id}/artifacts/{artifact_id}/download",
+    summary="Stream a specific build artifact for direct download",
+)
+async def download_build_artifact(
+    project_id: str,
+    artifact_id: int,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Proxies GitHub artifact bytes directly back to the user so the browser
+    can download the ZIP without requiring the user to authenticate to GitHub.
+
+    Streaming rather than buffering the whole file — artifacts can be tens
+    of MB, and we don't want to hold that in memory on Render's free tier.
+
+    Note: GitHub artifacts are ALWAYS delivered as .zip files, even when they
+    contain a single .msi/.exe. The user extracts to find the installer inside.
+    This is a GitHub API constraint, not something we can bypass here.
+    """
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Packaging is not configured yet.",
+        )
+
+    # GitHub's artifact download endpoint returns a 302 redirect to a signed
+    # AWS S3 URL. httpx follows redirects by default, so we just stream what
+    # we get back — could be either the redirect target's bytes or a direct
+    # response depending on GitHub's routing.
+    async def stream_artifact():
+        github_url = (
+            f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/artifacts/"
+            f"{artifact_id}/zip"
+        )
+        async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
+            async with client.stream(
+                "GET",
+                github_url,
+                headers={
+                    "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
+                    "Accept": "application/vnd.github+json",
+                },
+            ) as response:
+                if response.status_code != 200:
+                    # Can't raise HTTPException mid-stream — log and end early
+                    logger.error(
+                        f"GitHub artifact download failed: {response.status_code}"
+                    )
+                    return
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                    yield chunk
+
+    filename = f"vengaicode-installer-{artifact_id}.zip"
+    return StreamingResponse(
+        stream_artifact(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
