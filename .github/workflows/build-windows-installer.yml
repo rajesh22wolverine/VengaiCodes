@@ -112,7 +112,15 @@ jobs:
 
           print(f'Injected {written} frontend files into build/src/')
           "
-
+      - name: Debug — show what actually landed in build/src
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Contents of build/src after injection:"
+          find src -type f 2>/dev/null || echo "(build/src does not exist)"
+          echo ""
+          echo "Contents of build root:"
+          ls -la
       - name: Verify injected frontend
         working-directory: build
         shell: bash
