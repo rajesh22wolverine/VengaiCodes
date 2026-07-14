@@ -88,10 +88,18 @@ export default function ExportScreen() {
     }
   };
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
+  try {
+    await apiClient.post(`/projects/${projectId}/complete`);
     toast.success("Nice work! Your project is saved in Completed 🐯", { duration: 4000 });
     navigate("/home");
-  };
+  } catch (error: any) {
+    // Non-blocking — if this fails the user still gets home, we just log it
+    console.error("Failed to mark complete:", error);
+    toast.success("Returning home 🐯");
+    navigate("/home");
+  }
+};
 
   // ── Windows installer build ──
 
@@ -138,10 +146,30 @@ export default function ExportScreen() {
 
   const fetchArtifacts = async () => {
     try {
-      const { data } = await apiClient.get(`/packaging/${projectId}/download`);
+      const { data } = await apiClient.get(`/packaging/${projectId}/artifacts`);
       setArtifacts(data.artifacts || []);
     } catch (error: any) {
       console.error("Failed to fetch artifacts:", error);
+    }
+  };
+
+  const downloadArtifact = async (artifactId: number, name: string) => {
+    try {
+      const response = await apiClient.get(
+        `/packaging/${projectId}/artifacts/${artifactId}/download`,
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `${name}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Downloaded! Extract the ZIP to find your installer 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download installer.");
     }
   };
 
@@ -379,31 +407,27 @@ export default function ExportScreen() {
                       {artifacts.map((artifact) => (
                         <div
                           key={artifact.id}
-                          className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+                          className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
                         >
-                          <span className="text-xs font-mono text-[var(--color-text-primary)]">
-                            {artifact.name}
-                          </span>
-                          <span className="text-xs text-[var(--color-text-tertiary)]">
-                            {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
-                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-mono text-[var(--color-text-primary)] truncate">
+                              {artifact.name}
+                            </p>
+                            <p className="text-xs text-[var(--color-text-tertiary)]">
+                              {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => downloadArtifact(artifact.id, artifact.name)}
+                            className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Download
+                          </button>
                         </div>
                       ))}
-                      {buildRunUrl && (
-                        <a
-                          href={buildRunUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-full py-3 rounded-xl bg-[var(--color-success)] text-white font-semibold text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
-                        >
-                          <Download className="w-4 h-4" />
-                          Download from GitHub Actions
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      )}
-                      <p className="text-xs text-[var(--color-text-tertiary)] text-center">
-                        Opens the build page — download the artifact from there
-                        (requires GitHub login).
+                      <p className="text-xs text-[var(--color-text-tertiary)] text-center pt-1">
+                        Files download as .zip — extract to find the installer inside.
                       </p>
                     </div>
                   ) : (

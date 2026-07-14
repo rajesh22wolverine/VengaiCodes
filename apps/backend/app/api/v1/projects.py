@@ -182,3 +182,44 @@ async def delete_project(
     await db.commit()
 
     return DeleteProjectResponse()
+
+
+@router.post(
+    "/{project_id}/complete",
+    summary="Mark a project as completed",
+)
+async def mark_project_complete(
+    project_id: str,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Marks a project as fully completed — flips status from
+    in_progress → completed, moving it from the Pending tab
+    to the Completed tab on the dashboard. Called from the
+    Export screen's "Finish & Return Home" button.
+    """
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found."
+        )
+
+    project.status = ProjectStatus.COMPLETED
+    project.progress_percent = 100.0
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": "Project marked complete 🐯",
+        "project_id": project_id,
+    }
