@@ -96,21 +96,23 @@ jobs:
               path = file_entry.get('path', '')
               content = file_entry.get('content', '')
 
-              # Only inject frontend files into the Tauri template's src/
-              # Backend files are NOT bundled in this version — see the
-              # scope note in this workflow's header comment.
+              # Only inject frontend files. Backend files are not bundled
+              # in this version (see workflow header comment).
               if not path.startswith('frontend/'):
                   continue
 
-              relative_path = path.replace('frontend/', '', 1)
-              target_path = os.path.join('build', 'src', relative_path)
-              os.makedirs(os.path.dirname(target_path), exist_ok=True)
+              # Strip the 'frontend/' prefix so frontend/src/main.jsx becomes
+              # src/main.jsx, and frontend/package.json becomes package.json
+              # (which correctly overwrites the template's placeholder).
+              relative_path = path[len('frontend/'):]
+              target_path = os.path.join('build', relative_path)
+              os.makedirs(os.path.dirname(target_path) or '.', exist_ok=True)
 
               with open(target_path, 'w', encoding='utf-8') as out:
                   out.write(content)
               written += 1
 
-          print(f'Injected {written} frontend files into build/src/')
+          print(f'Injected {written} frontend files into build/')
           "
       - name: Debug — show what actually landed in build/src
         working-directory: build
