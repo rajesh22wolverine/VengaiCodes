@@ -1,17 +1,6 @@
-# VengaiCode
+# VengaiCode Documentation
 
-## Status
-
-This repository contains the VengaiCode backend, frontend templates, and Windows packaging workflow. Current work focuses on generating AI-created React apps with Tailwind styling and producing project-specific Windows installers.
-
-## What changed recently
-
-- `apps/backend/app/api/v1/codegen.py`: prompt now requires Tailwind setup and enforces Tailwind utility classes in generated `.jsx` files.
-- `.github/workflows/build-windows-installer.yml`: workflow now injects AI-generated `package.json` into the Tauri template and updates `src-tauri/tauri.conf.json` so each project produces a unique installer.
-- `scripts/test_codegen_prompt.py`: local prompt validation script.
-- `scripts/run_real_codegen.py`: helper script for exercising the codegen prompt with the AI orchestrator when the backend environment is available.
-
-## Tailwind requirement for generated apps
+## Tailwind and Generated Apps
 
 The code generation output must include:
 
@@ -65,7 +54,3 @@ This verifies the prompt text includes Tailwind requirements. For full AI runs y
 
 - The app is designed to keep heavy build work in cloud CI and Render.
 - The current repo changes are focused on Tailwind staging and making Windows installer builds unique per project.
-
-## Additional docs
-
-See `docs/README.md` for the same Tailwind and Windows packaging details in a project documentation page.

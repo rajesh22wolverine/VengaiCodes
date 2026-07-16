@@ -1,0 +1,47 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch: {}
+  repository_dispatch:
+    types: [build-android-app]
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@8.15.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install EAS CLI
+        run: pnpm exec eas --version
+
+      - name: Build Android APK via EAS
+        env:
+          EAS_TOKEN: ${{ secrets.EAS_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EAS_TOKEN" ]; then
+            echo "EAS_TOKEN is not set. Please add it to GitHub Secrets." >&2
+            exit 1
+          fi
+          pnpm --filter @vengaicode/mobile build
+
+      - name: Show EAS build log hint
+        if: success()
+        run: |
+          echo "EAS build was started. Fetch the APK from Expo Application Services or use the EAS build ID returned in the logs."

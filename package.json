@@ -25,7 +25,9 @@
     "prepare": "husky install",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "turbo run build --filter=docs^... && changeset publish"
+    "release": "turbo run build --filter=docs^... && changeset publish",
+    "build:mobile": "pnpm --filter @vengaicode/mobile build",
+    "android:mobile": "pnpm --filter @vengaicode/mobile android"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",

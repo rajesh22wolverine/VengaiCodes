@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "VengaiCode Mobile",
+    "slug": "vengaicode-mobile",
+    "sdkVersion": "49.0.0",
+    "platforms": ["android", "ios"],
+    "scheme": "vengaicode",
+    "android": {
+      "package": "com.vengaicode.mobile",
+      "versionCode": 1
+    }
+  }
+}
