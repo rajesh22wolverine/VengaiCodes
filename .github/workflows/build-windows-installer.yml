@@ -103,12 +103,9 @@ jobs:
 
               relative_path = path[len('frontend/'):]
 
-              # Skip AI-generated package.json — the template's own package.json
-              # is carefully configured for Tauri (has build script, correct deps).
-              # Also skip vite.config.ts and index.html for the same reason.
-              if relative_path in ('package.json', 'vite.config.ts', 'index.html'):
-                  skipped_manifests += 1
-                  continue
+                # Allow AI-generated package.json, vite.config.ts and index.html to be injected
+                # so each generated project can supply its own metadata and build deps.
+                # The workflow will later reconcile any necessary tauri config fields.
 
               target_path = os.path.join('build', relative_path)
               os.makedirs(os.path.dirname(target_path) or '.', exist_ok=True)
@@ -129,6 +126,33 @@ jobs:
           echo ""
           echo "Contents of build root:"
           ls -la
+      - name: Update Tauri bundle metadata from injected package.json
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Updating src-tauri/tauri.conf.json from build/package.json if present"
+          if [ -f package.json ]; then
+            python - <<'PY'
+import json, os
+pkg_path = 'package.json'
+tauri_path = 'src-tauri/tauri.conf.json'
+if not os.path.exists(tauri_path):
+    print('tauri.conf.json not found in template; skipping update')
+    raise SystemExit(0)
+pkg = json.load(open(pkg_path, 'r', encoding='utf-8'))
+cfg = json.load(open(tauri_path, 'r', encoding='utf-8'))
+name = pkg.get('name') or pkg.get('productName') or 'vengaicode-generated-app'
+version = pkg.get('version') or '0.1.0'
+identifier = f"com.vengaicode.{name.replace(' ','').lower()}"
+cfg.setdefault('package', {})['productName'] = name
+cfg['package']['version'] = version
+cfg.setdefault('tauri', {}).setdefault('bundle', {})['identifier'] = identifier
+open(tauri_path, 'w', encoding='utf-8').write(json.dumps(cfg, indent=2))
+print(f'Updated {tauri_path}: productName={name} version={version} identifier={identifier}')
+PY
+          else
+            echo "No build/package.json found — tauri.conf.json left as template"
+          fi
       - name: Verify injected frontend
         working-directory: build
         shell: bash
