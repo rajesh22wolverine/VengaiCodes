@@ -136,16 +136,43 @@ CRITICAL — these EXACT files are REQUIRED. Without them the project cannot sta
    Each MUST be a valid React functional component with a default export, and its
    filename must exactly match the name used when App.jsx imports it.
 
-Rules:
+ADDITIONAL CRITICAL FILES FOR TAILWIND STYLING (FRONTEND):
+10. "frontend/src/index.css" — MUST exist and contain the Tailwind directives exactly:
+     @tailwind base;
+     @tailwind components;
+     @tailwind utilities;
 
-Frontend (React + Vite):
-- Generate a complete Vite React application.
-- Generate frontend/main.jsx as the application entry point.
-- Generate frontend/App.jsx as the root React component.
-- Generate frontend/index.css with basic global styles.
-- Generate one React component per screen inside frontend/screens/.
-- App.jsx must import and render the generated screen components.
-- main.jsx must import React, ReactDOM, App.jsx and index.css.
+11. "frontend/tailwind.config.js" — Tailwind configuration file (minimal, with `content` pointing
+        to the frontend source files).
+
+12. "frontend/postcss.config.js" — PostCSS config that includes `tailwindcss` and `autoprefixer`.
+
+Styling rules (Tailwind-only):
+- The frontend MUST be styled exclusively using Tailwind CSS utility classes via `className` in JSX.
+- Do NOT create or import additional CSS files for component styles; only `frontend/src/index.css` is allowed
+    for Tailwind directives and very small helper utilities if strictly necessary.
+- Do NOT use inline `style={...}` or other CSS frameworks (Bootstrap, Material UI, etc.).
+- `frontend/src/main.jsx` MUST include `import './index.css';` alongside React/ReactDOM/App imports.
+- Include `tailwindcss`, `postcss`, and `autoprefixer` in `frontend/package.json` (devDependencies).
+- Provide at least one clear example UI element using Tailwind utilities (e.g. a responsive card or button
+    with `sm:`/`md:` prefixes) in the generated screens.
+
+
+Rules:
+- File extensions matter: React component files MUST use ".jsx", NOT ".js".
+- Keep each file concise — 20-60 lines (README_SETUP.md may be longer).
+- All code must be syntactically valid in its language.
+- Import paths must be internally CONSISTENT across files — if App.jsx imports
+    "./screens/Dashboard", the file "frontend/src/screens/Dashboard.jsx" must exist
+    and export a default component named "Dashboard" (or whatever import name is used).
+
+Frontend-specific constraints (summary):
+- Generate a complete Vite + React application with `frontend/src/main.jsx` as the entry.
+- `main.jsx` must import `./index.css` to enable Tailwind.
+- Include `tailwind.config.js` and `postcss.config.js`, and list `tailwindcss`, `postcss`, and
+    `autoprefixer` in `frontend/package.json` devDependencies.
+- All visual styling must use Tailwind utility classes in `className`. Provide at least one
+    representative component (button or card) demonstrating responsive utilities like `sm:`/`md:`.
 
 Backend:
 - Generate one SQLAlchemy model per database table.
@@ -212,7 +239,7 @@ async def generate_code(
         print("===== GENERATED FILES =====")
         for f in parsed.get("files", []):
             print(f["path"])
-            print("===========================")
+        print("===========================")
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except (json.JSONDecodeError, KeyError, IndexError) as e:
