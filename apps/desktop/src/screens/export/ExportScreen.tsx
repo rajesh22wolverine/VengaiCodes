@@ -16,6 +16,7 @@ interface ProjectSummary {
   name: string;
   files_generated: number;
   tests_generated: number;
+  platforms: string[];
 }
 
 interface BuildArtifact {
@@ -37,6 +38,8 @@ export default function ExportScreen() {
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [includeO3DE, setIncludeO3DE] = useState(false);
+  const [appName, setAppName] = useState("");
 
   const [buildStatus, setBuildStatus] = useState<BuildStatus>("idle");
   const [buildRunUrl, setBuildRunUrl] = useState<string | null>(null);
@@ -58,7 +61,9 @@ export default function ExportScreen() {
         name: data.project.name,
         files_generated: data.project.codegen_data?.codegen?.files?.length || 0,
         tests_generated: data.project.testing_data?.testing?.test_files?.length || 0,
+        platforms: data.project.platforms || [],
       });
+      setAppName(data.project.name || "");
     } catch (error: any) {
       toast.error("Failed to load project summary.");
     } finally {
@@ -71,11 +76,18 @@ export default function ExportScreen() {
     try {
       const response = await apiClient.get(`/export/${projectId}/download`, {
         responseType: "blob",
+        params: {
+          include_o3de: includeO3DE,
+          app_name: appName.trim() || undefined,
+        },
       });
+      const contentDisposition = response.headers["content-disposition"] || "";
+      const filenameMatch = contentDisposition.match(/filename\s*=\s*"?([^";]+)"?/i);
+      const downloadName = filenameMatch?.[1] || `${(appName || summary?.name || "vengaicode_project").trim()}.zip`;
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", "vengaicode_export.zip");
+      link.setAttribute("download", downloadName);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -195,6 +207,14 @@ export default function ExportScreen() {
     }
   };
 
+  const platforms = (summary?.platforms || []).map((platform) => String(platform).toLowerCase());
+  const hasDesktopTargets = platforms.some((platform) =>
+    ["desktop_windows", "desktop_mac", "desktop_linux", "all"].includes(platform)
+  );
+  const hasMobileTargets = platforms.some((platform) =>
+    ["mobile_ios", "mobile_android", "all"].includes(platform)
+  );
+
   if (isLoading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]">
@@ -288,32 +308,97 @@ export default function ExportScreen() {
             </p>
           </motion.div>
 
-          {/* Download ZIP */}
+          {/* Download options */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="flex flex-col sm:flex-row gap-3 mb-6"
+            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6"
           >
-            <button
-              onClick={handleDownload}
-              disabled={isDownloading}
-              className="flex-1 py-4 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
-            >
-              {isDownloading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Download className="w-4 h-4" />
+            <div className="flex items-center gap-2 mb-4">
+              <Download className="w-4 h-4 text-[var(--color-primary)]" />
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                Export your app
+              </h3>
+            </div>
+
+            <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-2">
+              App name
+            </label>
+            <input
+              value={appName}
+              onChange={(event) => setAppName(event.target.value)}
+              placeholder="Enter your app name"
+              className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+            />
+
+            <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] mt-3">
+              <input
+                type="checkbox"
+                checked={includeO3DE}
+                onChange={(e) => setIncludeO3DE(e.target.checked)}
+                className="w-4 h-4 rounded"
+              />
+              <span>Include O3DE template files (experimental)</span>
+            </label>
+
+            <div className="grid gap-3 mt-4 sm:grid-cols-2">
+              <button
+                onClick={handleDownload}
+                disabled={isDownloading}
+                className="py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+              >
+                {isDownloading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                Download Project ZIP
+              </button>
+              <button
+                onClick={handleFinish}
+                className="py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] font-semibold text-sm hover:bg-[var(--color-surface)] transition-colors flex items-center justify-center gap-2"
+              >
+                <PartyPopper className="w-4 h-4" />
+                Finish & Return Home
+              </button>
+            </div>
+
+            <div className="grid gap-3 mt-4 md:grid-cols-2">
+              {hasDesktopTargets && (
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+                  <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-1">
+                    Desktop package
+                  </p>
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+                    Build and download a desktop-ready installer for this project.
+                  </p>
+                  <button
+                    onClick={() => setBuildStatus("idle")}
+                    className="w-full py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-semibold hover:bg-[var(--color-primary-light)] transition-colors"
+                  >
+                    Open installer options
+                  </button>
+                </div>
               )}
-              Download Project ZIP
-            </button>
-            <button
-              onClick={handleFinish}
-              className="flex-1 py-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] font-semibold text-sm hover:bg-[var(--color-surface-raised)] transition-colors flex items-center justify-center gap-2"
-            >
-              <PartyPopper className="w-4 h-4" />
-              Finish & Return Home
-            </button>
+              {hasMobileTargets && (
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+                  <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-1">
+                    Mobile package
+                  </p>
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+                    Download the starter mobile bundle for Android and iOS targets.
+                  </p>
+                  <button
+                    onClick={handleDownload}
+                    disabled={isDownloading}
+                    className="w-full py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60"
+                  >
+                    Download mobile bundle
+                  </button>
+                </div>
+              )}
+            </div>
           </motion.div>
 
           {/* Windows Installer — build & poll */}

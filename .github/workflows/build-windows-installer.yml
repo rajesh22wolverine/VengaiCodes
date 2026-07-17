@@ -71,7 +71,7 @@ jobs:
         run: |
           echo "==================== FILE PATHS ===================="
           grep -o '"path":"[^"]*"' project_files.json
-            echo "==================================================="
+          echo "==================================================="
 
       - name: Copy Tauri template into build directory
         shell: bash

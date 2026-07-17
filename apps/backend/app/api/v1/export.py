@@ -36,6 +36,14 @@ def safe_filename(name: str) -> str:
     return cleaned[:50] or "vengaicode_project"
 
 
+def build_export_filename(project_name: str, app_name: str | None = None) -> str:
+    """Build a safe ZIP filename using the app name if provided."""
+    base_name = (app_name or project_name or "vengaicode_project").strip()
+    if not base_name:
+        base_name = "vengaicode_project"
+    return f"{safe_filename(base_name)}.zip"
+
+
 def get_repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
@@ -60,6 +68,8 @@ def is_o3de_project(project: Project) -> bool:
 )
 async def download_project_zip(
     project_id: str,
+    include_o3de: bool = False,
+    app_name: str | None = None,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -123,14 +133,16 @@ async def download_project_zip(
             safe_path = path.lstrip("/").replace("..", "")
             zip_file.writestr(safe_path, content)
 
-        if is_o3de_project(project):
+        # Include O3DE template if the project looks like O3DE or the
+        # client explicitly requested it via the `include_o3de` query flag.
+        if include_o3de or is_o3de_project(project):
             template_root = get_repo_root() / "templates" / "o3de"
             if template_root.exists():
                 add_template_folder_to_zip(zip_file, template_root, "o3de_template")
 
     zip_buffer.seek(0)
 
-    filename = f"{safe_filename(project.name)}_vengaicode_export.zip"
+    filename = build_export_filename(project.name, app_name)
 
     logger.info(f"Exported {len(files)} files for project {project_id} as {filename}")
 
