@@ -8,6 +8,7 @@ import {
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import ChatPanel from "@/components/chat/ChatPanel";
 
 interface RequirementsDocument {
   overview: string;
@@ -271,6 +272,7 @@ export default function RequirementsScreen() {
           </div>
         </div>
       </div>
+      <ChatPanel projectId={projectId} phase="requirements" />
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import ChatPanel from "@/components/chat/ChatPanel";
 
 type BuildStatus = "idle" | "queued" | "in_progress" | "completed" | "failed";
 
@@ -1121,6 +1122,7 @@ export default function ExportScreen() {
           )}
         </div>
       </div>
+      <ChatPanel projectId={projectId} phase="export" />
     </div>
   );
 }

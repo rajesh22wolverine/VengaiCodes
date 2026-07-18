@@ -8,6 +8,7 @@ import {
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import ChatPanel from "@/components/chat/ChatPanel";
 
 interface TechStack {
   frontend: string;
@@ -308,6 +309,7 @@ export default function ArchitectureScreen() {
           </div>
         </div>
       </div>
+      <ChatPanel projectId={projectId} phase="architecture" />
     </div>
   );
 }

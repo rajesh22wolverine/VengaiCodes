@@ -192,6 +192,46 @@ async def generate_vision(prompt: str, image_base64: str, media_type: str = "ima
         )
 
 
+async def transcribe_audio(audio_bytes: bytes, filename: str, content_type: str) -> dict:
+    """
+    Transcribe a voice note using Groq's hosted Whisper model.
+    No Ollama fallback — local Whisper isn't wired up here.
+    """
+    if not settings.GROQ_API_KEY:
+        raise AIError("Groq API key not configured")
+
+    try:
+        start = time.perf_counter()
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{settings.GROQ_BASE_URL}/audio/transcriptions",
+                headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                data={"model": settings.GROQ_WHISPER_MODEL},
+                files={"file": (filename, audio_bytes, content_type)},
+            )
+
+        if response.status_code != 200:
+            logger.error(f"Groq transcription error: {response.status_code} {response.text}")
+            response.raise_for_status()
+
+        data = response.json()
+        duration_ms = (time.perf_counter() - start) * 1000
+        return {
+            "text": data.get("text", "").strip(),
+            "source": "groq",
+            "duration_ms": duration_ms,
+            "model": settings.GROQ_WHISPER_MODEL,
+        }
+    except AIError:
+        raise
+    except Exception as e:
+        logger.error(f"Groq transcription failed: {e}")
+        raise AIError(
+            "Baby Tiger couldn't hear your voice note! 🐯🎙️ Please check your "
+            "Groq API key configuration and try again."
+        )
+
+
 async def check_ai_availability() -> dict:
     """Health check — which AI sources are currently reachable."""
     status_info = {"ollama": False, "groq": False, "ollama_models": []}

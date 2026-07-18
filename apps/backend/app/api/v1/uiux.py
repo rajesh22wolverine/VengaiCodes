@@ -8,16 +8,19 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.orchestrator import AIError, generate_text, generate_vision
+from app.ai.orchestrator import AIError, generate_text, generate_vision, transcribe_audio
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
-from app.core.storage import StorageError, fetch_bytes, upload_design_image
+from app.core.storage import (
+    StorageError, fetch_bytes, upload_design_image, upload_voice_note,
+)
 from app.models.project import Project, SDLCPhase
 from app.models.user import User
 
@@ -25,6 +28,9 @@ logger = logging.getLogger("vengaicode.uiux")
 router = APIRouter()
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+ALLOWED_AUDIO_TYPES = {
+    "audio/webm", "audio/ogg", "audio/wav", "audio/mpeg", "audio/mp4", "audio/x-m4a",
+}
 
 
 # ─── Schemas ───
@@ -106,11 +112,19 @@ Generate 4-6 screens covering the core user journey. Pick colors that suit the a
 Respond with ONLY the JSON object, nothing else."""
 
 
-def build_design_to_code_prompt(page_name: str) -> str:
+def build_design_to_code_prompt(page_name: str, voice_instructions: Optional[str] = None) -> str:
+    voice_section = ""
+    if voice_instructions:
+        voice_section = f"""
+
+The user also recorded a voice note with additional instructions — \
+follow these along with what you see in the image:
+"{voice_instructions}\""""
+
     return f"""You are Baby Tiger 🐯, VengaiCode's AI design-to-code assistant. \
 Look at the attached page design image (for a page called "{page_name}") and \
 recreate it as HTML + CSS as faithfully as you can — layout, spacing, colors, \
-typography, and visible text/labels.
+typography, and visible text/labels.{voice_section}
 
 Rules:
 - Use plain semantic HTML5 (no framework, no Tailwind classes) with a single \
@@ -350,6 +364,9 @@ async def upload_design(
         "generation_notes": None,
         "code_generated_at": None,
         "code_updated_at": None,
+        "voice_note_url": None,
+        "voice_note_transcript": None,
+        "voice_note_uploaded_at": None,
     }
     designs.append(new_design)
     uiux_data["uploaded_designs"] = designs
@@ -384,7 +401,7 @@ async def generate_design_code(
 
     media_type = "image/png" if design["image_url"].lower().endswith(".png") else "image/jpeg"
     image_base64 = base64.b64encode(image_bytes).decode("ascii")
-    prompt = build_design_to_code_prompt(design["page_name"])
+    prompt = build_design_to_code_prompt(design["page_name"], design.get("voice_note_transcript"))
 
     try:
         ai_result = await generate_vision(prompt, image_base64, media_type)
@@ -407,6 +424,66 @@ async def generate_design_code(
     await db.commit()
 
     return {"success": True, "design": design}
+
+
+@router.post(
+    "/{project_id}/design/{design_id}/voice-note",
+    summary="Attach a voice note to an uploaded design and transcribe it",
+)
+async def upload_voice_note_for_design(
+    project_id: str,
+    design_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stores the raw recording AND transcribes it via Groq Whisper — the
+    transcript is folded into the design-to-code prompt as extra
+    instructions the next time /generate-code runs for this design.
+    """
+    if file.content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported audio format.",
+        )
+
+    project = await _get_owned_project(db, project_id, user)
+    uiux_data = dict(project.uiux_data or {})
+    design = _find_design(uiux_data, design_id)
+
+    content = await file.read()
+
+    try:
+        voice_note_url = await upload_voice_note(
+            project_id, file.filename or "voice-note.webm", content, file.content_type
+        )
+    except StorageError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+
+    transcript = None
+    try:
+        transcription = await transcribe_audio(
+            content, file.filename or "voice-note.webm", file.content_type
+        )
+        transcript = transcription["text"]
+    except AIError as e:
+        # Recording is still saved even if transcription fails — surface
+        # the error but don't lose the upload.
+        logger.warning(f"Voice note transcription failed: {e}")
+
+    design["voice_note_url"] = voice_note_url
+    design["voice_note_transcript"] = transcript
+    design["voice_note_uploaded_at"] = datetime.now(timezone.utc).isoformat()
+
+    project.uiux_data = uiux_data
+    await db.commit()
+
+    return {
+        "success": True,
+        "design": design,
+        "transcription_failed": transcript is None,
+    }
 
 
 @router.put(

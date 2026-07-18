@@ -8,6 +8,7 @@ import {
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import ChatPanel from "@/components/chat/ChatPanel";
 
 interface GeneratedTestFile {
   path: string;
@@ -285,6 +286,7 @@ export default function TestingScreen() {
           </div>
         </div>
       </div>
+      <ChatPanel projectId={projectId} phase="testing" />
     </div>
   );
 }

@@ -36,18 +36,13 @@ def _require_configured():
         )
 
 
-async def upload_design_image(
-    project_id: str, filename: str, content: bytes, content_type: str
+async def _upload_to_bucket(
+    bucket: str, project_id: str, subfolder: str, filename: str, content: bytes, content_type: str
 ) -> str:
-    """
-    Uploads a design image to the design-uploads bucket and returns its
-    public URL. Raises StorageError on misconfiguration or upload failure.
-    """
     _require_configured()
 
-    bucket = settings.SUPABASE_DESIGN_UPLOADS_BUCKET
     safe_name = filename.replace("/", "_").replace("\\", "_")
-    object_path = f"{project_id}/{uuid.uuid4().hex}_{safe_name}"
+    object_path = f"{project_id}/{subfolder}/{uuid.uuid4().hex}_{safe_name}"
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -65,6 +60,30 @@ async def upload_design_image(
         raise StorageError(f"Upload failed ({response.status_code}). Is the bucket public?")
 
     return f"{settings.SUPABASE_URL}/storage/v1/object/public/{bucket}/{object_path}"
+
+
+async def upload_design_image(
+    project_id: str, filename: str, content: bytes, content_type: str
+) -> str:
+    """
+    Uploads a design image (file upload or camera capture) to the
+    design-uploads bucket and returns its public URL.
+    """
+    return await _upload_to_bucket(
+        settings.SUPABASE_DESIGN_UPLOADS_BUCKET, project_id, "images", filename, content, content_type
+    )
+
+
+async def upload_voice_note(
+    project_id: str, filename: str, content: bytes, content_type: str
+) -> str:
+    """
+    Uploads a raw voice-note recording to the design-uploads bucket
+    (same bucket, separate subfolder) and returns its public URL.
+    """
+    return await _upload_to_bucket(
+        settings.SUPABASE_DESIGN_UPLOADS_BUCKET, project_id, "voice-notes", filename, content, content_type
+    )
 
 
 async def fetch_bytes(url: str) -> bytes:

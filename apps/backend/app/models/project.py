@@ -152,6 +152,15 @@ class Project(Base):
     phase_completed_at: Optional[dict] = Column(JSON, default=dict, nullable=False)
     # Same structure — when each phase was completed
 
+    # ── Chat (available on every phase screen) ──
+    chat_messages: list = Column(JSON, default=list, nullable=False)
+    # [{"id", "phase", "role": "user"|"assistant", "content", "intent",
+    #   "created_at"}, ...] — one continuous thread across all phases.
+    # "intent" ("question" | "requirement_change") is set on assistant
+    # messages only. A requirement_change message resets requirements_data
+    # and phases_completed and sends the user back to Requirements — see
+    # api/v1/chat.py.
+
     # ── AI Understanding ──
     understanding_score: float = Column(Float, default=0.0, nullable=False)
     # 0.0 to 100.0 — how well AI understood user's requirements
@@ -182,11 +191,16 @@ class Project(Base):
     #   "approved_at": "...",
     #   "uploaded_designs": [     — User-uploaded page mockups (design-to-code)
     #     {
-    #       "id", "page_name", "image_url",   — Supabase Storage public URL
+    #       "id", "page_name", "image_url",   — file upload OR camera capture,
+    #                                            same Supabase Storage public URL
     #       "uploaded_at",
     #       "generated_html", "generated_css", — AI-extracted, user-editable
     #       "generation_notes",
-    #       "code_generated_at", "code_updated_at"
+    #       "code_generated_at", "code_updated_at",
+    #       "voice_note_url",                 — raw recording, Supabase Storage
+    #       "voice_note_transcript",          — Groq Whisper transcript, folded
+    #                                            into the next code-gen prompt
+    #       "voice_note_uploaded_at"
     #     }
     #   ]
     # }

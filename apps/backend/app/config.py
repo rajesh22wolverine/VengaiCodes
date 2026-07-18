@@ -127,6 +127,9 @@ class Settings(BaseSettings):
     # vision model names on Groq have changed before (e.g. "-preview"
     # suffixes get renamed/retired).
     GROQ_VISION_MODEL: str = "llama-3.2-90b-vision-preview"
+    # Open-weight (OpenAI Whisper) speech-to-text model served by Groq —
+    # used to transcribe voice notes attached to uploaded designs.
+    GROQ_WHISPER_MODEL: str = "whisper-large-v3"
 
     # AI Performance Thresholds
     AI_SLOW_RESPONSE_THRESHOLD_MS: int = 3000

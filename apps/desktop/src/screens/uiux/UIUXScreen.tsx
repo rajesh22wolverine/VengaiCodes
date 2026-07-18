@@ -4,11 +4,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Palette, Type, Layout, Puzzle,
   Navigation, Loader2, ThumbsUp, BookOpen, Upload,
-  Wand2, Save, Trash2, ImageIcon, Code2
+  Wand2, Save, Trash2, ImageIcon, Code2, Camera, X,
+  Mic, Square, FileAudio
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import ChatPanel from "@/components/chat/ChatPanel";
 
 interface ScreenDefinition {
   name: string;
@@ -43,6 +45,9 @@ interface UploadedDesign {
   generation_notes: string | null;
   code_generated_at: string | null;
   code_updated_at: string | null;
+  voice_note_url: string | null;
+  voice_note_transcript: string | null;
+  voice_note_uploaded_at: string | null;
 }
 
 export default function UIUXScreen() {
@@ -65,9 +70,27 @@ export default function UIUXScreen() {
   const [isSavingCode, setIsSavingCode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
+  const [recordingDesignId, setRecordingDesignId] = useState<string | null>(null);
+  const [transcribingDesignId, setTranscribingDesignId] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
   useEffect(() => {
     loadOrGenerate();
   }, [projectId]);
+
+  useEffect(() => {
+    return () => {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
 
   const loadOrGenerate = async () => {
     try {
@@ -140,11 +163,8 @@ export default function UIUXScreen() {
 
   // ── Upload your own design → code ──
 
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const pageName = uploadPageName.trim() || file.name.replace(/\.[^.]+$/, "");
+  const uploadDesignFile = async (file: File, fallbackName: string) => {
+    const pageName = uploadPageName.trim() || fallbackName;
     const formData = new FormData();
     formData.append("page_name", pageName);
     formData.append("file", file);
@@ -161,7 +181,120 @@ export default function UIUXScreen() {
       toast.error(error.message || "Failed to upload design.");
     } finally {
       setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadDesignFile(file, file.name.replace(/\.[^.]+$/, ""));
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // ── Camera capture (sketch/whiteboard/physical mockup photo) ──
+
+  const openCamera = async () => {
+    setCameraError(null);
+    setIsCameraOpen(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    } catch (error: any) {
+      setCameraError(
+        "Couldn't access your camera. Check camera permissions and try again."
+      );
+    }
+  };
+
+  const closeCamera = () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setIsCameraOpen(false);
+  };
+
+  const capturePhoto = async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      closeCamera();
+      const file = new File([blob], `camera-capture-${Date.now()}.png`, { type: "image/png" });
+      await uploadDesignFile(file, "Camera Capture");
+    }, "image/png");
+  };
+
+  // ── Voice note (record + transcribe) ──
+
+  const startRecording = async (designId: string) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecordingDesignId(designId);
+    } catch (error: any) {
+      toast.error("Couldn't access your microphone. Check permissions and try again.");
+    }
+  };
+
+  const stopRecording = async (designId: string) => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return;
+
+    const stopped = new Promise<Blob>((resolve) => {
+      recorder.onstop = () => {
+        recorder.stream.getTracks().forEach((track) => track.stop());
+        resolve(new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" }));
+      };
+    });
+    recorder.stop();
+    setRecordingDesignId(null);
+
+    const audioBlob = await stopped;
+    if (audioBlob.size === 0) return;
+
+    setTranscribingDesignId(designId);
+    try {
+      const formData = new FormData();
+      const ext = audioBlob.type.includes("ogg") ? "ogg" : "webm";
+      formData.append("file", new File([audioBlob], `voice-note.${ext}`, { type: audioBlob.type }));
+
+      const { data } = await apiClient.post(
+        `/uiux/${projectId}/design/${designId}/voice-note`,
+        formData,
+        { headers: { "Content-Type": undefined } }
+      );
+      setUploadedDesigns((prev) => prev.map((d) => (d.id === designId ? data.design : d)));
+      if (data.transcription_failed) {
+        toast.error("Voice note saved, but transcription failed. You can try recording again.");
+      } else {
+        toast.success("Voice note transcribed! 🎙️");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save voice note.");
+    } finally {
+      setTranscribingDesignId(null);
     }
   };
 
@@ -396,7 +529,64 @@ export default function UIUXScreen() {
                 )}
                 Upload Design
               </button>
+              <button
+                onClick={openCamera}
+                disabled={isUploading}
+                className="px-4 py-2.5 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                <Camera className="w-4 h-4" />
+                Use Camera
+              </button>
             </div>
+
+            <AnimatePresence>
+              {isCameraOpen && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6"
+                >
+                  <div className="bg-[var(--color-surface)] rounded-2xl p-4 max-w-lg w-full">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                        Capture your design
+                      </p>
+                      <button
+                        onClick={closeCamera}
+                        className="p-1.5 rounded-lg hover:bg-[var(--color-surface-raised)] transition-colors"
+                      >
+                        <X className="w-4 h-4 text-[var(--color-text-secondary)]" />
+                      </button>
+                    </div>
+
+                    {cameraError ? (
+                      <p className="text-sm text-[var(--color-error)] py-8 text-center">
+                        {cameraError}
+                      </p>
+                    ) : (
+                      <>
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full rounded-xl bg-black aspect-video object-cover"
+                        />
+                        <canvas ref={canvasRef} className="hidden" />
+                        <button
+                          onClick={capturePhoto}
+                          className="mt-3 w-full py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Camera className="w-4 h-4" />
+                          Capture Photo
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {uploadedDesigns.length === 0 ? (
               <p className="text-xs text-[var(--color-text-tertiary)]">
@@ -422,8 +612,38 @@ export default function UIUXScreen() {
                         <p className="text-xs text-[var(--color-text-tertiary)]">
                           {d.generated_html ? "Code generated" : "Not converted yet"}
                         </p>
+                        {d.voice_note_url && (
+                          <p className="text-xs text-[var(--color-primary)] flex items-center gap-1 mt-0.5">
+                            <FileAudio className="w-3 h-3" />
+                            {d.voice_note_transcript
+                              ? "Voice note attached"
+                              : "Voice note attached (transcription failed)"}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
+                        {recordingDesignId === d.id ? (
+                          <button
+                            onClick={() => stopRecording(d.id)}
+                            className="px-3 py-1.5 rounded-lg bg-[var(--color-error)] text-white text-xs font-semibold flex items-center gap-1.5 animate-pulse"
+                          >
+                            <Square className="w-3.5 h-3.5" />
+                            Stop
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => startRecording(d.id)}
+                            disabled={transcribingDesignId === d.id || recordingDesignId !== null}
+                            title="Record a voice note with extra instructions"
+                            className="p-2 rounded-lg border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] transition-colors disabled:opacity-60"
+                          >
+                            {transcribingDesignId === d.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Mic className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
                         {d.generated_html ? (
                           <button
                             onClick={() => handleExpandDesign(d)}
@@ -469,6 +689,20 @@ export default function UIUXScreen() {
                               <ImageIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                               {d.generation_notes}
                             </p>
+                          )}
+                          {d.voice_note_url && (
+                            <div className="mb-3 p-2.5 rounded-lg bg-[var(--color-background)] border border-[var(--color-border)]">
+                              <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1.5 flex items-center gap-1.5">
+                                <FileAudio className="w-3.5 h-3.5" />
+                                Voice note
+                              </p>
+                              <audio src={d.voice_note_url} controls className="w-full h-8 mb-1.5" />
+                              {d.voice_note_transcript && (
+                                <p className="text-xs text-[var(--color-text-tertiary)] italic">
+                                  "{d.voice_note_transcript}"
+                                </p>
+                              )}
+                            </div>
                           )}
                           <div className="grid gap-3 sm:grid-cols-2">
                             <div>
@@ -551,6 +785,7 @@ export default function UIUXScreen() {
           </div>
         </div>
       </div>
+      <ChatPanel projectId={projectId} phase="uiux" />
     </div>
   );
 }

@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, marketplace, projects
+from app.api.v1 import auth, chat, marketplace, projects
 
 # ───────────────────────────────────────────────
 #  Main v1 Router
@@ -35,6 +35,14 @@ api_router.include_router(
     marketplace.router,
     prefix="/marketplace",
     tags=["Marketplace"],
+)
+
+# ── Chat (available on every phase screen) ──
+# /api/v1/chat/{project_id}/message, /api/v1/chat/{project_id}/messages
+api_router.include_router(
+    chat.router,
+    prefix="/chat",
+    tags=["Chat"],
 )
 
 # ── AI Engine ──

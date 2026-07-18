@@ -7,6 +7,7 @@ import {
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import ChatPanel from "@/components/chat/ChatPanel";
 
 interface GeneratedFile {
   path: string;
@@ -301,6 +302,7 @@ export default function CodeGenScreen() {
           </div>
         </div>
       </div>
+      <ChatPanel projectId={projectId} phase="codegen" />
     </div>
   );
 }
