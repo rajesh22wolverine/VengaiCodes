@@ -19,6 +19,9 @@ import TestingScreen from "@/screens/testing/TestingScreen";
 import ExportScreen from "@/screens/export/ExportScreen";
 import SettingsScreen from "@/screens/settings/SettingsScreen";
 import OnboardingScreen from "@/screens/onboarding/OnboardingScreen";
+import MarketplaceScreen from "@/screens/marketplace/MarketplaceScreen";
+import MarketplaceListingDetailScreen from "@/screens/marketplace/MarketplaceListingDetailScreen";
+import MarketplaceCreateListingScreen from "@/screens/marketplace/MarketplaceCreateListingScreen";
 import MainLayout from "@/components/layout/MainLayout";
 
 // Protected route wrapper
@@ -98,6 +101,9 @@ export default function App() {
           <Route path="project/:id/codegen" element={<CodeGenScreen />} />
           <Route path="project/:id/testing" element={<TestingScreen />} />
           <Route path="project/:id/export" element={<ExportScreen />} />
+          <Route path="marketplace" element={<MarketplaceScreen />} />
+          <Route path="marketplace/new" element={<MarketplaceCreateListingScreen />} />
+          <Route path="marketplace/apps/:listingId" element={<MarketplaceListingDetailScreen />} />
           <Route path="settings" element={<SettingsScreen />} />
         </Route>
 

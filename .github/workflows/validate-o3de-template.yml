@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — O3DE Template Validation Workflow
+#
+#  Does NOT build or run an O3DE game. A real O3DE engine build is
+#  tens of GB, takes hours, and typically wants a GPU — none of
+#  which a GitHub-hosted runner provides regardless of budget. That
+#  requires a self-hosted runner with O3DE actually installed; this
+#  repo doesn't have one, so real compilation stays a local, manual
+#  step (see templates/o3de/README.md).
+#
+#  What this DOES do, on free hosted runners, using only standard
+#  open-source tooling (Python stdlib, bash, pwsh — all already on
+#  the runner image, no paid or proprietary bits):
+#    - required scaffold files are present
+#    - ProjectName.project / .workspace parse as valid XML
+#    - build_o3de_project.sh passes `bash -n` (syntax only)
+#    - build_o3de_project.ps1 parses as valid PowerShell
+#    - Project/Scripts/placeholder.py compiles
+#
+#  Catches "someone broke the scaffold" without pretending to catch
+#  "the game builds" — those are different guarantees.
+# ═══════════════════════════════════════════════════════════════
+
+name: Validate O3DE Template
+
+on:
+  push:
+    paths:
+      - "templates/o3de/**"
+      - ".github/workflows/validate-o3de-template.yml"
+      - ".github/scripts/validate_o3de_template.py"
+  pull_request:
+    paths:
+      - "templates/o3de/**"
+      - ".github/workflows/validate-o3de-template.yml"
+      - ".github/scripts/validate_o3de_template.py"
+  workflow_dispatch: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check required files and validate XML / Python
+        shell: bash
+        run: python3 .github/scripts/validate_o3de_template.py
+
+      - name: Check shell script syntax (build_o3de_project.sh)
+        shell: bash
+        run: bash -n templates/o3de/build_o3de_project.sh
+
+      - name: Check PowerShell script syntax (build_o3de_project.ps1)
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "templates/o3de/build_o3de_project.ps1", [ref]$tokens, [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host "build_o3de_project.ps1 parses cleanly"

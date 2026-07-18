@@ -237,15 +237,15 @@ class User(Base):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
-    """licences = relationship(
-        "Licence",
-        back_populates="user",
-        cascade="all, delete-orphan",
-        lazy="dynamic",
-    )
     marketplace_apps = relationship(
         "MarketplaceApp",
         back_populates="seller",
+        cascade="all, delete-orphan",
+        lazy="dynamic",
+    )
+    """licences = relationship(
+        "Licence",
+        back_populates="user",
         cascade="all, delete-orphan",
         lazy="dynamic",
     )

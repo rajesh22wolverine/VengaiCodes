@@ -44,7 +44,7 @@ export default function Sidebar() {
   ];
 
   const otherItems: NavItem[] = [
-    { id: "marketplace", label: "Marketplace", icon: Store, path: "https://vengaicode.com" },
+    { id: "marketplace", label: "Marketplace", icon: Store, path: "/marketplace" },
     { id: "api-builder", label: "API Builder", icon: Code2, path: "/api-builder" },
   ];
 

@@ -173,12 +173,22 @@ class Project(Base):
     # ── UI/UX Phase Data ──
     uiux_data: Optional[dict] = Column(JSON, nullable=True)
     # {
-    #   "screens": [...],       — List of designed screens
-    #   "color_scheme": {...},  — Chosen colour palette
-    #   "typography": {...},    — Chosen fonts
-    #   "components": [...],    — Detected/designed UI components
-    #   "html_files": [...],    — Generated HTML file paths
-    #   "css_files": [...]      — Generated CSS file paths
+    #   "design": {              — AI-generated design system (uiux.py /generate)
+    #     "design_style", "color_palette", "typography",
+    #     "screens": [...], "components": [...], "navigation_pattern"
+    #   },
+    #   "user_approved": bool,
+    #   "generated_at": "...",
+    #   "approved_at": "...",
+    #   "uploaded_designs": [     — User-uploaded page mockups (design-to-code)
+    #     {
+    #       "id", "page_name", "image_url",   — Supabase Storage public URL
+    #       "uploaded_at",
+    #       "generated_html", "generated_css", — AI-extracted, user-editable
+    #       "generation_notes",
+    #       "code_generated_at", "code_updated_at"
+    #     }
+    #   ]
     # }
 
     # ── Architecture Phase Data ──

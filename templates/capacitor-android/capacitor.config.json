@@ -1,0 +1,6 @@
+{
+  "appId": "com.vengaicode.generatedapp",
+  "appName": "VengaiCode App",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

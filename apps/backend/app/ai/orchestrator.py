@@ -116,6 +116,82 @@ async def generate_text(prompt: str, model: str | None = None) -> dict:
         )
 
 
+async def _call_groq_vision(prompt: str, image_base64: str, media_type: str) -> tuple[str, float]:
+    """
+    Call Groq's vision-capable model with an image + text prompt.
+    No Ollama fallback for vision — text generate_text() already falls
+    back to Groq, but local Ollama vision models are a separate,
+    noticeably weaker capability we're not wiring up here.
+    """
+    if not settings.GROQ_API_KEY:
+        raise AIError("Groq API key not configured")
+
+    model = settings.GROQ_VISION_MODEL
+    start = time.perf_counter()
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        response = await client.post(
+            f"{settings.GROQ_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{media_type};base64,{image_base64}"
+                                },
+                            },
+                        ],
+                    }
+                ],
+                "temperature": settings.AI_TEMPERATURE,
+                "max_tokens": settings.AI_MAX_TOKENS,
+            },
+        )
+
+    if response.status_code != 200:
+        logger.error(f"Groq vision error: {response.status_code} {response.text}")
+        response.raise_for_status()
+
+    data = response.json()
+    duration_ms = (time.perf_counter() - start) * 1000
+    text = data["choices"][0]["message"]["content"].strip()
+    return text, duration_ms
+
+
+async def generate_vision(prompt: str, image_base64: str, media_type: str = "image/png") -> dict:
+    """
+    Generate text from a prompt + image using Groq's vision model.
+    Unlike generate_text(), this has no local (Ollama) path — kept
+    single-provider and simple; revisit if local vision models are
+    needed later.
+    """
+    try:
+        text, duration_ms = await _call_groq_vision(prompt, image_base64, media_type)
+        return {
+            "text": text,
+            "source": "groq",
+            "duration_ms": duration_ms,
+            "model": settings.GROQ_VISION_MODEL,
+        }
+    except AIError:
+        raise
+    except Exception as e:
+        logger.error(f"Groq vision failed: {e}")
+        raise AIError(
+            "Baby Tiger couldn't look at your design right now! 🐯👀 "
+            "Please check your Groq API key configuration and try again."
+        )
+
+
 async def check_ai_availability() -> dict:
     """Health check — which AI sources are currently reachable."""
     status_info = {"ollama": False, "groq": False, "ollama_models": []}

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Download, Loader2, PartyPopper, FileText,
   Code2, TestTube2, Palette, Layers, CheckCircle2, Package,
-  AlertCircle, ExternalLink, Monitor, BookOpen
+  AlertCircle, ExternalLink, Monitor, BookOpen, Smartphone, Terminal
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
@@ -47,12 +47,30 @@ export default function ExportScreen() {
   const [isTriggering, setIsTriggering] = useState(false);
   const [artifacts, setArtifacts] = useState<BuildArtifact[]>([]);
 
+  const [androidBuildStatus, setAndroidBuildStatus] = useState<BuildStatus>("idle");
+  const [androidBuildRunUrl, setAndroidBuildRunUrl] = useState<string | null>(null);
+  const [isTriggeringAndroid, setIsTriggeringAndroid] = useState(false);
+  const [androidArtifacts, setAndroidArtifacts] = useState<BuildArtifact[]>([]);
+
+  const [linuxBuildStatus, setLinuxBuildStatus] = useState<BuildStatus>("idle");
+  const [linuxBuildRunUrl, setLinuxBuildRunUrl] = useState<string | null>(null);
+  const [isTriggeringLinux, setIsTriggeringLinux] = useState(false);
+  const [linuxArtifacts, setLinuxArtifacts] = useState<BuildArtifact[]>([]);
+
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollStartedAtRef = useRef<number | null>(null);
+  const androidPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const androidPollStartedAtRef = useRef<number | null>(null);
+  const linuxPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const linuxPollStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     loadSummary();
-    return () => stopPolling();
+    return () => {
+      stopPolling();
+      stopAndroidPolling();
+      stopLinuxPolling();
+    };
   }, [projectId]);
 
   const loadSummary = async () => {
@@ -230,6 +248,188 @@ export default function ExportScreen() {
       setBuildStatus("idle");
     } finally {
       setIsTriggering(false);
+    }
+  };
+
+  // ── Android APK build ──
+
+  const stopAndroidPolling = () => {
+    if (androidPollIntervalRef.current) {
+      clearInterval(androidPollIntervalRef.current);
+      androidPollIntervalRef.current = null;
+    }
+  };
+
+  const checkAndroidBuildStatus = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/android/${projectId}/status`);
+      setAndroidBuildRunUrl(data.run_url || null);
+
+      if (data.status === "completed") {
+        stopAndroidPolling();
+        if (data.conclusion === "success") {
+          setAndroidBuildStatus("completed");
+          toast.success("Your APK is ready! 🐯🎉");
+          fetchAndroidArtifacts();
+        } else {
+          setAndroidBuildStatus("failed");
+          toast.error("Build failed. Check the build log for details.");
+        }
+        return;
+      }
+
+      setAndroidBuildStatus(data.status === "queued" ? "queued" : "in_progress");
+
+      if (
+        androidPollStartedAtRef.current &&
+        Date.now() - androidPollStartedAtRef.current > POLL_TIMEOUT_MS
+      ) {
+        stopAndroidPolling();
+        toast.error("Build is taking longer than expected. Check the log directly.");
+      }
+    } catch (error: any) {
+      console.error("Status check failed:", error);
+    }
+  };
+
+  const fetchAndroidArtifacts = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/android/${projectId}/artifacts`);
+      setAndroidArtifacts(data.artifacts || []);
+    } catch (error: any) {
+      console.error("Failed to fetch artifacts:", error);
+    }
+  };
+
+  const downloadAndroidArtifact = async (artifactId: number, name: string) => {
+    try {
+      const response = await apiClient.get(
+        `/packaging/android/${projectId}/artifacts/${artifactId}/download`,
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `${name}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Downloaded! Extract the ZIP to find your APK 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download APK.");
+    }
+  };
+
+  const handleTriggerAndroidBuild = async () => {
+    setIsTriggeringAndroid(true);
+    try {
+      await apiClient.post("/packaging/android/build", { project_id: projectId });
+      toast.success("Build started! This takes 10-25 minutes 🐯🏗️");
+      setAndroidBuildStatus("queued");
+      androidPollStartedAtRef.current = Date.now();
+      stopAndroidPolling();
+      androidPollIntervalRef.current = setInterval(checkAndroidBuildStatus, POLL_INTERVAL_MS);
+      checkAndroidBuildStatus();
+    } catch (error: any) {
+      toast.error(
+        error.message ||
+          "Failed to start build. Android packaging may not be configured yet."
+      );
+      setAndroidBuildStatus("idle");
+    } finally {
+      setIsTriggeringAndroid(false);
+    }
+  };
+
+  // ── Linux installer build ──
+
+  const stopLinuxPolling = () => {
+    if (linuxPollIntervalRef.current) {
+      clearInterval(linuxPollIntervalRef.current);
+      linuxPollIntervalRef.current = null;
+    }
+  };
+
+  const checkLinuxBuildStatus = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/linux/${projectId}/status`);
+      setLinuxBuildRunUrl(data.run_url || null);
+
+      if (data.status === "completed") {
+        stopLinuxPolling();
+        if (data.conclusion === "success") {
+          setLinuxBuildStatus("completed");
+          toast.success("Your installer is ready! 🐯🎉");
+          fetchLinuxArtifacts();
+        } else {
+          setLinuxBuildStatus("failed");
+          toast.error("Build failed. Check the build log for details.");
+        }
+        return;
+      }
+
+      setLinuxBuildStatus(data.status === "queued" ? "queued" : "in_progress");
+
+      if (
+        linuxPollStartedAtRef.current &&
+        Date.now() - linuxPollStartedAtRef.current > POLL_TIMEOUT_MS
+      ) {
+        stopLinuxPolling();
+        toast.error("Build is taking longer than expected. Check the log directly.");
+      }
+    } catch (error: any) {
+      console.error("Status check failed:", error);
+    }
+  };
+
+  const fetchLinuxArtifacts = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/linux/${projectId}/artifacts`);
+      setLinuxArtifacts(data.artifacts || []);
+    } catch (error: any) {
+      console.error("Failed to fetch artifacts:", error);
+    }
+  };
+
+  const downloadLinuxArtifact = async (artifactId: number, name: string) => {
+    try {
+      const response = await apiClient.get(
+        `/packaging/linux/${projectId}/artifacts/${artifactId}/download`,
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `${name}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Downloaded! Extract the ZIP to find your installer 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download installer.");
+    }
+  };
+
+  const handleTriggerLinuxBuild = async () => {
+    setIsTriggeringLinux(true);
+    try {
+      await apiClient.post("/packaging/linux/build", { project_id: projectId });
+      toast.success("Build started! This takes 5-15 minutes 🐯🏗️");
+      setLinuxBuildStatus("queued");
+      linuxPollStartedAtRef.current = Date.now();
+      stopLinuxPolling();
+      linuxPollIntervalRef.current = setInterval(checkLinuxBuildStatus, POLL_INTERVAL_MS);
+      checkLinuxBuildStatus();
+    } catch (error: any) {
+      toast.error(
+        error.message ||
+          "Failed to start build. Linux packaging may not be configured yet."
+      );
+      setLinuxBuildStatus("idle");
+    } finally {
+      setIsTriggeringLinux(false);
     }
   };
 
@@ -599,6 +799,326 @@ export default function ExportScreen() {
               )}
             </AnimatePresence>
           </motion.div>
+
+          {/* Linux Installer — build & poll */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.28 }}
+            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mt-6"
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Terminal className="w-4 h-4 text-[var(--color-primary)]" />
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                Linux Installer
+              </h3>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-warning-light)] text-[var(--color-warning)] font-medium">
+                Experimental
+              </span>
+            </div>
+
+            <AnimatePresence mode="wait">
+              {linuxBuildStatus === "idle" && (
+                <motion.div
+                  key="linux-idle"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
+                    Build a real Linux .deb/.AppImage installer from your generated frontend.
+                    This takes 5-15 minutes and requires packaging to be configured on
+                    the backend.
+                  </p>
+                  <button
+                    onClick={handleTriggerLinuxBuild}
+                    disabled={isTriggeringLinux}
+                    className="w-full py-3 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {isTriggeringLinux ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Package className="w-4 h-4" />
+                    )}
+                    Build Linux Installer
+                  </button>
+                </motion.div>
+              )}
+
+              {(linuxBuildStatus === "queued" || linuxBuildStatus === "in_progress") && (
+                <motion.div
+                  key="linux-building"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex flex-col items-center gap-3 py-4"
+                >
+                  <Loader2 className="w-6 h-6 text-[var(--color-primary)] animate-spin" />
+                  <p className="text-sm text-[var(--color-text-primary)] font-medium">
+                    {linuxBuildStatus === "queued" ? "Build queued..." : "Building your installer..."}
+                  </p>
+                  <p className="text-xs text-[var(--color-text-tertiary)] text-center">
+                    This usually takes 5-15 minutes. Feel free to leave this page —
+                    come back and check later.
+                  </p>
+                  {linuxBuildRunUrl && (
+                    <a
+                      href={linuxBuildRunUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                    >
+                      View live build log <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </motion.div>
+              )}
+
+              {linuxBuildStatus === "completed" && (
+                <motion.div
+                  key="linux-completed"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex flex-col gap-3"
+                >
+                  <div className="flex items-center gap-2 text-[var(--color-success)]">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <p className="text-sm font-medium">Build succeeded!</p>
+                  </div>
+                  {linuxArtifacts.length > 0 ? (
+                    <div className="space-y-2">
+                      {linuxArtifacts.map((artifact) => (
+                        <div
+                          key={artifact.id}
+                          className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-mono text-[var(--color-text-primary)] truncate">
+                              {artifact.name}
+                            </p>
+                            <p className="text-xs text-[var(--color-text-tertiary)]">
+                              {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => downloadLinuxArtifact(artifact.id, artifact.name)}
+                            className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Download
+                          </button>
+                        </div>
+                      ))}
+                      <p className="text-xs text-[var(--color-text-tertiary)] text-center pt-1">
+                        Files download as .zip — extract to find the installer inside.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[var(--color-text-tertiary)]">
+                      Build succeeded but no artifact was found. Check the build log.
+                    </p>
+                  )}
+                </motion.div>
+              )}
+
+              {linuxBuildStatus === "failed" && (
+                <motion.div
+                  key="linux-failed"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex flex-col gap-3"
+                >
+                  <div className="flex items-center gap-2 text-[var(--color-error)]">
+                    <AlertCircle className="w-4 h-4" />
+                    <p className="text-sm font-medium">Build failed</p>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                    Something went wrong during packaging — this is an experimental
+                    feature and failures are expected while it's being refined.
+                  </p>
+                  {linuxBuildRunUrl && (
+                    <a
+                      href={linuxBuildRunUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                    >
+                      View build log for details <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                  <button
+                    onClick={() => setLinuxBuildStatus("idle")}
+                    className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+
+          {/* Android APK — build & poll */}
+          {hasMobileTargets && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mt-6"
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <Smartphone className="w-4 h-4 text-[var(--color-primary)]" />
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  Android APK
+                </h3>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-warning-light)] text-[var(--color-warning)] font-medium">
+                  Experimental
+                </span>
+              </div>
+
+              <AnimatePresence mode="wait">
+                {androidBuildStatus === "idle" && (
+                  <motion.div
+                    key="android-idle"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                  >
+                    <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
+                      Build a real installable Android .apk from your generated frontend.
+                      This takes 10-25 minutes and requires packaging to be configured on
+                      the backend.
+                    </p>
+                    <button
+                      onClick={handleTriggerAndroidBuild}
+                      disabled={isTriggeringAndroid}
+                      className="w-full py-3 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      {isTriggeringAndroid ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Package className="w-4 h-4" />
+                      )}
+                      Build Android APK
+                    </button>
+                  </motion.div>
+                )}
+
+                {(androidBuildStatus === "queued" || androidBuildStatus === "in_progress") && (
+                  <motion.div
+                    key="android-building"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col items-center gap-3 py-4"
+                  >
+                    <Loader2 className="w-6 h-6 text-[var(--color-primary)] animate-spin" />
+                    <p className="text-sm text-[var(--color-text-primary)] font-medium">
+                      {androidBuildStatus === "queued" ? "Build queued..." : "Building your APK..."}
+                    </p>
+                    <p className="text-xs text-[var(--color-text-tertiary)] text-center">
+                      This usually takes 10-25 minutes. Feel free to leave this page —
+                      come back and check later.
+                    </p>
+                    {androidBuildRunUrl && (
+                      <a
+                        href={androidBuildRunUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                      >
+                        View live build log <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </motion.div>
+                )}
+
+                {androidBuildStatus === "completed" && (
+                  <motion.div
+                    key="android-completed"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-2 text-[var(--color-success)]">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <p className="text-sm font-medium">Build succeeded!</p>
+                    </div>
+                    {androidArtifacts.length > 0 ? (
+                      <div className="space-y-2">
+                        {androidArtifacts.map((artifact) => (
+                          <div
+                            key={artifact.id}
+                            className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-mono text-[var(--color-text-primary)] truncate">
+                                {artifact.name}
+                              </p>
+                              <p className="text-xs text-[var(--color-text-tertiary)]">
+                                {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => downloadAndroidArtifact(artifact.id, artifact.name)}
+                              className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Download
+                            </button>
+                          </div>
+                        ))}
+                        <p className="text-xs text-[var(--color-text-tertiary)] text-center pt-1">
+                          Files download as .zip — extract to find the .apk inside.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[var(--color-text-tertiary)]">
+                        Build succeeded but no artifact was found. Check the build log.
+                      </p>
+                    )}
+                  </motion.div>
+                )}
+
+                {androidBuildStatus === "failed" && (
+                  <motion.div
+                    key="android-failed"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-2 text-[var(--color-error)]">
+                      <AlertCircle className="w-4 h-4" />
+                      <p className="text-sm font-medium">Build failed</p>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                      Something went wrong during packaging — this is an experimental
+                      feature and failures are expected while it's being refined.
+                    </p>
+                    {androidBuildRunUrl && (
+                      <a
+                        href={androidBuildRunUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                      >
+                        View build log for details <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                    <button
+                      onClick={() => setAndroidBuildStatus("idle")}
+                      className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors"
+                    >
+                      Try Again
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
         </div>
       </div>
     </div>

@@ -1,0 +1,144 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Android APK Build Workflow (per-project)
+#
+#  Wraps a user's AI-generated frontend as an installable Android
+#  APK via Capacitor, mirroring how build-windows-installer.yml
+#  wraps the same kind of frontend as a Windows desktop app.
+#
+#  NOT to be confused with build-android-apk.yml, which builds the
+#  VengaiCode product's own Expo mobile client (apps/mobile) — this
+#  workflow instead packages a per-project generated frontend.
+#
+#  HONEST STATUS: untested end-to-end — expect a debugging pass on
+#  the first real run, same caveat as the Windows workflow.
+#
+#  Triggered via: repository_dispatch event type
+#  "build-android-installer-app" with client_payload: { "project_id": "..." }
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Android Installer
+
+on:
+  repository_dispatch:
+    types: [build-android-installer-app]
+
+jobs:
+  build-android-installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Fetch generated project files from VengaiCode backend
+        id: fetch_files
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+          cat project_files.json | head -c 500
+
+      - name: Copy Capacitor template into build directory
+        shell: bash
+        run: |
+          mkdir -p build
+          cp -r templates/capacitor-android/. build/
+          echo "Template copied to build/"
+
+      - name: Inject generated frontend files into template
+        shell: bash
+        run: |
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Merge generated package.json into template package.json
+        working-directory: build
+        shell: bash
+        env:
+          TEMPLATE_PACKAGE_JSON_PATH: ../templates/capacitor-android/package.json
+        run: |
+          echo "Merging build/package.json (generated) into the template's package.json"
+          echo "so required build tooling (vite, capacitor, tailwind, etc.) survives injection."
+          python3 ../.github/scripts/merge_package_json.py
+
+      - name: Update Capacitor config from merged package.json
+        working-directory: build
+        shell: bash
+        run: |
+          python3 ../.github/scripts/update_capacitor_config.py
+
+      - name: Verify injected frontend
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f
+
+          if [ -f src/main.jsx ]; then
+            echo "src/main.jsx found"
+          else
+            echo "src/main.jsx NOT FOUND"
+            exit 1
+          fi
+
+          if [ -f index.html ]; then
+            echo "index.html found"
+          else
+            echo "index.html NOT FOUND"
+            exit 1
+          fi
+
+      - name: Install frontend dependencies
+        working-directory: build
+        shell: bash
+        run: npm install
+
+      - name: Build web assets
+        working-directory: build
+        shell: bash
+        run: npm run build
+
+      - name: Add Android platform via Capacitor
+        working-directory: build
+        shell: bash
+        run: npx cap add android
+
+      - name: Sync web assets into Android project
+        working-directory: build
+        shell: bash
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: build/android
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-android-apk
+          path: build/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn

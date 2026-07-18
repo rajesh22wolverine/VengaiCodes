@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_KEY: str = ""
+    # Storage bucket for user-uploaded page design images (design-to-code
+    # feature). Must exist in the Supabase project and be set to public,
+    # or design-image URLs won't resolve. Create via: Supabase dashboard
+    # -> Storage -> New bucket -> name it this, toggle "Public bucket".
+    SUPABASE_DESIGN_UPLOADS_BUCKET: str = "design-uploads"
 
     # ───────────────────────────────────────────
     #  Redis Cache
@@ -117,6 +122,11 @@ class Settings(BaseSettings):
     GROQ_TIMEOUT: int = 60
     GROQ_DEFAULT_MODEL: str = "llama3-70b-8192"
     GROQ_CODE_MODEL: str = "llama3-70b-8192"
+    # Open-weight (Meta Llama) vision model served by Groq — used for
+    # design-image-to-code. Verify the exact model id in Groq's docs;
+    # vision model names on Groq have changed before (e.g. "-preview"
+    # suffixes get renamed/retired).
+    GROQ_VISION_MODEL: str = "llama-3.2-90b-vision-preview"
 
     # AI Performance Thresholds
     AI_SLOW_RESPONSE_THRESHOLD_MS: int = 3000

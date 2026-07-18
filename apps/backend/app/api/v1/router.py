@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, projects
+from app.api.v1 import auth, marketplace, projects
 
 # ───────────────────────────────────────────────
 #  Main v1 Router
@@ -27,6 +27,14 @@ api_router.include_router(
     projects.router,
     prefix="/projects",
     tags=["Projects"],
+)
+
+# ── Marketplace ──
+# /api/v1/marketplace/apps, /api/v1/marketplace/apps/{id}
+api_router.include_router(
+    marketplace.router,
+    prefix="/marketplace",
+    tags=["Marketplace"],
 )
 
 # ── AI Engine ──
@@ -55,13 +63,6 @@ api_router.include_router(
 #     licences.router,
 #     prefix="/licences",
 #     tags=["Licences"],
-# )
-
-# from app.api.v1 import marketplace
-# api_router.include_router(
-#     marketplace.router,
-#     prefix="/marketplace",
-#     tags=["Marketplace"],
 # )
 
 # from app.api.v1 import payments
@@ -178,10 +179,18 @@ api_router.include_router(
     tags=["Packaging"],
 )
 
-# ── Packaging (Windows installer builds) ──
-from app.api.v1 import packaging
+# ── Packaging (Android APK builds) ──
+from app.api.v1 import android_packaging
 api_router.include_router(
-    packaging.router,
-    prefix="/packaging",
+    android_packaging.router,
+    prefix="/packaging/android",
+    tags=["Packaging"],
+)
+
+# ── Packaging (Linux installer builds) ──
+from app.api.v1 import linux_packaging
+api_router.include_router(
+    linux_packaging.router,
+    prefix="/packaging/linux",
     tags=["Packaging"],
 )

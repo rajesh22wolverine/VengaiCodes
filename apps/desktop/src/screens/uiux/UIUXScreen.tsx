@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Palette, Type, Layout, Puzzle,
-  Navigation, Loader2, ThumbsUp, BookOpen
+  Navigation, Loader2, ThumbsUp, BookOpen, Upload,
+  Wand2, Save, Trash2, ImageIcon, Code2
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
@@ -32,6 +33,18 @@ interface UIUXDesign {
   navigation_pattern: string;
 }
 
+interface UploadedDesign {
+  id: string;
+  page_name: string;
+  image_url: string;
+  uploaded_at: string;
+  generated_html: string | null;
+  generated_css: string | null;
+  generation_notes: string | null;
+  code_generated_at: string | null;
+  code_updated_at: string | null;
+}
+
 export default function UIUXScreen() {
   const { id: projectId } = useParams();
   const navigate = useNavigate();
@@ -42,6 +55,16 @@ export default function UIUXScreen() {
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
 
+  const [uploadedDesigns, setUploadedDesigns] = useState<UploadedDesign[]>([]);
+  const [uploadPageName, setUploadPageName] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const [generatingCodeFor, setGeneratingCodeFor] = useState<string | null>(null);
+  const [expandedDesignId, setExpandedDesignId] = useState<string | null>(null);
+  const [editedHtml, setEditedHtml] = useState("");
+  const [editedCss, setEditedCss] = useState("");
+  const [isSavingCode, setIsSavingCode] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     loadOrGenerate();
   }, [projectId]);
@@ -50,6 +73,7 @@ export default function UIUXScreen() {
     try {
       const { data } = await apiClient.get(`/uiux/${projectId}`);
       setDesign(data.design);
+      setUploadedDesigns(data.uploaded_designs || []);
       setIsLoading(false);
     } catch {
       await generate();
@@ -111,6 +135,92 @@ export default function UIUXScreen() {
       toast.error(error.message || "Failed to approve.");
     } finally {
       setIsApproving(false);
+    }
+  };
+
+  // ── Upload your own design → code ──
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const pageName = uploadPageName.trim() || file.name.replace(/\.[^.]+$/, "");
+    const formData = new FormData();
+    formData.append("page_name", pageName);
+    formData.append("file", file);
+
+    setIsUploading(true);
+    try {
+      const { data } = await apiClient.post(`/uiux/${projectId}/design/upload`, formData, {
+        headers: { "Content-Type": undefined },
+      });
+      setUploadedDesigns((prev) => [...prev, data.design]);
+      setUploadPageName("");
+      toast.success("Design uploaded! 🖼️");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to upload design.");
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleGenerateCode = async (designId: string) => {
+    setGeneratingCodeFor(designId);
+    try {
+      const { data } = await apiClient.post(
+        `/uiux/${projectId}/design/${designId}/generate-code`
+      );
+      setUploadedDesigns((prev) =>
+        prev.map((d) => (d.id === designId ? data.design : d))
+      );
+      setEditedHtml(data.design.generated_html || "");
+      setEditedCss(data.design.generated_css || "");
+      setExpandedDesignId(designId);
+      toast.success("Code generated from your design! 🐯✨");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to generate code from design.");
+    } finally {
+      setGeneratingCodeFor(null);
+    }
+  };
+
+  const handleExpandDesign = (design: UploadedDesign) => {
+    if (expandedDesignId === design.id) {
+      setExpandedDesignId(null);
+      return;
+    }
+    setEditedHtml(design.generated_html || "");
+    setEditedCss(design.generated_css || "");
+    setExpandedDesignId(design.id);
+  };
+
+  const handleSaveCode = async (designId: string) => {
+    setIsSavingCode(true);
+    try {
+      const { data } = await apiClient.put(`/uiux/${projectId}/design/${designId}/code`, {
+        html: editedHtml,
+        css: editedCss,
+      });
+      setUploadedDesigns((prev) =>
+        prev.map((d) => (d.id === designId ? data.design : d))
+      );
+      toast.success("Changes saved 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save changes.");
+    } finally {
+      setIsSavingCode(false);
+    }
+  };
+
+  const handleDeleteDesign = async (designId: string) => {
+    try {
+      await apiClient.delete(`/uiux/${projectId}/design/${designId}`);
+      setUploadedDesigns((prev) => prev.filter((d) => d.id !== designId));
+      if (expandedDesignId === designId) setExpandedDesignId(null);
+      toast.success("Design removed");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete design.");
     }
   };
 
@@ -249,6 +359,160 @@ export default function UIUXScreen() {
             <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
               {design.navigation_pattern}
             </p>
+          </Section>
+
+          {/* Upload your own design → code */}
+          <Section icon={Upload} title="Upload Your Own Page Design">
+            <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
+              Have a mockup or screenshot for a page? Upload it and Baby Tiger will
+              read the image and generate matching HTML/CSS you can edit before it
+              feeds into code generation.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2 mb-4">
+              <input
+                value={uploadPageName}
+                onChange={(e) => setUploadPageName(e.target.value)}
+                placeholder="Page name (e.g. Login Screen)"
+                className="flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={handleFileSelected}
+                className="hidden"
+                id="design-upload-input"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                {isUploading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4" />
+                )}
+                Upload Design
+              </button>
+            </div>
+
+            {uploadedDesigns.length === 0 ? (
+              <p className="text-xs text-[var(--color-text-tertiary)]">
+                No designs uploaded yet.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {uploadedDesigns.map((d) => (
+                  <div
+                    key={d.id}
+                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] overflow-hidden"
+                  >
+                    <div className="flex items-center gap-3 p-3">
+                      <img
+                        src={d.image_url}
+                        alt={d.page_name}
+                        className="w-14 h-14 rounded-lg object-cover border border-[var(--color-border)] flex-shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">
+                          {d.page_name}
+                        </p>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">
+                          {d.generated_html ? "Code generated" : "Not converted yet"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {d.generated_html ? (
+                          <button
+                            onClick={() => handleExpandDesign(d)}
+                            className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] text-xs font-semibold hover:bg-[var(--color-surface)] transition-colors flex items-center gap-1.5"
+                          >
+                            <Code2 className="w-3.5 h-3.5" />
+                            {expandedDesignId === d.id ? "Hide code" : "View/edit code"}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleGenerateCode(d.id)}
+                            disabled={generatingCodeFor === d.id}
+                            className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                          >
+                            {generatingCodeFor === d.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Wand2 className="w-3.5 h-3.5" />
+                            )}
+                            Generate Code
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteDesign(d.id)}
+                          className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-error)] hover:bg-[var(--color-surface)] transition-colors"
+                          title="Delete design"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <AnimatePresence>
+                      {expandedDesignId === d.id && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="border-t border-[var(--color-border)] p-3"
+                        >
+                          {d.generation_notes && (
+                            <p className="text-xs text-[var(--color-text-tertiary)] mb-3 italic flex items-start gap-1.5">
+                              <ImageIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                              {d.generation_notes}
+                            </p>
+                          )}
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                                HTML
+                              </label>
+                              <textarea
+                                value={editedHtml}
+                                onChange={(e) => setEditedHtml(e.target.value)}
+                                spellCheck={false}
+                                className="w-full h-48 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                                CSS
+                              </label>
+                              <textarea
+                                value={editedCss}
+                                onChange={(e) => setEditedCss(e.target.value)}
+                                spellCheck={false}
+                                className="w-full h-48 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
+                              />
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleSaveCode(d.id)}
+                            disabled={isSavingCode}
+                            className="mt-3 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                          >
+                            {isSavingCode ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Save className="w-3.5 h-3.5" />
+                            )}
+                            Save Changes
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ))}
+              </div>
+            )}
           </Section>
         </div>
       </div>
