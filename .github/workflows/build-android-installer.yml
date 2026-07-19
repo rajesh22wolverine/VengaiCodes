@@ -17,6 +17,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 name: Build Android Installer
+run-name: "Android build — ${{ github.event.client_payload.project_id }}"
 
 on:
   repository_dispatch:

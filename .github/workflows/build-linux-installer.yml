@@ -18,6 +18,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 name: Build Linux Installer
+run-name: "Linux build — ${{ github.event.client_payload.project_id }}"
 
 on:
   repository_dispatch:

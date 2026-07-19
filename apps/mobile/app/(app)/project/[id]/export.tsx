@@ -13,6 +13,8 @@ import {
   Monitor,
   Package,
   PartyPopper,
+  Smartphone,
+  Terminal,
   TestTube2,
   Palette,
 } from "lucide-react-native";
@@ -59,12 +61,30 @@ export default function ExportScreen() {
   const [isTriggering, setIsTriggering] = useState(false);
   const [artifacts, setArtifacts] = useState<BuildArtifact[]>([]);
 
+  const [androidBuildStatus, setAndroidBuildStatus] = useState<BuildStatus>("idle");
+  const [androidBuildRunUrl, setAndroidBuildRunUrl] = useState<string | null>(null);
+  const [isTriggeringAndroid, setIsTriggeringAndroid] = useState(false);
+  const [androidArtifacts, setAndroidArtifacts] = useState<BuildArtifact[]>([]);
+
+  const [linuxBuildStatus, setLinuxBuildStatus] = useState<BuildStatus>("idle");
+  const [linuxBuildRunUrl, setLinuxBuildRunUrl] = useState<string | null>(null);
+  const [isTriggeringLinux, setIsTriggeringLinux] = useState(false);
+  const [linuxArtifacts, setLinuxArtifacts] = useState<BuildArtifact[]>([]);
+
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollStartedAtRef = useRef<number | null>(null);
+  const androidPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const androidPollStartedAtRef = useRef<number | null>(null);
+  const linuxPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const linuxPollStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     loadSummary();
-    return () => stopPolling();
+    return () => {
+      stopPolling();
+      stopAndroidPolling();
+      stopLinuxPolling();
+    };
   }, [projectId]);
 
   const loadSummary = async () => {
@@ -192,6 +212,154 @@ export default function ExportScreen() {
       setBuildStatus("idle");
     } finally {
       setIsTriggering(false);
+    }
+  };
+
+  // ── Android APK build ──
+
+  const stopAndroidPolling = () => {
+    if (androidPollIntervalRef.current) {
+      clearInterval(androidPollIntervalRef.current);
+      androidPollIntervalRef.current = null;
+    }
+  };
+
+  const checkAndroidBuildStatus = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/android/${projectId}/status`);
+      setAndroidBuildRunUrl(data.run_url || null);
+
+      if (data.status === "completed") {
+        stopAndroidPolling();
+        if (data.conclusion === "success") {
+          setAndroidBuildStatus("completed");
+          showToast("Your APK is ready! 🐯🎉");
+          fetchAndroidArtifacts();
+        } else {
+          setAndroidBuildStatus("failed");
+          showToast("Build failed. Check the build log for details.", "error");
+        }
+        return;
+      }
+
+      setAndroidBuildStatus(data.status === "queued" ? "queued" : "in_progress");
+
+      if (androidPollStartedAtRef.current && Date.now() - androidPollStartedAtRef.current > POLL_TIMEOUT_MS) {
+        stopAndroidPolling();
+        showToast("Build is taking longer than expected. Check the log directly.", "error");
+      }
+    } catch {
+      // Don't stop polling on a single failed check — transient errors happen
+    }
+  };
+
+  const fetchAndroidArtifacts = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/android/${projectId}/artifacts`);
+      setAndroidArtifacts(data.artifacts || []);
+    } catch {
+      // Non-fatal — build succeeded, artifact listing is best-effort
+    }
+  };
+
+  const downloadAndroidArtifact = async (artifactId: number, name: string) => {
+    try {
+      await downloadAndShareFile(`/packaging/android/${projectId}/artifacts/${artifactId}/download`, `${name}.zip`);
+      showToast("Downloaded! Extract the ZIP to find your APK 🐯");
+    } catch (error: any) {
+      showToast(error.message || "Failed to download APK.", "error");
+    }
+  };
+
+  const handleTriggerAndroidBuild = async () => {
+    setIsTriggeringAndroid(true);
+    try {
+      await apiClient.post("/packaging/android/build", { project_id: projectId });
+      showToast("Build started! This takes 10-25 minutes 🐯🏗️");
+      setAndroidBuildStatus("queued");
+      androidPollStartedAtRef.current = Date.now();
+      stopAndroidPolling();
+      androidPollIntervalRef.current = setInterval(checkAndroidBuildStatus, POLL_INTERVAL_MS);
+      checkAndroidBuildStatus();
+    } catch (error: any) {
+      showToast(error.message || "Failed to start build. Android packaging may not be configured yet.", "error");
+      setAndroidBuildStatus("idle");
+    } finally {
+      setIsTriggeringAndroid(false);
+    }
+  };
+
+  // ── Linux installer build ──
+
+  const stopLinuxPolling = () => {
+    if (linuxPollIntervalRef.current) {
+      clearInterval(linuxPollIntervalRef.current);
+      linuxPollIntervalRef.current = null;
+    }
+  };
+
+  const checkLinuxBuildStatus = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/linux/${projectId}/status`);
+      setLinuxBuildRunUrl(data.run_url || null);
+
+      if (data.status === "completed") {
+        stopLinuxPolling();
+        if (data.conclusion === "success") {
+          setLinuxBuildStatus("completed");
+          showToast("Your installer is ready! 🐯🎉");
+          fetchLinuxArtifacts();
+        } else {
+          setLinuxBuildStatus("failed");
+          showToast("Build failed. Check the build log for details.", "error");
+        }
+        return;
+      }
+
+      setLinuxBuildStatus(data.status === "queued" ? "queued" : "in_progress");
+
+      if (linuxPollStartedAtRef.current && Date.now() - linuxPollStartedAtRef.current > POLL_TIMEOUT_MS) {
+        stopLinuxPolling();
+        showToast("Build is taking longer than expected. Check the log directly.", "error");
+      }
+    } catch {
+      // Don't stop polling on a single failed check — transient errors happen
+    }
+  };
+
+  const fetchLinuxArtifacts = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/linux/${projectId}/artifacts`);
+      setLinuxArtifacts(data.artifacts || []);
+    } catch {
+      // Non-fatal — build succeeded, artifact listing is best-effort
+    }
+  };
+
+  const downloadLinuxArtifact = async (artifactId: number, name: string) => {
+    try {
+      await downloadAndShareFile(`/packaging/linux/${projectId}/artifacts/${artifactId}/download`, `${name}.zip`);
+      showToast("Downloaded! Extract the ZIP to find your installer 🐯");
+    } catch (error: any) {
+      showToast(error.message || "Failed to download installer.", "error");
+    }
+  };
+
+  const handleTriggerLinuxBuild = async () => {
+    setIsTriggeringLinux(true);
+    try {
+      await apiClient.post("/packaging/linux/build", { project_id: projectId });
+      showToast("Build started! This takes 5-15 minutes 🐯🏗️");
+      setLinuxBuildStatus("queued");
+      linuxPollStartedAtRef.current = Date.now();
+      stopLinuxPolling();
+      linuxPollIntervalRef.current = setInterval(checkLinuxBuildStatus, POLL_INTERVAL_MS);
+      checkLinuxBuildStatus();
+    } catch (error: any) {
+      showToast(error.message || "Failed to start build. Linux packaging may not be configured yet.", "error");
+      setLinuxBuildStatus("idle");
+    } finally {
+      setIsTriggeringLinux(false);
     }
   };
 
@@ -395,6 +563,216 @@ export default function ExportScreen() {
                 </Pressable>
               )}
               <Pressable onPress={() => setBuildStatus("idle")} style={[styles.outlineButton, { borderColor: colors.border }]}>
+                <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 13 }}>Try Again</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
+        <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+          <View style={styles.cardHeaderRow}>
+            <Smartphone size={16} color={colors.primary} />
+            <Text style={[styles.cardTitle, { color: colors.textPrimary, marginBottom: 0 }]}>Android APK</Text>
+            <View style={[styles.experimentalBadge, { backgroundColor: colors.primaryLight }]}>
+              <Text style={{ color: colors.primary, fontSize: 10, fontWeight: "700" }}>Experimental</Text>
+            </View>
+          </View>
+
+          {androidBuildStatus === "idle" && (
+            <>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginBottom: 12 }}>
+                Build a real Android .apk from your generated frontend. This takes 10-25 minutes and requires
+                packaging to be configured on the backend.
+              </Text>
+              <Pressable
+                onPress={handleTriggerAndroidBuild}
+                disabled={isTriggeringAndroid}
+                style={[styles.outlinePrimaryButton, { borderColor: colors.primary }, isTriggeringAndroid && { opacity: 0.6 }]}
+              >
+                {isTriggeringAndroid ? (
+                  <ActivityIndicator color={colors.primary} size="small" />
+                ) : (
+                  <Package size={15} color={colors.primary} />
+                )}
+                <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 13 }}>Build Android APK</Text>
+              </Pressable>
+            </>
+          )}
+
+          {(androidBuildStatus === "queued" || androidBuildStatus === "in_progress") && (
+            <View style={{ alignItems: "center", gap: 8, paddingVertical: 12 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={{ color: colors.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                {androidBuildStatus === "queued" ? "Build queued..." : "Building your APK..."}
+              </Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 11, textAlign: "center" }}>
+                This usually takes 10-25 minutes. Feel free to leave this page — come back and check later.
+              </Text>
+              {androidBuildRunUrl && (
+                <Pressable onPress={() => Linking.openURL(androidBuildRunUrl)} style={styles.linkRow}>
+                  <Text style={{ color: colors.primary, fontSize: 12 }}>View live build log</Text>
+                  <ExternalLink size={12} color={colors.primary} />
+                </Pressable>
+              )}
+            </View>
+          )}
+
+          {androidBuildStatus === "completed" && (
+            <View style={{ gap: 10 }}>
+              <View style={styles.rowGap}>
+                <CheckCircle2 size={16} color={colors.success} />
+                <Text style={{ color: colors.success, fontWeight: "600", fontSize: 13 }}>Build succeeded!</Text>
+              </View>
+              {androidArtifacts.length > 0 ? (
+                androidArtifacts.map((artifact) => (
+                  <View key={artifact.id} style={[styles.artifactRow, { borderColor: colors.border, backgroundColor: colors.background }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.textPrimary, fontSize: 12, fontFamily: "monospace" }} numberOfLines={1}>
+                        {artifact.name}
+                      </Text>
+                      <Text style={{ color: colors.textTertiary, fontSize: 11 }}>
+                        {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => downloadAndroidArtifact(artifact.id, artifact.name)}
+                      style={[styles.smallButton, { backgroundColor: colors.primary }]}
+                    >
+                      <Download size={13} color="#fff" />
+                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>Download</Text>
+                    </Pressable>
+                  </View>
+                ))
+              ) : (
+                <Text style={{ color: colors.textTertiary, fontSize: 12 }}>
+                  Build succeeded but no artifact was found. Check the build log.
+                </Text>
+              )}
+            </View>
+          )}
+
+          {androidBuildStatus === "failed" && (
+            <View style={{ gap: 10 }}>
+              <View style={styles.rowGap}>
+                <AlertCircle size={16} color={colors.error} />
+                <Text style={{ color: colors.error, fontWeight: "600", fontSize: 13 }}>Build failed</Text>
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18 }}>
+                Something went wrong during packaging — this is an experimental feature and failures are expected
+                while it's being refined.
+              </Text>
+              {androidBuildRunUrl && (
+                <Pressable onPress={() => Linking.openURL(androidBuildRunUrl)} style={styles.linkRow}>
+                  <Text style={{ color: colors.primary, fontSize: 12 }}>View build log for details</Text>
+                  <ExternalLink size={12} color={colors.primary} />
+                </Pressable>
+              )}
+              <Pressable onPress={() => setAndroidBuildStatus("idle")} style={[styles.outlineButton, { borderColor: colors.border }]}>
+                <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 13 }}>Try Again</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
+        <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+          <View style={styles.cardHeaderRow}>
+            <Terminal size={16} color={colors.primary} />
+            <Text style={[styles.cardTitle, { color: colors.textPrimary, marginBottom: 0 }]}>Linux Installer</Text>
+            <View style={[styles.experimentalBadge, { backgroundColor: colors.primaryLight }]}>
+              <Text style={{ color: colors.primary, fontSize: 10, fontWeight: "700" }}>Experimental</Text>
+            </View>
+          </View>
+
+          {linuxBuildStatus === "idle" && (
+            <>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginBottom: 12 }}>
+                Build a real Linux .deb/AppImage installer from your generated frontend. This takes 5-15 minutes and
+                requires packaging to be configured on the backend.
+              </Text>
+              <Pressable
+                onPress={handleTriggerLinuxBuild}
+                disabled={isTriggeringLinux}
+                style={[styles.outlinePrimaryButton, { borderColor: colors.primary }, isTriggeringLinux && { opacity: 0.6 }]}
+              >
+                {isTriggeringLinux ? (
+                  <ActivityIndicator color={colors.primary} size="small" />
+                ) : (
+                  <Package size={15} color={colors.primary} />
+                )}
+                <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 13 }}>Build Linux Installer</Text>
+              </Pressable>
+            </>
+          )}
+
+          {(linuxBuildStatus === "queued" || linuxBuildStatus === "in_progress") && (
+            <View style={{ alignItems: "center", gap: 8, paddingVertical: 12 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={{ color: colors.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                {linuxBuildStatus === "queued" ? "Build queued..." : "Building your installer..."}
+              </Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 11, textAlign: "center" }}>
+                This usually takes 5-15 minutes. Feel free to leave this page — come back and check later.
+              </Text>
+              {linuxBuildRunUrl && (
+                <Pressable onPress={() => Linking.openURL(linuxBuildRunUrl)} style={styles.linkRow}>
+                  <Text style={{ color: colors.primary, fontSize: 12 }}>View live build log</Text>
+                  <ExternalLink size={12} color={colors.primary} />
+                </Pressable>
+              )}
+            </View>
+          )}
+
+          {linuxBuildStatus === "completed" && (
+            <View style={{ gap: 10 }}>
+              <View style={styles.rowGap}>
+                <CheckCircle2 size={16} color={colors.success} />
+                <Text style={{ color: colors.success, fontWeight: "600", fontSize: 13 }}>Build succeeded!</Text>
+              </View>
+              {linuxArtifacts.length > 0 ? (
+                linuxArtifacts.map((artifact) => (
+                  <View key={artifact.id} style={[styles.artifactRow, { borderColor: colors.border, backgroundColor: colors.background }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.textPrimary, fontSize: 12, fontFamily: "monospace" }} numberOfLines={1}>
+                        {artifact.name}
+                      </Text>
+                      <Text style={{ color: colors.textTertiary, fontSize: 11 }}>
+                        {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => downloadLinuxArtifact(artifact.id, artifact.name)}
+                      style={[styles.smallButton, { backgroundColor: colors.primary }]}
+                    >
+                      <Download size={13} color="#fff" />
+                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>Download</Text>
+                    </Pressable>
+                  </View>
+                ))
+              ) : (
+                <Text style={{ color: colors.textTertiary, fontSize: 12 }}>
+                  Build succeeded but no artifact was found. Check the build log.
+                </Text>
+              )}
+            </View>
+          )}
+
+          {linuxBuildStatus === "failed" && (
+            <View style={{ gap: 10 }}>
+              <View style={styles.rowGap}>
+                <AlertCircle size={16} color={colors.error} />
+                <Text style={{ color: colors.error, fontWeight: "600", fontSize: 13 }}>Build failed</Text>
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18 }}>
+                Something went wrong during packaging — this is an experimental feature and failures are expected
+                while it's being refined.
+              </Text>
+              {linuxBuildRunUrl && (
+                <Pressable onPress={() => Linking.openURL(linuxBuildRunUrl)} style={styles.linkRow}>
+                  <Text style={{ color: colors.primary, fontSize: 12 }}>View build log for details</Text>
+                  <ExternalLink size={12} color={colors.primary} />
+                </Pressable>
+              )}
+              <Pressable onPress={() => setLinuxBuildStatus("idle")} style={[styles.outlineButton, { borderColor: colors.border }]}>
                 <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 13 }}>Try Again</Text>
               </Pressable>
             </View>

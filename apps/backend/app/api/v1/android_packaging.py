@@ -150,7 +150,7 @@ async def get_build_status(
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
             },
-            params={"per_page": 1},
+            params={"per_page": 20},
         )
 
     if response.status_code != 200:
@@ -159,15 +159,18 @@ async def get_build_status(
             detail="Failed to check build status.",
         )
 
+    # The run's display name is set via `run-name:` in the workflow file to
+    # include the project_id, so we can find the run for THIS project instead
+    # of assuming the single most recent repo-wide run belongs to us.
     runs = response.json().get("workflow_runs", [])
-    if not runs:
+    matching = next((r for r in runs if project_id in (r.get("name") or "")), None)
+    if matching is None:
         return BuildStatusResponse(status="not_started")
 
-    latest = runs[0]
     return BuildStatusResponse(
-        status=latest.get("status", "unknown"),
-        conclusion=latest.get("conclusion"),
-        run_url=latest.get("html_url"),
+        status=matching.get("status", "unknown"),
+        conclusion=matching.get("conclusion"),
+        run_url=matching.get("html_url"),
     )
 
 
@@ -207,17 +210,18 @@ async def list_build_artifacts(
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
             },
-            params={"per_page": 1, "status": "completed"},
+            params={"per_page": 20, "status": "completed"},
         )
 
         runs = runs_response.json().get("workflow_runs", [])
-        if not runs:
+        matching = next((r for r in runs if project_id in (r.get("name") or "")), None)
+        if matching is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No completed build found. Trigger a build first.",
+                detail="No completed build found for this project. Trigger a build first.",
             )
 
-        run_id = runs[0]["id"]
+        run_id = matching["id"]
 
         artifacts_response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/runs/{run_id}/artifacts",
