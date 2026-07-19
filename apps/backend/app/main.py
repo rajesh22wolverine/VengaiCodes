@@ -4,6 +4,7 @@
 #  Vengai (வேங்கை) = Tiger in Tamil 🐯
 # ═══════════════════════════════════════════════════════════════
 
+import json
 import logging
 import logging.config
 from contextlib import asynccontextmanager
@@ -11,8 +12,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text, event
+from sqlalchemy import text, event, inspect
 from sqlalchemy.schema import CreateIndex
+from sqlalchemy.types import JSON
 
 from app.config import settings
 from app.core.database import Base, engine
@@ -52,6 +54,40 @@ logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger("vengaicode")
 
 
+def _column_default_sql(column) -> str:
+    """
+    Render a SQL literal for a NOT NULL column's default, so ALTER TABLE
+    ADD COLUMN can backfill existing rows. Mirrors the column's Python-side
+    `default=` (JSON list/dict, bool, number, string, enum) — server_default
+    (e.g. func.now()) is used as-is when present.
+    """
+    if column.server_default is not None:
+        return str(column.server_default.arg)
+
+    value = None
+    if column.default is not None:
+        arg = column.default.arg
+        if callable(arg):
+            try:
+                value = arg()
+            except TypeError:
+                value = arg(None)  # context-sensitive default callable
+        else:
+            value = arg
+
+    if isinstance(column.type, JSON):
+        return "'%s'" % json.dumps(value if value is not None else {})
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return "'%s'" % value.replace("'", "''")
+    if hasattr(value, "value"):  # Enum member
+        return "'%s'" % str(value.value).replace("'", "''")
+    return "NULL"
+
+
 async def init_db():
     """
     Initialize database tables and indexes safely.
@@ -87,6 +123,42 @@ async def init_db():
             if table.name in all_indexes:
                 for idx in all_indexes[table.name]:
                     table.indexes.add(idx)
+
+    # Step 3.5 — add columns missing from tables that already existed.
+    # create_all(checkfirst=True) skips a table entirely if it already
+    # exists — it never ALTERs it to pick up columns added to the model
+    # later (e.g. Project.chat_messages), so those silently never reach
+    # production until we add them explicitly here.
+    async with engine.begin() as conn:
+        def get_existing_columns(sync_conn):
+            inspector = inspect(sync_conn)
+            return {
+                table_name: {col["name"] for col in inspector.get_columns(table_name)}
+                for table_name in inspector.get_table_names()
+            }
+        existing_columns = await conn.run_sync(get_existing_columns)
+
+        for table in Base.metadata.tables.values():
+            db_columns = existing_columns.get(table.name)
+            if db_columns is None:
+                continue  # brand new table — create_all already added every column
+            for column in table.columns:
+                if column.name in db_columns:
+                    continue
+                ddl_type = column.type.compile(dialect=engine.dialect)
+                default_clause = ""
+                if not column.nullable:
+                    default_clause = f" DEFAULT {_column_default_sql(column)}"
+                nullable_clause = "" if column.nullable else " NOT NULL"
+                sql = (
+                    f"ALTER TABLE {table.name} ADD COLUMN {column.name} "
+                    f"{ddl_type}{default_clause}{nullable_clause}"
+                )
+                try:
+                    await conn.execute(text(sql))
+                    logger.info(f"✅ Added missing column {table.name}.{column.name}")
+                except Exception as e:
+                    logger.warning(f"Column {table.name}.{column.name} skipped: {e}")
 
     # Step 4 — create indexes using native SQLite IF NOT EXISTS
     # This never fails regardless of duplicates
