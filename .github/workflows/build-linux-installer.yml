@@ -25,7 +25,10 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
+    # Pinned to 22.04 (not ubuntu-latest/24.04): Tauri CLI v1 needs
+    # libwebkit2gtk-4.0-dev (webkit2gtk-soup2), which 24.04 dropped in
+    # favor of libwebkit2gtk-4.1-dev (soup3) — only available on 22.04.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
 
     steps:
