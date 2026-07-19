@@ -960,9 +960,12 @@ export default function ExportScreen() {
             </AnimatePresence>
           </motion.div>
 
-          {/* Android APK — build & poll */}
-          {hasMobileTargets && (
-            <motion.div
+          {/* Android APK — build & poll. Unconditional like Windows/Linux
+              above — platforms is AI-inferred from free-text wizard chat
+              with no manual picker or edit UI, so gating this on
+              hasMobileTargets silently hid the card for projects the AI
+              didn't explicitly tag as mobile. */}
+          <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
@@ -1119,7 +1122,6 @@ export default function ExportScreen() {
                 )}
               </AnimatePresence>
             </motion.div>
-          )}
         </div>
       </div>
       <ChatPanel projectId={projectId} phase="export" />
