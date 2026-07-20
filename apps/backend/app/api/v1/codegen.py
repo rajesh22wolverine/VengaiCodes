@@ -1,13 +1,17 @@
 # ═══════════════════════════════════════════════════════════════
 #  VengaiCode — Code Generation API Routes (Sprint 6, updated)
-#  api/v1/codegen.py — Generate a runnable starter code skeleton
-#  from approved architecture. Now REQUIRES entry-point wiring
-#  files (main.jsx, App.jsx, package.json, main.py, etc.) so the
-#  output is actually installable and startable, not just fragments.
+#  api/v1/codegen.py — Generate a REAL, working implementation from
+#  approved architecture — one dedicated AI call per model/route/
+#  screen file (each gets its own full token budget instead of many
+#  files sharing one small JSON response), then a final wiring pass
+#  (main.py, App.jsx, package.json, etc.) that stitches them into an
+#  installable, startable project.
 # ═══════════════════════════════════════════════════════════════
 
+import ast
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -52,157 +56,60 @@ class ApproveCodeRequest(BaseModel):
     approved: bool = True
 
 
-# ─── Prompt builder ───
-def build_codegen_prompt(project_name: str, architecture: dict, uiux: dict) -> str:
-    tech_stack = architecture.get("tech_stack", {})
-    tables = architecture.get("database_tables", [])
-    endpoints = architecture.get("api_endpoints", [])
-    screens = uiux.get("screens", [])
-
-    tables_text = "\n".join(
-        f"- {t.get('name')}: {t.get('purpose')} (fields: {', '.join(t.get('key_fields', []))})"
-        for t in tables
-    )
-    endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
-        for e in endpoints
-    )
-    screen_names = [s.get("name", "Screen") for s in screens]
-    screens_text = "\n".join(f"- {s.get('name')}: {s.get('purpose')}" for s in screens)
-    screens_list = ", ".join(screen_names) if screen_names else "Home"
-    frontend_lower = tech_stack.get("frontend", "").lower()
-    use_o3de = "o3de" in frontend_lower or "open 3d engine" in frontend_lower
-    if use_o3de:
-        body_intro = (
-            "Based on this approved architecture, generate a STARTER O3DE project scaffold that actually builds and runs — not isolated fragments, but a coherent Open 3D Engine project with placeholder workspace files, scene setup stubs, script modules, and engine-ready configuration."
-        )
-        game_stack_hint = (
-            "This project uses Open 3D Engine (O3DE). Generate the required O3DE project/workspace files, asset folder structure, and startup scene stub. Do not generate React/Vite files."
-        )
-    else:
-        body_intro = (
-            "Based on this approved architecture, generate a STARTER CODE SKELETON that actually builds and runs — not isolated fragments, but a coherent project with the exact wiring files a Vite + React app needs."
-        )
-        game_stack_hint = (
-            "If the app is a game, favor a modern web 3D engine such as React Three Fiber with Three.js, and generate a lightweight interactive game shell with WebGL content and game-like controls. If the app is not a game, generate a standard React + Tailwind web app."
-        )
-
-    return f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. {body_intro}
-
-App: {project_name}
-Backend: {tech_stack.get('backend', 'FastAPI + Python')}
-Frontend: {tech_stack.get('frontend', 'React + TypeScript')}
-Database: {tech_stack.get('database', 'PostgreSQL')}
-
-Database tables:
-{tables_text}
-
-API endpoints:
-{endpoints_text}
-
-Screens:
-{screens_text}
-
-{game_stack_hint}
-
-Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
-{{
-  "summary": "2-3 sentences on what was generated and what still needs to be built",
-  "files": [
-    {{
-      "path": "backend/models/example.py",
-      "language": "python",
-      "content": "# actual code here, 20-60 lines, syntactically valid",
-      "description": "1 sentence describing this file"
-    }}
-  ]
-}}
-
-CRITICAL — these EXACT files are REQUIRED. Without them the project cannot start at all:
-
-1. "frontend/src/main.jsx" — the Vite entry point. MUST contain exactly this pattern:
-   import React from 'react';
-   import ReactDOM from 'react-dom/client';
-   import App from './App';
-   ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-
-2. "frontend/src/App.jsx" — imports EVERY screen component listed below by its EXACT
-   filename and renders them (simple conditional rendering is fine; does not need
-   react-router). Import paths MUST exactly match the screen files you generate in
-   step 8 below (e.g. if you generate "frontend/src/screens/Dashboard.jsx", App.jsx
-   must import from "./screens/Dashboard").
-
-3. "backend/requirements.txt" — every Python package this project needs, pinned to
-   reasonable versions (fastapi, uvicorn, sqlalchemy, python-dotenv, etc.)
-
-4. "backend/main.py" — a real FastAPI entry point that imports every generated model
-   and route file, mounts them, and would actually start with `uvicorn main:app --reload`
-
-5. "frontend/package.json" — every npm package needed (react, react-dom, vite, and
-   the @vitejs/plugin-react dev dependency), with a "dev" script running "vite"
-
-6. "README_SETUP.md" — exact, copy-pasteable terminal commands to install and run
-   both backend and frontend locally
-
-7. ONE file per database table (SQLAlchemy model, imported by backend/main.py)
-
-8. ONE file with FastAPI route stubs covering all the API endpoints (imported by
-   backend/main.py, returning placeholder JSON data)
-
-9. ONE file PER SCREEN, using this EXACT path pattern: "frontend/src/screens/{{ScreenName}}.jsx"
-   — the screens to generate are: {screens_list}
-   Each MUST be a valid React functional component with a default export, and its
-   filename must exactly match the name used when App.jsx imports it.
-
-ADDITIONAL CRITICAL FILES FOR TAILWIND STYLING (FRONTEND):
-10. "frontend/src/index.css" — MUST exist and contain the Tailwind directives exactly:
-     @tailwind base;
-     @tailwind components;
-     @tailwind utilities;
-
-11. "frontend/tailwind.config.js" — Tailwind configuration file (minimal, with `content` pointing
-        to the frontend source files).
-
-12. "frontend/postcss.config.js" — PostCSS config that includes `tailwindcss` and `autoprefixer`.
-
-Styling rules (Tailwind-only):
-- The frontend MUST be styled exclusively using Tailwind CSS utility classes via `className` in JSX.
-- Do NOT create or import additional CSS files for component styles; only `frontend/src/index.css` is allowed
-    for Tailwind directives and very small helper utilities if strictly necessary.
-- Do NOT use inline `style={...}` or other CSS frameworks (Bootstrap, Material UI, etc.).
-- `frontend/src/main.jsx` MUST include `import './index.css';` alongside React/ReactDOM/App imports.
-- Include `tailwindcss`, `postcss`, and `autoprefixer` in `frontend/package.json` (devDependencies).
-- Provide at least one clear example UI element using Tailwind utilities (e.g. a responsive card or button
-    with `sm:`/`md:` prefixes) in the generated screens.
+# ─── Constants ───
+#
+# One big JSON call asking for every file used to mean each file's
+# share of the output budget shrank as the app grew, which is why
+# generated projects always looked like a thin skeleton. Every model,
+# route, and screen file below now gets its OWN AI call and its own
+# full token budget, so a 3-screen app and a 15-screen app both get
+# fully-implemented files instead of the second one getting starved.
+GROQ_FILE_MAX_TOKENS = 6000
+GROQ_WIRING_MAX_TOKENS = 4000
 
 
-Rules:
-- File extensions matter: React component files MUST use ".jsx", NOT ".js".
-- Keep each file concise — 20-60 lines (README_SETUP.md may be longer).
-- All code must be syntactically valid in its language.
-- Import paths must be internally CONSISTENT across files — if App.jsx imports
-    "./screens/Dashboard", the file "frontend/src/screens/Dashboard.jsx" must exist
-    and export a default component named "Dashboard" (or whatever import name is used).
+def _requirements_context(requirements: dict) -> str:
+    frd = requirements.get("frd", {}) if requirements else {}
+    if not frd:
+        return ""
 
-Frontend-specific constraints (summary):
-- Generate a complete Vite + React application with `frontend/src/main.jsx` as the entry.
-- `main.jsx` must import `./index.css` to enable Tailwind.
-- Include `tailwind.config.js` and `postcss.config.js`, and list `tailwindcss`, `postcss`, and
-    `autoprefixer` in `frontend/package.json` devDependencies.
-- All visual styling must use Tailwind utility classes in `className`. Provide at least one
-    representative component (button or card) demonstrating responsive utilities like `sm:`/`md:`.
+    features = frd.get("key_features", [])
+    stories = frd.get("user_stories", [])
+    features_text = "\n".join(f"- {f}" for f in features)
+    stories_text = "\n".join(f"- {s}" for s in stories)
 
-Backend:
-- Generate one SQLAlchemy model per database table.
-- Generate one FastAPI routes file covering all API endpoints using placeholder/mock implementations.
+    return f"""
+Problem this app solves: {frd.get('problem_statement', '')}
+Target users: {frd.get('target_users', '')}
 
-General:
-- Keep each file concise (20–60 lines).
-- All code must be syntactically valid.
-- Use realistic import statements.
-- Return ONLY valid JSON.
+Key features (implement the REAL logic for each of these — not a stub):
+{features_text}
 
-Respond with ONLY the JSON object, nothing else."""
+User stories (the code must actually satisfy these, not just render placeholder UI):
+{stories_text}
+"""
+
+
+def _slug(name: str) -> str:
+    """Turn a table/screen display name into a safe snake_case identifier."""
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", name or "item").strip("_").lower()
+    return cleaned or "item"
+
+
+def _pascal(name: str) -> str:
+    return "".join(word.capitalize() for word in re.split(r"[^a-zA-Z0-9]+", name) if word) or "Item"
+
+
+def strip_code_fences(text: str) -> str:
+    """Extract raw code from an AI response that may be wrapped in markdown fences."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    return cleaned
 
 
 def parse_ai_json(text: str) -> dict:
@@ -215,10 +122,386 @@ def parse_ai_json(text: str) -> dict:
     return json.loads(cleaned)
 
 
+# ─── Pre-packaging validation ───
+#
+# HONEST STATUS: Python files get a real syntax check via ast.parse(). JS/JSX
+# files don't — there's no JSX-aware parser available server-side without
+# adding a Node dependency, so this is a cheap heuristic (balanced delimiters
+# catches truncated output from hitting the token cap; a placeholder scan
+# catches the AI ignoring "no placeholders/TODOs"). It will not catch every
+# broken JS file, but it catches the failure modes actually seen from
+# single-shot LLM generation.
+def validate_generated_content(language: str, content: str) -> str | None:
+    """Returns a problem description, or None if the file looks OK."""
+    if not content.strip():
+        return "empty response"
+
+    if language == "python":
+        try:
+            ast.parse(content)
+        except SyntaxError as e:
+            return f"invalid Python syntax: {e}"
+        return None
+
+    if language == "javascript":
+        opens = sum(content.count(c) for c in "{([")
+        closes = sum(content.count(c) for c in "})]")
+        if opens != closes:
+            return f"unbalanced braces/brackets ({opens} open vs {closes} close — likely truncated)"
+        if "TODO" in content or "```" in content:
+            return "contains leftover TODO markers or markdown code fences"
+        return None
+
+    return None
+
+
+async def generate_text_validated(prompt: str, language: str, max_tokens: int) -> tuple[str, str | None]:
+    """Call generate_text(), validate the result, and retry once with the
+    specific problem appended to the prompt if validation fails."""
+    result = await generate_text(prompt, max_tokens=max_tokens)
+    content = strip_code_fences(result["text"])
+    issue = validate_generated_content(language, content)
+
+    if issue:
+        retry_prompt = (
+            f"{prompt}\n\nYour previous attempt was rejected: {issue}. "
+            f"Return the corrected, COMPLETE file only — no truncation, "
+            f"no markdown fences, no explanation."
+        )
+        result = await generate_text(retry_prompt, max_tokens=max_tokens)
+        content = strip_code_fences(result["text"])
+        issue = validate_generated_content(language, content)
+
+    return content, issue
+
+
+# ─── Native device capabilities, detected from the app's own requirements ───
+#
+# Keyword-matched against key_features + user_stories text (the same
+# requirements_text already assembled for every codegen prompt). Only
+# capabilities actually implied by the app get wired in — this is what makes
+# the generated APK reflect what THIS user asked for instead of shipping a
+# fixed generic plugin set to every project.
+NATIVE_CAPABILITY_KEYWORDS: dict[str, list[str]] = {
+    "camera": ["camera", "photo", "take a picture", "scan a", "upload an image"],
+    "push_notifications": ["push notification", "notify user", "alert user when", "send a notification"],
+    "geolocation": ["location", "gps", "map", "nearby", "distance from", "current position"],
+    "offline_storage": ["offline", "without internet", "local storage", "works without", "sync later"],
+    "share": ["share to", "share this", "share with", "social share", "invite a friend"],
+}
+
+# Pinned to ^5.0.0, matching the capacitor-android template's
+# @capacitor/core@^5.7.0 — a v7 plugin (Capacitor's current major upstream)
+# mixed with a v5 core breaks `cap sync`, so this must not float to "latest".
+NATIVE_CAPABILITY_PLUGINS: dict[str, tuple[str, str]] = {
+    "camera": ("@capacitor/camera", "^5.0.0"),
+    "push_notifications": ("@capacitor/push-notifications", "^5.0.0"),
+    "geolocation": ("@capacitor/geolocation", "^5.0.0"),
+    "offline_storage": ("@capacitor/preferences", "^5.0.0"),
+    "share": ("@capacitor/share", "^5.0.0"),
+}
+
+NATIVE_CAPABILITY_DESCRIPTIONS: dict[str, str] = {
+    "camera": "Camera: import { takePhoto } from '../native/camera'; await takePhoto() returns a photo URI to display or upload — use this for any photo/image capture user story instead of a browser file input.",
+    "push_notifications": "Push notifications: import { registerPushNotifications } from '../native/pushNotifications'; call it once (e.g. on mount) to register the device for push alerts.",
+    "geolocation": "Geolocation: import { getCurrentPosition } from '../native/geolocation'; await getCurrentPosition() returns { latitude, longitude } — use this for any location/nearby/distance user story.",
+    "offline_storage": "Offline storage: import { getLocal, setLocal } from '../native/offlineStorage'; use these to persist data locally so the screen still works without a network connection.",
+    "share": "Share: import { shareContent } from '../native/share'; await shareContent({ title, text, url }) opens the native share sheet — use this for any 'share to' / 'invite a friend' user story.",
+}
+
+NATIVE_CAPABILITY_FILE_CONTENTS: dict[str, str] = {
+    "camera": """import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+
+export async function takePhoto() {
+  const photo = await Camera.getPhoto({
+    resultType: CameraResultType.Uri,
+    source: CameraSource.Prompt,
+    quality: 80,
+  });
+  return photo.webPath;
+}
+""",
+    "push_notifications": """import { PushNotifications } from '@capacitor/push-notifications';
+
+export async function registerPushNotifications() {
+  const permission = await PushNotifications.requestPermissions();
+  if (permission.receive !== 'granted') {
+    return false;
+  }
+  await PushNotifications.register();
+  return true;
+}
+""",
+    "geolocation": """import { Geolocation } from '@capacitor/geolocation';
+
+export async function getCurrentPosition() {
+  const position = await Geolocation.getCurrentPosition();
+  return {
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+  };
+}
+""",
+    "offline_storage": """import { Preferences } from '@capacitor/preferences';
+
+export async function getLocal(key) {
+  const { value } = await Preferences.get({ key });
+  return value ? JSON.parse(value) : null;
+}
+
+export async function setLocal(key, value) {
+  await Preferences.set({ key, value: JSON.stringify(value) });
+}
+""",
+    "share": """import { Share } from '@capacitor/share';
+
+export async function shareContent({ title, text, url }) {
+  await Share.share({ title, text, url });
+}
+""",
+}
+
+NATIVE_CAPABILITY_FILENAMES: dict[str, str] = {
+    "camera": "camera.js",
+    "push_notifications": "pushNotifications.js",
+    "geolocation": "geolocation.js",
+    "offline_storage": "offlineStorage.js",
+    "share": "share.js",
+}
+
+
+def detect_native_capabilities(text: str) -> list[str]:
+    lowered = text.lower()
+    return [
+        capability
+        for capability, keywords in NATIVE_CAPABILITY_KEYWORDS.items()
+        if any(keyword in lowered for keyword in keywords)
+    ]
+
+
+def build_native_capability_files(capabilities: list[str]) -> list["GeneratedFile"]:
+    """Hand-written (not AI-generated) Capacitor plugin wrappers — these are
+    well-defined boilerplate, so a static correct wrapper beats an LLM guess."""
+    return [
+        GeneratedFile(
+            path=f"frontend/src/native/{NATIVE_CAPABILITY_FILENAMES[capability]}",
+            language="javascript",
+            content=NATIVE_CAPABILITY_FILE_CONTENTS[capability],
+            description=f"Native {capability.replace('_', ' ')} helper (Capacitor)",
+        )
+        for capability in capabilities
+        if capability in NATIVE_CAPABILITY_FILE_CONTENTS
+    ]
+
+
+# ─── Per-file generation (models, routes, screens) ───
+async def generate_model_file(project_name: str, table: dict, requirements_text: str) -> tuple[GeneratedFile, str | None]:
+    table_name = table.get("name", "Item")
+    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real SQLAlchemy model file for the "{table_name}" table of this app.
+
+App: {project_name}
+{requirements_text}
+Table purpose: {table.get('purpose', '')}
+Fields: {', '.join(table.get('key_fields', []))}
+
+Requirements:
+- Real column types, constraints (nullable, unique, defaults) matching the fields above.
+- Implement any validation, computed properties, or relationships implied by the key
+  features / user stories above — not a bare column list.
+- Use SQLAlchemy declarative style importing Base from "app.core.database".
+- No placeholders or TODOs — every field and method must be fully implemented.
+
+Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
+
+    content, issue = await generate_text_validated(prompt, "python", GROQ_FILE_MAX_TOKENS)
+    return GeneratedFile(
+        path=f"backend/models/{_slug(table_name)}.py",
+        language="python",
+        content=content,
+        description=f"SQLAlchemy model for {table_name}",
+    ), issue
+
+
+async def generate_routes_file(project_name: str, endpoints: list, tables: list, requirements_text: str) -> tuple[GeneratedFile, str | None]:
+    endpoints_text = "\n".join(
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in endpoints
+    )
+    model_imports = "\n".join(
+        f"- backend/models/{_slug(t.get('name', 'item'))}.py defines the {t.get('name')} model"
+        for t in tables
+    )
+
+    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real FastAPI routes file implementing every API endpoint below for this app.
+
+App: {project_name}
+{requirements_text}
+Available models to import and use:
+{model_imports}
+
+API endpoints to implement:
+{endpoints_text}
+
+Requirements:
+- Each endpoint MUST do real reads/writes against the SQLAlchemy models via a database
+  session (assume an async session dependency `get_db` importable from "app.core.database").
+- Implement real validation and correct HTTP status codes for error cases (404 for missing
+  records, 400/422 for bad input, etc.) — do not return hardcoded/fake JSON.
+- Implement the actual behavior implied by the key features and user stories above.
+- Use a FastAPI APIRouter named `router`.
+- No placeholders or TODOs — every endpoint must be fully implemented.
+
+Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
+
+    content, issue = await generate_text_validated(prompt, "python", GROQ_FILE_MAX_TOKENS)
+    return GeneratedFile(
+        path="backend/routes/api.py",
+        language="python",
+        content=content,
+        description="FastAPI routes implementing all API endpoints against the real models",
+    ), issue
+
+
+async def generate_screen_file(
+    project_name: str,
+    screen: dict,
+    endpoints: list,
+    requirements_text: str,
+    use_o3de: bool,
+    native_capabilities: list[str] | None = None,
+) -> tuple[GeneratedFile, str | None]:
+    screen_name = screen.get("name", "Screen")
+    component_name = _pascal(screen_name)
+    endpoints_text = "\n".join(
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in endpoints
+    )
+
+    if use_o3de:
+        prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete O3DE scene/script stub implementing the "{screen_name}" scene of this app.
+
+App: {project_name}
+{requirements_text}
+Scene purpose: {screen.get('purpose', '')}
+
+Implement the real behavior described above for this scene — no placeholders.
+Return ONLY the raw file content. No markdown fences, no explanation, no JSON."""
+    else:
+        available_capabilities = native_capabilities or []
+        capabilities_text = "\n".join(
+            f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in available_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        )
+        native_section = (
+            f"\nNative device features available to this app (import and use where relevant to "
+            f"this screen's user stories — do not fake this functionality with browser-only "
+            f"substitutes):\n{capabilities_text}\n"
+            if capabilities_text
+            else ""
+        )
+
+        prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real React functional component for the "{screen_name}" screen of this app.
+
+App: {project_name}
+{requirements_text}
+Screen purpose: {screen.get('purpose', '')}
+
+API endpoints this screen can call:
+{endpoints_text}
+{native_section}
+Requirements:
+- Component name: {component_name} (default export).
+- Fetch real data from the relevant API endpoints above (use `fetch`), handle loading and
+  error states, and implement the actual feature/user-story behavior for this screen — real
+  form handling, real list rendering from the API response, real interactions.
+- Style exclusively with Tailwind CSS utility classes via `className`. No inline styles,
+  no other CSS frameworks, no separate CSS file.
+- No placeholders or TODOs — this screen must be fully implemented, not static mockup content.
+
+Return ONLY the raw JSX/JS code for this one file. No markdown fences, no explanation, no JSON."""
+
+    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS)
+    return GeneratedFile(
+        path=f"frontend/src/screens/{component_name}.jsx",
+        language="javascript",
+        content=content,
+        description=f"Screen implementing {screen_name}",
+    ), issue
+
+
+# ─── Final wiring pass — stitches the real files above into a runnable project ───
+def build_wiring_prompt(
+    project_name: str,
+    tech_stack: dict,
+    model_files: list[GeneratedFile],
+    routes_file: GeneratedFile | None,
+    screen_files: list[GeneratedFile],
+    use_o3de: bool,
+) -> str:
+    model_list = ", ".join(f.path for f in model_files) or "(none)"
+    screen_components = ", ".join(_pascal(f.path.split("/")[-1].removesuffix(".jsx")) for f in screen_files)
+    screen_paths = ", ".join(f.path for f in screen_files) or "(none)"
+
+    if use_o3de:
+        return f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Generate the wiring/config files for an O3DE project.
+
+App: {project_name}
+Scene files already generated: {screen_paths}
+
+Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
+{{
+  "summary": "2-3 sentences on the project structure",
+  "files": [
+    {{"path": "...", "language": "...", "content": "...", "description": "..."}}
+  ]
+}}
+
+Include the O3DE project/workspace config files and a README_SETUP.md with exact setup commands.
+Return ONLY valid JSON, nothing else."""
+
+    return f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Generate ONLY the wiring/config files needed to make an already-implemented project installable and runnable. The real model/route/screen logic already exists — do not reimplement it, just wire it up correctly.
+
+App: {project_name}
+Backend: {tech_stack.get('backend', 'FastAPI + Python')}
+Frontend: {tech_stack.get('frontend', 'React + TypeScript')}
+
+Already-generated backend model files (import these into main.py): {model_list}
+Already-generated routes file (mount its `router` in main.py): {routes_file.path if routes_file else '(none)'}
+Already-generated screen components (import these EXACT names into App.jsx from their EXACT
+paths below, and render them): {screen_components or 'Home'}
+Screen file paths: {screen_paths}
+
+Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
+{{
+  "summary": "2-3 sentences on what was generated and how to run it",
+  "files": [
+    {{"path": "...", "language": "...", "content": "...", "description": "..."}}
+  ]
+}}
+
+Required files:
+1. "backend/main.py" — real FastAPI entry point importing every model file above and mounting
+   the routes router, startable with `uvicorn main:app --reload`.
+2. "backend/requirements.txt" — every Python package needed, pinned reasonably.
+3. "frontend/src/main.jsx" — Vite entry point:
+   import React from 'react';
+   import ReactDOM from 'react-dom/client';
+   import App from './App';
+   import './index.css';
+   ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+4. "frontend/src/App.jsx" — imports EVERY screen component listed above by its EXACT name from
+   its EXACT path and renders them (simple conditional/state-based navigation is fine).
+5. "frontend/package.json" — react, react-dom, vite, @vitejs/plugin-react, tailwindcss, postcss,
+   autoprefixer, with a "dev" script running "vite".
+6. "frontend/src/index.css" — the three Tailwind directives, nothing else.
+7. "frontend/tailwind.config.js" — minimal config with `content` covering frontend/src.
+8. "frontend/postcss.config.js" — includes tailwindcss and autoprefixer.
+9. "README_SETUP.md" — exact, copy-pasteable terminal commands to install and run both halves.
+
+Return ONLY valid JSON, nothing else."""
+
+
 @router.post(
     "/generate",
     response_model=GenerateCodeResponse,
-    summary="Generate starter code skeleton from approved architecture",
+    summary="Generate a real, working implementation from approved architecture",
 )
 async def generate_code(
     payload: GenerateCodeRequest,
@@ -226,9 +509,11 @@ async def generate_code(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Takes the approved architecture and UI/UX design and generates a
-    starter code skeleton — models, API route stubs, component shells,
-    plus the wiring files needed to actually install and run the project.
+    Takes the approved architecture, UI/UX design, and original requirements
+    and generates a real implementation — one dedicated AI call per model,
+    routes file, and screen (each with the full requirements context and its
+    own token budget), then a final wiring pass that stitches everything into
+    an installable, startable project.
     """
     result = await db.execute(
         select(Project).where(
@@ -249,14 +534,65 @@ async def generate_code(
 
     architecture = (project.architecture_data or {}).get("architecture", {})
     uiux = (project.uiux_data or {}).get("design", {})
+    requirements = project.requirements_data or {}
+    requirements_text = _requirements_context(requirements)
+
+    tech_stack = architecture.get("tech_stack", {})
+    tables = architecture.get("database_tables", [])
+    endpoints = architecture.get("api_endpoints", [])
+    screens = uiux.get("screens", []) or [{"name": "Home", "purpose": "Landing screen"}]
+    frontend_lower = tech_stack.get("frontend", "").lower()
+    use_o3de = "o3de" in frontend_lower or "open 3d engine" in frontend_lower
+
+    frd = requirements.get("frd", {}) or {}
+    native_capabilities = detect_native_capabilities(
+        " ".join(frd.get("key_features", []) or []) + " " + " ".join(frd.get("user_stories", []) or [])
+    ) if not use_o3de else []
+
+    validation_warnings: list[dict] = []
+
+    def _track(file_and_issue: tuple[GeneratedFile, str | None]) -> GeneratedFile:
+        file, issue = file_and_issue
+        if issue:
+            validation_warnings.append({"path": file.path, "reason": issue})
+        return file
 
     try:
-        prompt = build_codegen_prompt(project.name, architecture, uiux)
-        ai_result = await generate_text(prompt)
-        parsed = parse_ai_json(ai_result["text"])
+        model_files = [
+            _track(await generate_model_file(project.name, table, requirements_text))
+            for table in tables
+        ]
+
+        routes_file = None
+        if not use_o3de and endpoints:
+            routes_file = _track(await generate_routes_file(project.name, endpoints, tables, requirements_text))
+
+        screen_files = [
+            _track(await generate_screen_file(project.name, screen, endpoints, requirements_text, use_o3de, native_capabilities))
+            for screen in screens
+        ]
+
+        native_capability_files = build_native_capability_files(native_capabilities)
+
+        wiring_prompt = build_wiring_prompt(project.name, tech_stack, model_files, routes_file, screen_files, use_o3de)
+        wiring_result = await generate_text(wiring_prompt, max_tokens=GROQ_WIRING_MAX_TOKENS)
+        wiring_parsed = parse_ai_json(wiring_result["text"])
+
+        real_files = model_files + ([routes_file] if routes_file else []) + screen_files + native_capability_files
+        parsed = {
+            "summary": wiring_parsed.get(
+                "summary",
+                f"Generated {len(real_files)} real implementation files plus wiring/config.",
+            ),
+            "files": [f.model_dump() for f in real_files] + wiring_parsed.get("files", []),
+        }
         print("===== GENERATED FILES =====")
         for f in parsed.get("files", []):
             print(f["path"])
+        if validation_warnings:
+            print(f"===== VALIDATION WARNINGS ({len(validation_warnings)}) =====")
+            for w in validation_warnings:
+                print(f"{w['path']}: {w['reason']}")
         print("===========================")
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
@@ -272,6 +608,8 @@ async def generate_code(
     project.codegen_data = {
         "codegen": codegen_result.model_dump(),
         "files_generated": len(codegen_result.files),
+        "native_capabilities": native_capabilities,
+        "validation_warnings": validation_warnings,
         "user_approved": False,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }

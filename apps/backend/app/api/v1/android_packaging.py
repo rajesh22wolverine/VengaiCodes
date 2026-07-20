@@ -87,6 +87,17 @@ async def trigger_build(
             detail="Generated code must be approved before packaging.",
         )
 
+    validation_warnings = project.codegen_data.get("validation_warnings", [])
+    if validation_warnings:
+        bad_paths = ", ".join(w["path"] for w in validation_warnings)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"{len(validation_warnings)} generated file(s) failed validation and are "
+                f"likely to break the build: {bad_paths}. Regenerate the code before packaging."
+            ),
+        )
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/dispatches",

@@ -9,11 +9,28 @@
 #  VengaiCode product's own Expo mobile client (apps/mobile) — this
 #  workflow instead packages a per-project generated frontend.
 #
-#  HONEST STATUS: untested end-to-end — expect a debugging pass on
-#  the first real run, same caveat as the Windows workflow.
+#  CONFIRMED WORKING: this workflow has completed a real end-to-end
+#  run and produced an installable debug APK.
 #
 #  Triggered via: repository_dispatch event type
 #  "build-android-installer-app" with client_payload: { "project_id": "..." }
+#
+#  ── Enabling signed release builds (optional) ──
+#  By default this builds an unsigned debug APK (gradlew assembleDebug).
+#  To get a real signed release APK instead, generate your own keystore
+#  and set these 4 repo secrets — the build automatically switches to
+#  assembleRelease once all 4 are present (see apply_android_signing.py):
+#
+#    keytool -genkeypair -v -keystore release.keystore -alias vengaicode \
+#      -keyalg RSA -keysize 2048 -validity 10000
+#    base64 -w0 release.keystore > keystore.b64
+#    gh secret set ANDROID_KEYSTORE_BASE64 --repo rajesh22wolverine/VengaiCodes < keystore.b64
+#    gh secret set ANDROID_KEYSTORE_PASSWORD --repo rajesh22wolverine/VengaiCodes
+#    gh secret set ANDROID_KEY_ALIAS --repo rajesh22wolverine/VengaiCodes
+#    gh secret set ANDROID_KEY_PASSWORD --repo rajesh22wolverine/VengaiCodes
+#
+#  Keep release.keystore somewhere safe outside the repo — losing it means
+#  you can never publish an update under the same app identity again.
 # ═══════════════════════════════════════════════════════════════
 
 name: Build Android Installer
@@ -83,6 +100,12 @@ jobs:
           echo "so required build tooling (vite, capacitor, tailwind, etc.) survives injection."
           python3 ../.github/scripts/merge_package_json.py
 
+      - name: Add native capability plugin dependencies
+        working-directory: build
+        shell: bash
+        run: |
+          python3 ../.github/scripts/apply_native_capabilities.py
+
       - name: Update Capacitor config from merged package.json
         working-directory: build
         shell: bash
@@ -130,16 +153,37 @@ jobs:
         shell: bash
         run: npx cap sync android
 
-      - name: Build debug APK
+      - name: Configure release signing (if configured)
+        working-directory: build
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 ../.github/scripts/apply_android_signing.py
+
+      - name: Build APK (signed release if configured, otherwise debug)
         working-directory: build/android
         shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          if [ -f app/signing.gradle ]; then
+            echo "Signing configured — building signed release APK"
+            ./gradlew assembleRelease
+          else
+            echo "No signing keystore configured — building debug APK"
+            ./gradlew assembleDebug
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: vengaicode-app-android-apk
-          path: build/android/app/build/outputs/apk/debug/*.apk
+          path: build/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: warn

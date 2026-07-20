@@ -90,6 +90,7 @@ async def get_build_files(
     return {
         "project_name": project.name,
         "files": project.codegen_data.get("codegen", {}).get("files", []),
+        "native_capabilities": project.codegen_data.get("native_capabilities", []),
     }
 
 
