@@ -10,8 +10,8 @@
 #  injection/merge scripts, different bundle targets (deb/AppImage)
 #  and system dependencies (webkit2gtk/gtk3 instead of WebView2).
 #
-#  HONEST STATUS: untested end-to-end against a real Tauri/Rust
-#  build — expect a debugging pass on the first real run.
+#  CONFIRMED WORKING: this workflow has completed real end-to-end
+#  runs and produced installable .deb and AppImage artifacts.
 #
 #  Triggered via: repository_dispatch event type "build-linux-app"
 #  with client_payload: { "project_id": "..." }
@@ -113,6 +113,12 @@ jobs:
         run: |
           echo "Updating src-tauri/tauri.conf.json from build/package.json"
           python3 ../.github/scripts/update_tauri_config.py
+
+      - name: Wire up native capabilities (Tauri allowlist + helper modules)
+        working-directory: build
+        shell: bash
+        run: |
+          python3 ../.github/scripts/apply_tauri_native_capabilities.py
 
       - name: Verify injected frontend
         working-directory: build

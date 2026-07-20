@@ -190,83 +190,22 @@ NATIVE_CAPABILITY_KEYWORDS: dict[str, list[str]] = {
     "share": ["share to", "share this", "share with", "social share", "invite a friend"],
 }
 
-# Pinned to ^5.0.0, matching the capacitor-android template's
-# @capacitor/core@^5.7.0 — a v7 plugin (Capacitor's current major upstream)
-# mixed with a v5 core breaks `cap sync`, so this must not float to "latest".
-NATIVE_CAPABILITY_PLUGINS: dict[str, tuple[str, str]] = {
-    "camera": ("@capacitor/camera", "^5.0.0"),
-    "push_notifications": ("@capacitor/push-notifications", "^5.0.0"),
-    "geolocation": ("@capacitor/geolocation", "^5.0.0"),
-    "offline_storage": ("@capacitor/preferences", "^5.0.0"),
-    "share": ("@capacitor/share", "^5.0.0"),
-}
-
+# Interface only — the actual per-capability implementation (Capacitor on
+# Android, browser APIs + Tauri allowlist APIs on Windows/Linux) is written
+# at PACKAGING time by each platform's CI script (apply_native_capabilities.py
+# for Android, apply_tauri_native_capabilities.py for Windows/Linux), not
+# here. Every implementation exports the same function names/signatures
+# described below, so the same AI-generated screen works unmodified no
+# matter which platform ends up building the project — codegen only runs
+# ONCE per project, but a user can trigger Android/Windows/Linux builds
+# independently afterward, so this file must never bake in a
+# platform-specific package import.
 NATIVE_CAPABILITY_DESCRIPTIONS: dict[str, str] = {
     "camera": "Camera: import { takePhoto } from '../native/camera'; await takePhoto() returns a photo URI to display or upload — use this for any photo/image capture user story instead of a browser file input.",
     "push_notifications": "Push notifications: import { registerPushNotifications } from '../native/pushNotifications'; call it once (e.g. on mount) to register the device for push alerts.",
     "geolocation": "Geolocation: import { getCurrentPosition } from '../native/geolocation'; await getCurrentPosition() returns { latitude, longitude } — use this for any location/nearby/distance user story.",
     "offline_storage": "Offline storage: import { getLocal, setLocal } from '../native/offlineStorage'; use these to persist data locally so the screen still works without a network connection.",
-    "share": "Share: import { shareContent } from '../native/share'; await shareContent({ title, text, url }) opens the native share sheet — use this for any 'share to' / 'invite a friend' user story.",
-}
-
-NATIVE_CAPABILITY_FILE_CONTENTS: dict[str, str] = {
-    "camera": """import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
-
-export async function takePhoto() {
-  const photo = await Camera.getPhoto({
-    resultType: CameraResultType.Uri,
-    source: CameraSource.Prompt,
-    quality: 80,
-  });
-  return photo.webPath;
-}
-""",
-    "push_notifications": """import { PushNotifications } from '@capacitor/push-notifications';
-
-export async function registerPushNotifications() {
-  const permission = await PushNotifications.requestPermissions();
-  if (permission.receive !== 'granted') {
-    return false;
-  }
-  await PushNotifications.register();
-  return true;
-}
-""",
-    "geolocation": """import { Geolocation } from '@capacitor/geolocation';
-
-export async function getCurrentPosition() {
-  const position = await Geolocation.getCurrentPosition();
-  return {
-    latitude: position.coords.latitude,
-    longitude: position.coords.longitude,
-  };
-}
-""",
-    "offline_storage": """import { Preferences } from '@capacitor/preferences';
-
-export async function getLocal(key) {
-  const { value } = await Preferences.get({ key });
-  return value ? JSON.parse(value) : null;
-}
-
-export async function setLocal(key, value) {
-  await Preferences.set({ key, value: JSON.stringify(value) });
-}
-""",
-    "share": """import { Share } from '@capacitor/share';
-
-export async function shareContent({ title, text, url }) {
-  await Share.share({ title, text, url });
-}
-""",
-}
-
-NATIVE_CAPABILITY_FILENAMES: dict[str, str] = {
-    "camera": "camera.js",
-    "push_notifications": "pushNotifications.js",
-    "geolocation": "geolocation.js",
-    "offline_storage": "offlineStorage.js",
-    "share": "share.js",
+    "share": "Share: import { shareContent } from '../native/share'; await shareContent({ title, text, url }) shares/copies the content — use this for any 'share to' / 'invite a friend' user story.",
 }
 
 
@@ -276,21 +215,6 @@ def detect_native_capabilities(text: str) -> list[str]:
         capability
         for capability, keywords in NATIVE_CAPABILITY_KEYWORDS.items()
         if any(keyword in lowered for keyword in keywords)
-    ]
-
-
-def build_native_capability_files(capabilities: list[str]) -> list["GeneratedFile"]:
-    """Hand-written (not AI-generated) Capacitor plugin wrappers — these are
-    well-defined boilerplate, so a static correct wrapper beats an LLM guess."""
-    return [
-        GeneratedFile(
-            path=f"frontend/src/native/{NATIVE_CAPABILITY_FILENAMES[capability]}",
-            language="javascript",
-            content=NATIVE_CAPABILITY_FILE_CONTENTS[capability],
-            description=f"Native {capability.replace('_', ' ')} helper (Capacitor)",
-        )
-        for capability in capabilities
-        if capability in NATIVE_CAPABILITY_FILE_CONTENTS
     ]
 
 
@@ -572,13 +496,15 @@ async def generate_code(
             for screen in screens
         ]
 
-        native_capability_files = build_native_capability_files(native_capabilities)
-
         wiring_prompt = build_wiring_prompt(project.name, tech_stack, model_files, routes_file, screen_files, use_o3de)
         wiring_result = await generate_text(wiring_prompt, max_tokens=GROQ_WIRING_MAX_TOKENS)
         wiring_parsed = parse_ai_json(wiring_result["text"])
 
-        real_files = model_files + ([routes_file] if routes_file else []) + screen_files + native_capability_files
+        # Deliberately NOT adding native-capability helper files here — see
+        # the comment on NATIVE_CAPABILITY_DESCRIPTIONS above. Each packaging
+        # workflow writes its own platform-appropriate implementation of
+        # frontend/src/native/*.js at build time instead.
+        real_files = model_files + ([routes_file] if routes_file else []) + screen_files
         parsed = {
             "summary": wiring_parsed.get(
                 "summary",

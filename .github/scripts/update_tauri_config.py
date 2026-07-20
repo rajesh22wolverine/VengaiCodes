@@ -4,9 +4,20 @@ Run from the `build/` working directory, after merge_package_json.py.
 """
 import json
 import os
+import re
 
 PKG_PATH = "package.json"
 TAURI_PATH = "src-tauri/tauri.conf.json"
+
+# Tauri's bundle.identifier must contain only alphanumeric characters,
+# hyphens, and periods (confirmed against the v1 config docs) — npm package
+# names are allowed underscores and other characters .replace(' ', '') alone
+# doesn't strip, so a name like "my_todo_app" produced an identifier segment
+# Tauri's bundler would reject. Strip anything outside that charset instead.
+def safe_identifier_segment(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]", "", name.lower())
+    return slug or "generatedapp"
+
 
 if not os.path.exists(TAURI_PATH):
     print("tauri.conf.json not found in template; skipping update")
@@ -17,7 +28,7 @@ cfg = json.load(open(TAURI_PATH, "r", encoding="utf-8"))
 
 name = pkg.get("name") or pkg.get("productName") or "vengaicode-generated-app"
 version = pkg.get("version") or "0.1.0"
-identifier = f"com.vengaicode.{name.replace(' ', '').lower()}"
+identifier = f"com.vengaicode.{safe_identifier_segment(name)}"
 
 cfg.setdefault("package", {})["productName"] = name
 cfg["package"]["version"] = version
