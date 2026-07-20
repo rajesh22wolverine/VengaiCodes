@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 #  VengaiCode — Wizard API Routes (Sprint 2)
-#  api/v1/wizard.py — 7-layer question engine
+#  api/v1/wizard.py — 8-layer question engine
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -65,7 +65,11 @@ LAYERS = {
     },
     7: {
         "label": "References",
-        "prompt_suffix": "Ask ONE question about any existing apps they like or want to be similar to. This is the last question!",
+        "prompt_suffix": "Ask ONE question about any existing apps they like or want to be similar to.",
+    },
+    8: {
+        "label": "App Name",
+        "prompt_suffix": "Ask ONE question about what they'd like to name their app — a working title is fine, Baby Tiger can help refine it later. This is the last question!",
     },
 }
 
@@ -77,7 +81,7 @@ def build_prompt(
     current_layer: int,
     user_message: str,
 ) -> str:
-    layer = LAYERS.get(current_layer, LAYERS[7])
+    layer = LAYERS.get(current_layer, LAYERS[8])
 
     history_text = ""
     for msg in conversation_history[-6:]:  # Last 6 messages for context
@@ -88,7 +92,7 @@ def build_prompt(
 
 Project: {project_name}
 User's idea: {raw_idea}
-Current question layer: {current_layer}/7 ({layer['label']})
+Current question layer: {current_layer}/8 ({layer['label']})
 
 Conversation so far:
 {history_text}
@@ -102,7 +106,7 @@ Rules:
 - Keep your response under 3 sentences
 - Use simple language (no technical jargon)
 - Add a relevant emoji occasionally
-- If this is layer 7, end with "I think I understand your app well now! Let me create your requirements document 🐯"
+- If this is layer 8, end with "I think I understand your app well now! Let me create your requirements document 🐯"
 
 Your response:"""
 
@@ -119,7 +123,7 @@ async def wizard_message(
 ):
     """
     Multi-turn conversation with Baby Tiger.
-    Each message advances through the 7 question layers.
+    Each message advances through the 8 question layers.
     Returns AI response + understanding score progress.
     """
     # Get project
@@ -156,12 +160,18 @@ async def wizard_message(
     ):
         project.category = AppCategory.GAME
 
-    # Determine next layer
-    next_layer = min(payload.current_layer + 1, 7)
-    is_complete = payload.current_layer >= 7
+    # Capture the user-suggested app name from the final wizard question
+    if payload.current_layer == 8:
+        suggested_name = payload.user_message.strip()
+        if suggested_name:
+            project.name = suggested_name[:255]
 
-    # Calculate understanding score (each layer = ~14.3%)
-    understanding_score = min((payload.current_layer / 7) * 100, 100)
+    # Determine next layer
+    next_layer = min(payload.current_layer + 1, 8)
+    is_complete = payload.current_layer >= 8
+
+    # Calculate understanding score (each layer = 12.5%)
+    understanding_score = min((payload.current_layer / 8) * 100, 100)
 
     # Build prompt and call AI
     try:

@@ -20,6 +20,7 @@ const LAYER_LABELS = [
   "Target Users",
   "Monetization",
   "References",
+  "App Name",
 ];
 
 export default function WizardScreen() {
@@ -53,7 +54,7 @@ export default function WizardScreen() {
           // Start the conversation with Baby Tiger's opening
           const opening: Message = {
             role: "ai",
-            content: `Hi! I'm Baby Tiger 🐯 and I'm SO excited to help you build your app!\n\nI can see your idea: "${data.raw_idea}"\n\nI just need to ask you 7 quick questions to fully understand what you want to build. Let's start!\n\n**Question 1/7 — Core Idea:**\nWho is this app mainly for, and what's the ONE main thing they'll do in it?`,
+            content: `Hi! I'm Baby Tiger 🐯 and I'm SO excited to help you build your app!\n\nI can see your idea: "${data.raw_idea}"\n\nI just need to ask you 8 quick questions to fully understand what you want to build. Let's start!\n\n**Question 1/8 — Core Idea:**\nWho is this app mainly for, and what's the ONE main thing they'll do in it?`,
           };
           setMessages([opening]);
         }
@@ -167,7 +168,7 @@ export default function WizardScreen() {
                 {label}
               </span>
             </div>
-            {i < 6 && <div className="flex-1 h-px bg-[var(--color-border)] hidden sm:block" />}
+            {i < LAYER_LABELS.length - 1 && <div className="flex-1 h-px bg-[var(--color-border)] hidden sm:block" />}
           </div>
         ))}
       </div>
@@ -277,7 +278,7 @@ export default function WizardScreen() {
             </button>
           </div>
           <p className="text-xs text-[var(--color-text-tertiary)] mt-2 text-center">
-            Question {Math.min(currentLayer, 7)} of 7 — {LAYER_LABELS[Math.min(currentLayer, 7) - 1]}
+            Question {Math.min(currentLayer, LAYER_LABELS.length)} of {LAYER_LABELS.length} — {LAYER_LABELS[Math.min(currentLayer, LAYER_LABELS.length) - 1]}
           </p>
         </div>
       )}

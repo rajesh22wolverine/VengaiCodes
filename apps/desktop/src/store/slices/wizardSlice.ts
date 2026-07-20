@@ -1,7 +1,7 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 // ─── Wizard Conversation State ───
-// Full implementation arrives in Sprint 2 (7-layer question engine,
+// Full implementation arrives in Sprint 2 (8-layer question engine,
 // understanding score, 4-view requirements panel). This minimal slice
 // exists now so store/index.ts compiles and other slices can dispatch
 // `setTigerExpression` etc. during the SDLC flow without crashing.
@@ -14,7 +14,7 @@ export interface WizardMessage {
 
 interface WizardState {
   conversation: WizardMessage[];
-  currentLayer: number; // 1-7, see Phase 5 question engine
+  currentLayer: number; // 1-8, see Phase 5 question engine
   understandingScore: number; // 0-100
   isAiThinking: boolean;
 }

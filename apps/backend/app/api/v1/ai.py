@@ -58,7 +58,7 @@ async def ask(
     cloud API if Ollama is unavailable or too slow.
 
     This is intentionally minimal — Sprint 2+ will replace this
-    with the full 7-layer question engine, understanding score,
+    with the full 8-layer question engine, understanding score,
     and Smart Parallel Generation pipeline. This endpoint exists
     to prove the AI plumbing works end-to-end right now.
     """

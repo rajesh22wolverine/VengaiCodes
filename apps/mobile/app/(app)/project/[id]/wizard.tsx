@@ -23,7 +23,7 @@ interface Message {
   content: string;
 }
 
-const LAYER_LABELS = ["Core Idea", "Problem", "Key Features", "Platforms", "Target Users", "Monetization", "References"];
+const LAYER_LABELS = ["Core Idea", "Problem", "Key Features", "Platforms", "Target Users", "Monetization", "References", "App Name"];
 
 export default function WizardScreen() {
   const { id: projectId } = useLocalSearchParams<{ id: string }>();
@@ -54,7 +54,7 @@ export default function WizardScreen() {
           setMessages([
             {
               role: "ai",
-              content: `Hi! I'm Baby Tiger 🐯 and I'm SO excited to help you build your app!\n\nI can see your idea: "${data.raw_idea}"\n\nI just need to ask you 7 quick questions to fully understand what you want to build. Let's start!\n\nQuestion 1/7 — Core Idea:\nWho is this app mainly for, and what's the ONE main thing they'll do in it?`,
+              content: `Hi! I'm Baby Tiger 🐯 and I'm SO excited to help you build your app!\n\nI can see your idea: "${data.raw_idea}"\n\nI just need to ask you 8 quick questions to fully understand what you want to build. Let's start!\n\nQuestion 1/8 — Core Idea:\nWho is this app mainly for, and what's the ONE main thing they'll do in it?`,
             },
           ]);
         }
@@ -112,7 +112,7 @@ export default function WizardScreen() {
     );
   }
 
-  const activeLayer = Math.min(currentLayer, 7);
+  const activeLayer = Math.min(currentLayer, LAYER_LABELS.length);
 
   return (
     <KeyboardAvoidingView
@@ -225,7 +225,7 @@ export default function WizardScreen() {
             </Pressable>
           </View>
           <Text style={[styles.questionLabel, { color: colors.textTertiary }]}>
-            Question {activeLayer} of 7 — {LAYER_LABELS[activeLayer - 1]}
+            Question {activeLayer} of {LAYER_LABELS.length} — {LAYER_LABELS[activeLayer - 1]}
           </Text>
         </View>
       )}

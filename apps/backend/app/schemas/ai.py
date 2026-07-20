@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class AskRequest(BaseModel):
     """
     Minimal AI request — send a prompt, get a response.
-    This is the seed of the 7-layer question engine (Sprint 2+).
+    This is the seed of the 8-layer question engine (Sprint 2+).
     """
     prompt: str = Field(..., min_length=1, max_length=4000)
 

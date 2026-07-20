@@ -8,7 +8,7 @@ export interface WizardMessage {
 
 interface WizardState {
   conversation: WizardMessage[];
-  currentLayer: number; // 1-7
+  currentLayer: number; // 1-8
   understandingScore: number; // 0-100
   isAiThinking: boolean;
 }
