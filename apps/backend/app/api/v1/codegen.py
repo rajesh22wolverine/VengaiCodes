@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.orchestrator import AIError, generate_text
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
+from app.core.naming import slugify_app_name
 from app.models.project import Project, SDLCPhase
 from app.models.user import User
 
@@ -120,6 +121,27 @@ def parse_ai_json(text: str) -> dict:
             cleaned = cleaned[4:]
     cleaned = cleaned.strip()
     return json.loads(cleaned)
+
+
+def apply_package_json_name(files: list[dict], project_name: str) -> None:
+    """
+    Force frontend/package.json's "name" field to match the project's
+    name, regardless of what the AI picked. This is what
+    merge_package_json.py later reads to set the Tauri/Capacitor
+    productName and bundle id, so it has to be reliable rather than
+    just prompted for.
+    """
+    slug = slugify_app_name(project_name)
+    for f in files:
+        if f.get("path") == "frontend/package.json":
+            try:
+                pkg = json.loads(f["content"])
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Could not parse AI-generated package.json to patch its name")
+                return
+            pkg["name"] = slug
+            f["content"] = json.dumps(pkg, indent=2)
+            return
 
 
 # ─── Pre-packaging validation ───
@@ -412,8 +434,9 @@ Required files:
    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 4. "frontend/src/App.jsx" — imports EVERY screen component listed above by its EXACT name from
    its EXACT path and renders them (simple conditional/state-based navigation is fine).
-5. "frontend/package.json" — react, react-dom, vite, @vitejs/plugin-react, tailwindcss, postcss,
-   autoprefixer, with a "dev" script running "vite".
+5. "frontend/package.json" — "name" set to a lowercase-hyphenated slug of "{project_name}",
+   react, react-dom, vite, @vitejs/plugin-react, tailwindcss, postcss, autoprefixer, with a
+   "dev" script running "vite".
 6. "frontend/src/index.css" — the three Tailwind directives, nothing else.
 7. "frontend/tailwind.config.js" — minimal config with `content` covering frontend/src.
 8. "frontend/postcss.config.js" — includes tailwindcss and autoprefixer.
@@ -512,6 +535,7 @@ async def generate_code(
             ),
             "files": [f.model_dump() for f in real_files] + wiring_parsed.get("files", []),
         }
+        apply_package_json_name(parsed["files"], project.name)
         print("===== GENERATED FILES =====")
         for f in parsed.get("files", []):
             print(f["path"])

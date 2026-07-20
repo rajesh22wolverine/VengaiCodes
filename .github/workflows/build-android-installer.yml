@@ -181,6 +181,12 @@ jobs:
             ./gradlew assembleDebug
           fi
 
+      - name: Rename APK using the project's app name
+        working-directory: build
+        shell: bash
+        run: |
+          python3 ../.github/scripts/rename_android_apk.py
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

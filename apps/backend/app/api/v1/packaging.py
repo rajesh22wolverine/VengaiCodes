@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
+from app.core.naming import safe_filename
 from app.models.project import Project
 from app.models.user import User
 
@@ -314,7 +315,7 @@ async def list_build_artifacts(
                 # Note: GitHub returns artifacts as .zip wrappers, even for
                 # single-file artifacts like .msi. The user will extract to find
                 # the actual installer inside.
-                "download_filename": f"{a['name']}.zip",
+                "download_filename": f"{safe_filename(project.name)}-{a['name']}.zip",
             }
             for a in artifacts
         ],
@@ -385,7 +386,7 @@ async def download_build_artifact(
                 async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
                     yield chunk
 
-    filename = f"vengaicode-installer-{artifact_id}.zip"
+    filename = f"{safe_filename(project.name)}-installer-{artifact_id}.zip"
     return StreamingResponse(
         stream_artifact(),
         media_type="application/zip",

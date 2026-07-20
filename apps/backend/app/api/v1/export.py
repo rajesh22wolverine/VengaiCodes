@@ -10,7 +10,6 @@
 
 import io
 import logging
-import re
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,18 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
+from app.core.naming import safe_filename
 from app.models.project import AppCategory, Project
 from app.models.user import User
 
 logger = logging.getLogger("vengaicode.export")
 router = APIRouter()
-
-
-def safe_filename(name: str) -> str:
-    """Sanitize project name for use as a zip filename."""
-    cleaned = re.sub(r"[^\w\s-]", "", name).strip()
-    cleaned = re.sub(r"[\s]+", "_", cleaned)
-    return cleaned[:50] or "vengaicode_project"
 
 
 def build_export_filename(project_name: str, app_name: str | None = None) -> str:

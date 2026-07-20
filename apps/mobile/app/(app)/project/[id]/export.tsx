@@ -44,6 +44,16 @@ interface BuildArtifact {
 const POLL_INTERVAL_MS = 15000;
 const POLL_TIMEOUT_MS = 25 * 60 * 1000;
 
+// Turns a GitHub artifact's generic name (e.g. "vengaicode-app-windows-msi")
+// into one based on the user's app name, keeping the platform/format
+// suffix so multiple artifacts for the same platform stay distinct.
+function artifactDownloadName(appBaseName: string, githubArtifactName: string): string {
+  const cleaned = appBaseName.trim().replace(/[^\w\s-]/g, "").replace(/\s+/g, "_").slice(0, 50);
+  const safeBase = cleaned || "vengaicode_project";
+  const suffix = githubArtifactName.replace(/^vengaicode-?(app-)?/i, "");
+  return suffix ? `${safeBase}-${suffix}` : safeBase;
+}
+
 export default function ExportScreen() {
   const { id: projectId } = useLocalSearchParams<{ id: string }>();
   const { colors } = useTheme();
@@ -123,7 +133,10 @@ export default function ExportScreen() {
   const handleDownloadDocs = async () => {
     setIsDownloadingDocs(true);
     try {
-      await downloadAndShareFile(`/export/${projectId}/documents`, "documentation.zip");
+      await downloadAndShareFile(
+        `/export/${projectId}/documents`,
+        `${(appName || summary?.name || "vengaicode_project").trim()}_documentation.zip`
+      );
       showToast("Documentation bundle downloaded 🐯");
     } catch (error: any) {
       showToast(error.message || "Failed to download documentation.", "error");
@@ -190,7 +203,10 @@ export default function ExportScreen() {
 
   const downloadArtifact = async (artifactId: number, name: string) => {
     try {
-      await downloadAndShareFile(`/packaging/${projectId}/artifacts/${artifactId}/download`, `${name}.zip`);
+      await downloadAndShareFile(
+        `/packaging/${projectId}/artifacts/${artifactId}/download`,
+        `${artifactDownloadName(appName || summary?.name || "", name)}.zip`
+      );
       showToast("Downloaded! Extract the ZIP to find your installer 🐯");
     } catch (error: any) {
       showToast(error.message || "Failed to download installer.", "error");
@@ -264,7 +280,10 @@ export default function ExportScreen() {
 
   const downloadAndroidArtifact = async (artifactId: number, name: string) => {
     try {
-      await downloadAndShareFile(`/packaging/android/${projectId}/artifacts/${artifactId}/download`, `${name}.zip`);
+      await downloadAndShareFile(
+        `/packaging/android/${projectId}/artifacts/${artifactId}/download`,
+        `${artifactDownloadName(appName || summary?.name || "", name)}.zip`
+      );
       showToast("Downloaded! Extract the ZIP to find your APK 🐯");
     } catch (error: any) {
       showToast(error.message || "Failed to download APK.", "error");
@@ -338,7 +357,10 @@ export default function ExportScreen() {
 
   const downloadLinuxArtifact = async (artifactId: number, name: string) => {
     try {
-      await downloadAndShareFile(`/packaging/linux/${projectId}/artifacts/${artifactId}/download`, `${name}.zip`);
+      await downloadAndShareFile(
+        `/packaging/linux/${projectId}/artifacts/${artifactId}/download`,
+        `${artifactDownloadName(appName || summary?.name || "", name)}.zip`
+      );
       showToast("Downloaded! Extract the ZIP to find your installer 🐯");
     } catch (error: any) {
       showToast(error.message || "Failed to download installer.", "error");

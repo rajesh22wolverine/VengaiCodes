@@ -26,6 +26,16 @@ interface BuildArtifact {
   id: number;
 }
 
+// Turns a GitHub artifact's generic name (e.g. "vengaicode-app-windows-msi")
+// into one based on the user's app name, keeping the platform/format
+// suffix so multiple artifacts for the same platform stay distinct.
+function artifactDownloadName(appBaseName: string, githubArtifactName: string): string {
+  const cleaned = appBaseName.trim().replace(/[^\w\s-]/g, "").replace(/\s+/g, "_").slice(0, 50);
+  const safeBase = cleaned || "vengaicode_project";
+  const suffix = githubArtifactName.replace(/^vengaicode-?(app-)?/i, "");
+  return suffix ? `${safeBase}-${suffix}` : safeBase;
+}
+
 // Poll every 15 seconds — builds take minutes, no need to hammer the API
 const POLL_INTERVAL_MS = 15000;
 // Stop polling after 25 minutes even if GitHub Actions hasn't finished —
@@ -128,7 +138,7 @@ export default function ExportScreen() {
       });
       const contentDisposition = response.headers["content-disposition"] || "";
       const filenameMatch = contentDisposition.match(/filename\s*=\s*"?([^";]+)"?/i);
-      const downloadName = filenameMatch?.[1] || "documentation.zip";
+      const downloadName = filenameMatch?.[1] || `${(appName || summary?.name || "vengaicode_project").trim()}_documentation.zip`;
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
@@ -219,7 +229,7 @@ export default function ExportScreen() {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `${name}.zip`);
+      link.setAttribute("download", `${artifactDownloadName(appName || summary?.name || "", name)}.zip`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -311,7 +321,7 @@ export default function ExportScreen() {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `${name}.zip`);
+      link.setAttribute("download", `${artifactDownloadName(appName || summary?.name || "", name)}.zip`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -402,7 +412,7 @@ export default function ExportScreen() {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `${name}.zip`);
+      link.setAttribute("download", `${artifactDownloadName(appName || summary?.name || "", name)}.zip`);
       document.body.appendChild(link);
       link.click();
       link.remove();
