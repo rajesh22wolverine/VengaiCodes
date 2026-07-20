@@ -12,7 +12,20 @@
       "versionCode": 1
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow VengaiCode to access your microphone to record voice notes for your app designs."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow VengaiCode to access your photos so you can upload a design mockup.",
+          "cameraPermission": "Allow VengaiCode to use your camera to capture a design sketch or mockup."
+        }
+      ]
     ]
   }
 }

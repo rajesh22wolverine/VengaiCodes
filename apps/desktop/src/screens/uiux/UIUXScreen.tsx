@@ -11,6 +11,7 @@ import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
+import { buildPreviewDocument, sendEditorCommand, type PreviewSelection } from "@/lib/designPreview";
 
 interface ScreenDefinition {
   name: string;
@@ -70,6 +71,11 @@ export default function UIUXScreen() {
   const [isSavingCode, setIsSavingCode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [previewDoc, setPreviewDoc] = useState("");
+  const [selection, setSelection] = useState<PreviewSelection | null>(null);
+  const previewFrameRef = useRef<HTMLIFrameElement>(null);
+  const skipNextRebuildRef = useRef(false);
+
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -91,6 +97,65 @@ export default function UIUXScreen() {
       mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
     };
   }, []);
+
+  // Live preview: rebuild the iframe doc a beat after HTML/CSS changes so
+  // typing in the code editors is reflected without reloading on every
+  // keystroke. Visual edits made inside the iframe itself update
+  // editedHtml via the "content-changed" message below — skip the next
+  // rebuild in that case so we don't reload the frame the user is
+  // actively editing in.
+  useEffect(() => {
+    if (!expandedDesignId) return;
+    if (skipNextRebuildRef.current) {
+      skipNextRebuildRef.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      setPreviewDoc(buildPreviewDocument(editedHtml, editedCss));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [editedHtml, editedCss, expandedDesignId]);
+
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (!previewFrameRef.current || e.source !== previewFrameRef.current.contentWindow) return;
+      let data: any;
+      try {
+        data = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+      } catch {
+        return;
+      }
+      if (data?.source !== "vengaicode-preview") return;
+
+      if (data.type === "ready" || data.type === "deselect") {
+        setSelection(null);
+      } else if (data.type === "select") {
+        setSelection(data as PreviewSelection);
+      } else if (data.type === "content-changed") {
+        skipNextRebuildRef.current = true;
+        setEditedHtml(data.html);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  const updateStyle = (prop: string, value: string) => {
+    if (!selection) return;
+    sendEditorCommand(previewFrameRef.current?.contentWindow, { type: "set-style", prop, value });
+    setSelection((s) => (s ? { ...s, styles: { ...s.styles, [prop]: value } } : s));
+  };
+
+  const updatePlaceholder = (value: string) => {
+    if (!selection) return;
+    sendEditorCommand(previewFrameRef.current?.contentWindow, { type: "set-placeholder", value });
+    setSelection((s) => (s ? { ...s, placeholder: value } : s));
+  };
+
+  const clearPreviewSelection = () => {
+    sendEditorCommand(previewFrameRef.current?.contentWindow, { type: "deselect" });
+    setSelection(null);
+  };
 
   const loadOrGenerate = async () => {
     try {
@@ -309,6 +374,8 @@ export default function UIUXScreen() {
       );
       setEditedHtml(data.design.generated_html || "");
       setEditedCss(data.design.generated_css || "");
+      setSelection(null);
+      setPreviewDoc(buildPreviewDocument(data.design.generated_html || "", data.design.generated_css || ""));
       setExpandedDesignId(designId);
       toast.success("Code generated from your design! 🐯✨");
     } catch (error: any) {
@@ -321,10 +388,13 @@ export default function UIUXScreen() {
   const handleExpandDesign = (design: UploadedDesign) => {
     if (expandedDesignId === design.id) {
       setExpandedDesignId(null);
+      setSelection(null);
       return;
     }
     setEditedHtml(design.generated_html || "");
     setEditedCss(design.generated_css || "");
+    setSelection(null);
+    setPreviewDoc(buildPreviewDocument(design.generated_html || "", design.generated_css || ""));
     setExpandedDesignId(design.id);
   };
 
@@ -704,28 +774,143 @@ export default function UIUXScreen() {
                               )}
                             </div>
                           )}
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-                                HTML
-                              </label>
-                              <textarea
-                                value={editedHtml}
-                                onChange={(e) => setEditedHtml(e.target.value)}
-                                spellCheck={false}
-                                className="w-full h-48 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
-                              />
+                          <div className="grid gap-3 lg:grid-cols-2">
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                                  HTML
+                                </label>
+                                <textarea
+                                  value={editedHtml}
+                                  onChange={(e) => setEditedHtml(e.target.value)}
+                                  spellCheck={false}
+                                  className="w-full h-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                                  CSS
+                                </label>
+                                <textarea
+                                  value={editedCss}
+                                  onChange={(e) => setEditedCss(e.target.value)}
+                                  spellCheck={false}
+                                  className="w-full h-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
+                                />
+                              </div>
                             </div>
+
                             <div>
                               <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-                                CSS
+                                Live Preview — click any element to edit it directly
                               </label>
-                              <textarea
-                                value={editedCss}
-                                onChange={(e) => setEditedCss(e.target.value)}
-                                spellCheck={false}
-                                className="w-full h-48 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
-                              />
+                              <div className="relative rounded-lg border border-[var(--color-border)] overflow-hidden" style={{ height: 336 }}>
+                                <iframe
+                                  ref={previewFrameRef}
+                                  srcDoc={previewDoc}
+                                  sandbox="allow-scripts"
+                                  title="Design preview"
+                                  className="w-full h-full bg-white"
+                                />
+
+                                {selection && (
+                                  <div className="absolute top-2 right-2 w-52 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg space-y-2.5 text-xs">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-raised)] text-[var(--color-text-tertiary)]">
+                                        {selection.tag}
+                                      </span>
+                                      <button
+                                        onClick={clearPreviewSelection}
+                                        className="p-0.5 rounded hover:bg-[var(--color-surface-raised)]"
+                                        title="Deselect"
+                                      >
+                                        <X className="w-3.5 h-3.5 text-[var(--color-text-tertiary)]" />
+                                      </button>
+                                    </div>
+
+                                    {selection.isField ? (
+                                      <div>
+                                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Placeholder</label>
+                                        <input
+                                          value={selection.placeholder ?? ""}
+                                          onChange={(e) => updatePlaceholder(e.target.value)}
+                                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                                        />
+                                      </div>
+                                    ) : (
+                                      <p className="text-[10px] text-[var(--color-text-tertiary)] italic">
+                                        Click the text in the preview to edit it directly.
+                                      </p>
+                                    )}
+
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex-1">
+                                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Text</label>
+                                        <input
+                                          type="color"
+                                          value={selection.styles.color || "#000000"}
+                                          onChange={(e) => updateStyle("color", e.target.value)}
+                                          className="w-full h-7 rounded-md border border-[var(--color-border)] cursor-pointer"
+                                        />
+                                      </div>
+                                      <div className="flex-1">
+                                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Background</label>
+                                        <input
+                                          type="color"
+                                          value={selection.styles.backgroundColor || "#ffffff"}
+                                          onChange={(e) => updateStyle("backgroundColor", e.target.value)}
+                                          className="w-full h-7 rounded-md border border-[var(--color-border)] cursor-pointer"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    <div>
+                                      <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Font size</label>
+                                      <input
+                                        type="number"
+                                        min={8}
+                                        max={96}
+                                        value={selection.styles.fontSize}
+                                        onChange={(e) => updateStyle("fontSize", `${e.target.value}px`)}
+                                        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                                      />
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        onClick={() =>
+                                          updateStyle(
+                                            "fontWeight",
+                                            selection.styles.fontWeight === "bold" || parseInt(selection.styles.fontWeight) >= 700
+                                              ? "400"
+                                              : "700"
+                                          )
+                                        }
+                                        className={`flex-1 py-1.5 rounded-md border text-xs font-bold ${
+                                          selection.styles.fontWeight === "bold" || parseInt(selection.styles.fontWeight) >= 700
+                                            ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                                            : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                                        }`}
+                                      >
+                                        B
+                                      </button>
+                                      {(["left", "center", "right"] as const).map((align) => (
+                                        <button
+                                          key={align}
+                                          onClick={() => updateStyle("textAlign", align)}
+                                          className={`flex-1 py-1.5 rounded-md border text-[10px] capitalize ${
+                                            selection.styles.textAlign === align
+                                              ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                                              : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                                          }`}
+                                        >
+                                          {align}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <button
