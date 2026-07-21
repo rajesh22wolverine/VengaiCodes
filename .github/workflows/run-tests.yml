@@ -1,0 +1,160 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Real Test Execution Workflow (per-project)
+#
+#  Actually RUNS a project's generated + custom test files (rather
+#  than just generating them, which api/v1/testing.py's /generate
+#  and /custom-module already do) and reports structured pass/fail
+#  results back for the Testing phase UI's auto-fix loop.
+#
+#  Triggered via: repository_dispatch event type "run-tests-app"
+#  with client_payload: { "project_id": "..." }
+#
+#  HONEST SCOPE:
+#  - Backend tests always run via pytest regardless of whether the
+#    user picked "pytest" or "unittest" as their style — pytest runs
+#    unittest.TestCase-based files natively, so this is safe and
+#    avoids a second Python test runner.
+#  - Frontend tests run via whichever the user actually picked
+#    (Jest or Vitest) — Jest needs a minimal babel/jest config
+#    written by write_test_project_files.py since the generated
+#    project is Vite-based and has no Jest transform pipeline by
+#    default; Vitest needs no extra config, it reads the project's
+#    own vite.config.js.
+#  - A Postgres service container is always available at
+#    localhost:5432 for backend tests that need a live database —
+#    but if the generated "starter skeleton" code doesn't actually
+#    wire up DATABASE_URL/migrations, DB-dependent tests may still
+#    fail for reasons outside this workflow's control.
+#  - E2E frameworks (Playwright/Cypress) are intentionally not
+#    offered as selectable options (see testing.py) because they'd
+#    need a fully running deployed app, not just a checkout.
+# ═══════════════════════════════════════════════════════════════
+
+name: Run Tests
+run-name: "Run Tests - ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [run-tests-app]
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/testdb
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch generated code + tests from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching test files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/testing/$PROJECT_ID/files" \
+            -o project_test_files.json
+          echo "Fetched project_test_files.json"
+          cat project_test_files.json | head -c 500
+
+      - name: Write project files + prepare test runner config
+        id: write_files
+        shell: bash
+        run: |
+          python3 .github/scripts/write_test_project_files.py
+
+      - name: Setup Python
+        if: steps.write_files.outputs.has_backend == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend test dependencies
+        if: steps.write_files.outputs.has_backend == 'true'
+        shell: bash
+        run: |
+          pip install pytest pytest-json-report
+          if [ -f project/backend/requirements.txt ]; then
+            pip install -r project/backend/requirements.txt || echo "Some backend requirements failed to install — continuing anyway"
+          fi
+
+      - name: Run backend tests
+        if: steps.write_files.outputs.has_backend == 'true'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          python -m pytest --json-report --json-report-file=../../backend-results.json tests/ || true
+
+      - name: Setup Node.js
+        if: steps.write_files.outputs.has_frontend == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend test dependencies
+        if: steps.write_files.outputs.has_frontend == 'true'
+        working-directory: project/frontend
+        shell: bash
+        run: |
+          npm install
+          if [ "${{ steps.write_files.outputs.frontend_engine }}" = "jest" ]; then
+            npm install --no-save jest jest-environment-jsdom babel-jest @babel/preset-env @babel/preset-react @testing-library/react @testing-library/jest-dom
+          else
+            npm install --no-save vitest @testing-library/react @testing-library/jest-dom jsdom
+          fi
+
+      - name: Run frontend tests
+        if: steps.write_files.outputs.has_frontend == 'true'
+        working-directory: project/frontend
+        shell: bash
+        continue-on-error: true
+        run: |
+          if [ "${{ steps.write_files.outputs.frontend_engine }}" = "jest" ]; then
+            npx jest --json --outputFile=../../frontend-results.json || true
+          else
+            npx vitest run --environment=jsdom --reporter=json --outputFile=../../frontend-results.json || true
+          fi
+
+      - name: Merge test results
+        shell: bash
+        run: |
+          python3 .github/scripts/merge_test_results.py
+
+      - name: Upload test results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results.json
+          if-no-files-found: warn
+
+      - name: Fail the run if any test failed
+        shell: bash
+        run: |
+          FAILED=$(python3 -c "import json; print(json.load(open('test-results.json'))['failed'])")
+          echo "Failed tests: $FAILED"
+          if [ "$FAILED" != "0" ]; then
+            echo "Some tests failed."
+            exit 1
+          fi
+          echo "All tests passed."
