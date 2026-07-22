@@ -9,13 +9,14 @@
 #  UNLIKE O3DE, Godot is registered in stack_matrix.CI_BUILDABLE_GAME_
 #  ENGINES: its CLI export (`godot --headless --export-release`) uses
 #  pre-built export templates, not a multi-hour engine compile, so
-#  both android_packaging.py AND packaging.py (Windows) can turn this
-#  into a real installable build via CI — see
-#  .github/workflows/build-android-game-godot.yml and
-#  build-windows-game-godot.yml. ONE export_presets.cfg holds both
-#  platform presets (Godot's normal convention — a project's presets
-#  all live in one file), so codegen only runs once regardless of
-#  which platform(s) a user ends up building.
+#  android_packaging.py, packaging.py (Windows), AND linux_packaging.py
+#  can all turn this into a real installable build via CI — see
+#  .github/workflows/build-android-game-godot.yml,
+#  build-windows-game-godot.yml, and build-linux-game-godot.yml. ONE
+#  export_presets.cfg holds all three platform presets (Godot's normal
+#  convention — a project's presets all live in one file), so codegen
+#  only runs once regardless of which platform(s) a user ends up
+#  building.
 #
 #  HONEST STATUS: no Godot editor/binary is available in this
 #  environment to live-verify a real export (same class of limitation
@@ -23,19 +24,21 @@
 #  used in the screen prompt (HTTPRequest, JSON.parse_string, the
 #  Control-node layout calls) and the project.godot / Main.tscn shapes
 #  below are standard, stable Godot 4 patterns. export_presets.cfg's
-#  field names for BOTH presets (Android: keystore/debug, keystore/
+#  field names for ALL THREE presets (Android: keystore/debug, keystore/
 #  release, package/unique_name, architectures/arm64-v8a, gradle_build/
 #  use_gradle_build; Windows Desktop: binary_format/architecture,
-#  texture_format/s3tc_bptc, codesign/enable, application/product_name)
-#  were cross-checked against a real, working reference project —
-#  abarichello/godot-ci's test-project — rather than invented; that
-#  project is also the source for the CI keystore-signing approach used
-#  in the Android workflow (sed-patching keystore/release* fields,
-#  never regenerating the whole file). binary_format/embed_pck is set
-#  to true (unlike that reference's default of false) so a Windows
-#  export produces one standalone .exe instead of an .exe+.pck pair —
+#  texture_format/s3tc_bptc, codesign/enable, application/product_name;
+#  Linux: platform="Linux" even though the preset NAME is "Linux/X11" —
+#  easy to get backwards without checking) were cross-checked against a
+#  real, working reference project — abarichello/godot-ci's test-project
+#  — rather than invented; that project is also the source for the CI
+#  keystore-signing approach used in the Android workflow (sed-patching
+#  keystore/release* fields, never regenerating the whole file).
+#  binary_format/embed_pck is set to true for Windows AND Linux (unlike
+#  that reference's default of false) so each export produces one
+#  standalone binary instead of a binary+.pck pair —
 #  a real, documented toggle, not an invented field. Treat
-#  export_presets.cfg as the least-verified piece here — both
+#  export_presets.cfg as the least-verified piece here — all three
 #  workflows' own headers repeat this caveat.
 # ═══════════════════════════════════════════════════════════════
 
@@ -241,6 +244,41 @@ application/export_angle=0
 application/export_d3d12=0
 application/d3d12_agility_sdk_multiarch=true
 ssh_remote_deploy/enabled=false
+
+[preset.2]
+
+name="Linux/X11"
+platform="Linux"
+runnable=true
+advanced_options=false
+dedicated_server=false
+custom_features=""
+export_filter="all_resources"
+include_filter=""
+exclude_filter=""
+export_path="build.x86_64"
+encryption_include_filters=""
+encryption_exclude_filters=""
+encrypt_pck=false
+encrypt_directory=false
+script_export_mode=2
+
+[preset.2.options]
+
+custom_template/debug=""
+custom_template/release=""
+debug/export_console_wrapper=1
+binary_format/embed_pck=true
+binary_format/architecture="x86_64"
+binary_format/64_bits=true
+texture_format/s3tc_bptc=true
+texture_format/etc2_astc=false
+texture_format/bptc=true
+texture_format/s3tc=true
+texture_format/etc=true
+texture_format/etc2=true
+texture_format/no_bptc_fallbacks=true
+ssh_remote_deploy/enabled=false
 """
 
 _MAIN_TSCN = """[gd_scene load_steps=2 format=3]
@@ -319,7 +357,7 @@ def manifest_files(project_name: str) -> list[GeneratedFile]:
             path="frontend/export_presets.cfg",
             language="ini",
             content=_EXPORT_PRESETS_CFG.format(package_name=package_name, project_name=project_name),
-            description="Android + Windows Desktop export presets (least-verified file in this pipeline — see godot.py header)",
+            description="Android + Windows Desktop + Linux export presets (least-verified file in this pipeline — see godot.py header)",
         ),
     ]
 
@@ -349,5 +387,6 @@ def setup_commands(project_name: str) -> list[str]:
         "# Open this folder as a project in Godot, or run headlessly:",
         'godot --headless --export-debug "Android" build.apk           # requires Android export templates installed',
         'godot --headless --export-debug "Windows Desktop" build.exe   # requires Windows export templates installed',
+        'godot --headless --export-debug "Linux/X11" build.x86_64      # requires Linux export templates installed',
         "# Or open the project in the Godot editor and use Project > Export.",
     ]

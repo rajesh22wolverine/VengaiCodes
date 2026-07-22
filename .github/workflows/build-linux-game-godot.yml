@@ -1,0 +1,119 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Godot Engine Linux Game Build (per-project)
+#
+#  Builds a REAL Linux game binary from a Godot 4 project — the same
+#  generated project as build-android-game-godot.yml and
+#  build-windows-game-godot.yml (one export_presets.cfg holds all
+#  three presets — see godot.py header). Godot's headless export
+#  packages pre-built templates for the CHOSEN target regardless of
+#  host OS, so this runs on the same barichello/godot-ci Linux image
+#  as the other two Godot workflows — no cross-compilation trickery
+#  needed since the host already IS Linux for this one target.
+#
+#  Triggered via: repository_dispatch event type
+#  "build-linux-game-godot-app" with client_payload:
+#  { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — same caveats as
+#  the Android/Windows Godot workflows. The Linux preset's field names
+#  (and the fact that its NAME is "Linux/X11" while its `platform=`
+#  value is "Linux") were cross-checked against abarichello/godot-ci's
+#  real test-project export_presets.cfg — see godot.py's header for
+#  the full diligence note. No code-signing concept on Linux at all,
+#  so — like the Windows Godot pipeline — there's no signing gate.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Linux Game (Godot)
+run-name: "Linux game (Godot) build — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [build-linux-game-godot-app]
+
+jobs:
+  build-linux-game-godot:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Same as the other two Godot workflows — this image is purpose-built
+      # for exports, python3 isn't guaranteed preinstalled.
+      - name: Ensure python3 is available
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Write generated Godot project into build/
+        shell: bash
+        run: |
+          mkdir -p build
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Verify the Godot project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f
+
+          for required in project.godot export_presets.cfg Main.tscn Main.gd; do
+            if [ ! -f "$required" ]; then
+              echo "$required NOT FOUND"
+              exit 1
+            fi
+          done
+          echo "Godot project looks complete"
+
+      - name: Import project resources (generates .godot/ cache Godot needs before exporting)
+        working-directory: build
+        shell: bash
+        run: godot --headless --verbose --import
+
+      - name: Compute output filename from the project's app name
+        id: bin_name
+        working-directory: build
+        shell: bash
+        run: |
+          SAFE_NAME=$(python3 -c "
+          import json, re
+          data = json.load(open('../project_files.json', encoding='utf-8'))
+          name = data.get('project_name') or 'vengaicode_app'
+          cleaned = re.sub(r'[^\w\s-]', '', name).strip()
+          cleaned = re.sub(r'\s+', '_', cleaned)
+          print((cleaned[:50] or 'vengaicode_app'))
+          ")
+          echo "Using output filename: $SAFE_NAME.x86_64"
+          echo "name=$SAFE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Export Linux build (release — no signing concept on Linux to gate on)
+        working-directory: build
+        shell: bash
+        run: |
+          mkdir -p dist
+          godot --headless --verbose --export-release "Linux/X11" "dist/${{ steps.bin_name.outputs.name }}.x86_64"
+          chmod +x "dist/${{ steps.bin_name.outputs.name }}.x86_64"
+
+      - name: Upload Linux binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-linux-game-godot
+          path: build/dist/*.x86_64
+          if-no-files-found: warn

@@ -1,16 +1,31 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — Linux Packaging API Routes (per-project .deb/AppImage builds)
+#  VengaiCode — Linux Packaging API Routes (per-project builds)
 #  api/v1/linux_packaging.py — Trigger, poll, and download
-#  GitHub Actions-built Linux installers
+#  GitHub Actions-built Linux binaries
 #
-#  Mirrors packaging.py (Windows installer builds) but targets
-#  build-linux-installer.yml instead. Reuses the same
-#  GET /packaging/{project_id}/files endpoint for fetching generated
+#  Mirrors packaging.py (Windows)/android_packaging.py's routing: a
+#  "web" category frontend (React/Vue/Angular/Svelte/Plain HTML-JS)
+#  gets wrapped in Tauri/webkit2gtk (build-linux-installer.yml,
+#  CONFIRMED WORKING); Flutter gets a REAL native (non-WebView) build
+#  since its codegen already emits a complete Dart project
+#  (build-linux-native-flutter.yml); Godot gets a real game engine
+#  export (build-linux-game-godot.yml). O3DE and Jetpack Compose/
+#  SwiftUI have no automated Linux pipeline — O3DE's engine build is
+#  too heavy for CI, Compose/SwiftUI are mobile-only frameworks with
+#  no Linux target at all — see stack_matrix.CI_BUILDABLE_GAME_ENGINES
+#  for why Godot but not O3DE.
+#
+#  Reuses GET /packaging/{project_id}/files for fetching generated
 #  code — that endpoint is platform-agnostic.
 #
-#  HONEST STATUS: written but UNTESTED end-to-end, same caveats as
-#  packaging.py. Requires the same GITHUB_TOKEN / GITHUB_REPO /
-#  BUILD_SECRET settings — no separate configuration needed.
+#  HONEST STATUS: build-linux-installer.yml is CONFIRMED WORKING. The
+#  two new native/game workflows are written but UNTESTED end-to-end —
+#  no Flutter SDK/Godot binary available in this dev environment to
+#  live-verify, same class of limitation documented in
+#  android_packaging.py's and packaging.py's headers for their own new
+#  pipelines. Requires the same GITHUB_TOKEN / GITHUB_REPO /
+#  BUILD_SECRET settings for all three — no separate configuration
+#  needed.
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -22,7 +37,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.stack_matrix import FRONTEND_FRAMEWORKS, get_project_stack
+from app.ai.stack_matrix import CI_BUILDABLE_GAME_ENGINES, FRONTEND_FRAMEWORKS, get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
@@ -34,7 +49,25 @@ logger = logging.getLogger("vengaicode.linux_packaging")
 router = APIRouter()
 
 GITHUB_API = "https://api.github.com"
-WORKFLOW_FILE = "build-linux-installer.yml"
+
+# frontend_framework -> (workflow YAML file, repository_dispatch event_type).
+# Mirrors android_packaging.py's/packaging.py's _workflow_for_stack shape.
+_NATIVE_WORKFLOW_ROUTES: dict[str, tuple[str, str]] = {
+    "flutter": ("build-linux-native-flutter.yml", "build-linux-native-flutter-app"),
+}
+_WEB_WORKFLOW: tuple[str, str] = ("build-linux-installer.yml", "build-linux-app")
+_GODOT_WORKFLOW: tuple[str, str] = ("build-linux-game-godot.yml", "build-linux-game-godot-app")
+
+
+def _workflow_for_stack(stack_info: dict) -> tuple[str, str] | None:
+    """Returns (workflow_file, dispatch_event_type), or None if this
+    project's frontend has no automated Linux build pipeline."""
+    fe = stack_info["frontend_framework"]
+    if FRONTEND_FRAMEWORKS[fe]["category"] == "web":
+        return _WEB_WORKFLOW
+    if fe in CI_BUILDABLE_GAME_ENGINES:
+        return _GODOT_WORKFLOW
+    return _NATIVE_WORKFLOW_ROUTES.get(fe)
 
 
 # ─── Schemas ───
@@ -100,20 +133,18 @@ async def trigger_build(
             ),
         )
 
-    # This pipeline wraps a compiled web bundle (Vite frontend) in Tauri —
-    # it has no way to consume a Flutter/SwiftUI/Jetpack Compose project,
-    # none of which produce a web bundle at all. Same precedent O3DE
-    # already set: not run through installer-build CI, template+README only.
     stack_info = get_project_stack(project)
-    if FRONTEND_FRAMEWORKS[stack_info["frontend_framework"]]["category"] != "web":
+    route = _workflow_for_stack(stack_info)
+    if route is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "This project's frontend doesn't produce a web bundle this pipeline can wrap — "
-                "only React/Vue/Angular/Svelte/Plain HTML-JS support one-click packaging. "
-                "Download the source and follow README_SETUP.md instead."
+                "This project's frontend doesn't have an automated Linux build pipeline yet "
+                "(Jetpack Compose/SwiftUI are mobile-only; Open 3D Engine's build is too heavy "
+                "to run in CI). Download the source and follow README_SETUP.md instead."
             ),
         )
+    _, event_type = route
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -123,7 +154,7 @@ async def trigger_build(
                 "Accept": "application/vnd.github+json",
             },
             json={
-                "event_type": "build-linux-app",
+                "event_type": event_type,
                 "client_payload": {"project_id": payload.project_id},
             },
         )
@@ -170,10 +201,15 @@ async def get_build_status(
             detail="Packaging is not configured yet.",
         )
 
+    route = _workflow_for_stack(get_project_stack(project))
+    if route is None:
+        return BuildStatusResponse(status="not_started")
+    workflow_file, _ = route
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{WORKFLOW_FILE}/runs",
+            f"{workflow_file}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
@@ -230,10 +266,18 @@ async def list_build_artifacts(
             detail="Packaging is not configured yet.",
         )
 
+    route = _workflow_for_stack(get_project_stack(project))
+    if route is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed build found for this project. Trigger a build first.",
+        )
+    workflow_file, _ = route
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         runs_response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{WORKFLOW_FILE}/runs",
+            f"{workflow_file}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",

@@ -1,0 +1,132 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Flutter Native Linux Build (per-project)
+#
+#  Builds a REAL native Linux desktop app (Dart compiled to native
+#  x86_64 code via Flutter's own Linux toolchain, GTK3 under the
+#  hood) — no WebView, no wrapped web bundle. Same shape as the
+#  Android/Windows Flutter pipelines: the Flutter adapter only emits
+#  Dart SOURCE (pubspec.yaml + lib/), so `flutter create` scaffolds
+#  the linux/ platform folder FIRST, then the generated pubspec.yaml/
+#  lib/ overlay on top of that scaffold.
+#
+#  Runs on ubuntu-latest (unlike the Windows Flutter pipeline, which
+#  needs windows-latest for MSVC) — `flutter build linux` just needs
+#  a handful of apt packages (clang, cmake, ninja-build, GTK3 dev
+#  headers), all available on any Ubuntu runner.
+#
+#  No release/signing gate (same reasoning as Windows): Linux desktop
+#  apps have no keystore-equivalent blocking a release build, so this
+#  always builds --release for a real, optimized binary.
+#
+#  Triggered via: repository_dispatch event type
+#  "build-linux-native-flutter-app" with client_payload:
+#  { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no Flutter SDK
+#  available in this dev environment to live-verify, same caveat as
+#  the Android/Windows Flutter pipelines. The apt package list
+#  (clang, cmake, ninja-build, pkg-config, libgtk-3-dev) is Flutter's
+#  own documented Linux desktop prerequisite set, not guessed. Like
+#  the Windows pipeline, Flutter's Linux build output directory layout
+#  has changed across versions — the upload step uses a glob covering
+#  both known layouts rather than a single hardcoded path.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Linux (Flutter, native)
+run-name: "Linux native (Flutter) build — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [build-linux-native-flutter-app]
+
+jobs:
+  build-linux-native-flutter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Flutter Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable Linux desktop support
+        shell: bash
+        run: flutter config --enable-linux-desktop
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Determine Dart project name
+        id: project_name
+        shell: bash
+        run: |
+          NAME=$(python3 .github/scripts/extract_flutter_project_name.py)
+          echo "Using Flutter project name: $NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Scaffold a real Flutter project (linux/ platform folder)
+        shell: bash
+        run: |
+          flutter create --platforms=linux \
+            --project-name "${{ steps.project_name.outputs.name }}" \
+            --org com.vengaicode.generated \
+            build
+
+      - name: Overlay generated Dart source onto the scaffold
+        shell: bash
+        run: |
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Verify the Flutter project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f -not -path "./linux/flutter/ephemeral/*"
+
+          for required in pubspec.yaml lib/main.dart linux/CMakeLists.txt; do
+            if [ ! -f "$required" ]; then
+              echo "$required NOT FOUND"
+              exit 1
+            fi
+          done
+          echo "Flutter project looks complete"
+
+      - name: Install Dart dependencies
+        working-directory: build
+        shell: bash
+        run: flutter pub get
+
+      - name: Build Linux app (release)
+        working-directory: build
+        shell: bash
+        run: flutter build linux --release
+
+      - name: Upload Linux app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-linux-flutter
+          path: |
+            build/build/linux/x64/release/bundle/**
+            build/build/linux/release/bundle/**
+          if-no-files-found: warn
