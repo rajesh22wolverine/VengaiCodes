@@ -155,6 +155,14 @@ api_router.include_router(
     tags=["Architecture"],
 )
 
+# ── Stack Selection ──
+from app.api.v1 import stack
+api_router.include_router(
+    stack.router,
+    prefix="/stack",
+    tags=["Stack Selection"],
+)
+
 # ── Code Generation ──
 from app.api.v1 import codegen
 api_router.include_router(

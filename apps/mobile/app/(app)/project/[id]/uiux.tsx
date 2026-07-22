@@ -143,8 +143,8 @@ export default function UIUXScreen() {
     setIsApproving(true);
     try {
       await apiClient.post("/uiux/approve", { project_id: projectId, approved: true });
-      showToast("Design approved! Next: Architecture 🐯");
-      router.replace(`/(app)/project/${projectId}/architecture` as any);
+      showToast("Design approved! Next: pick your tech stack 🐯");
+      router.replace(`/(app)/project/${projectId}/stack` as any);
     } catch (error: any) {
       showToast(error.message || "Failed to approve.", "error");
     } finally {

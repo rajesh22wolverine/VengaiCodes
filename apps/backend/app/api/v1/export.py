@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.stack_matrix import get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
 from app.core.naming import safe_filename
@@ -141,9 +142,7 @@ def add_template_folder_to_zip(zip_file: zipfile.ZipFile, template_dir: Path, pr
 
 
 def is_o3de_project(project: Project) -> bool:
-    architecture = (project.architecture_data or {}).get("architecture", {})
-    frontend = (architecture.get("tech_stack", {}) or {}).get("frontend", "")
-    return isinstance(frontend, str) and ("o3de" in frontend.lower() or "open 3d engine" in frontend.lower())
+    return get_project_stack(project)["frontend_framework"] == "o3de"
 
 
 @router.get(

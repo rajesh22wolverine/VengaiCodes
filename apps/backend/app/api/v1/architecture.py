@@ -66,13 +66,42 @@ class ApproveArchitectureRequest(BaseModel):
 
 
 # ─── Prompt builder ───
+def build_stack_directive(selected_stack: dict | None) -> str:
+    """
+    Renders the user's explicit UI/backend/API pick (from the Stack step,
+    /api/v1/stack) as a directive for the architecture prompt, so the pick
+    actually reaches what the AI proposes instead of being ignored.
+    """
+    if not selected_stack:
+        return ""
+
+    directive = (
+        f"\nThe user has EXPLICITLY chosen this tech stack — use EXACTLY this, "
+        f"do not substitute a different framework or language:\n"
+        f"- Frontend: {selected_stack.get('frontend_framework')} "
+        f"({selected_stack.get('frontend_language')})\n"
+        f"- Backend: {selected_stack.get('backend_framework')} "
+        f"({selected_stack.get('backend_language')})\n"
+        f"- API style: {selected_stack.get('api_style')}\n"
+    )
+    if not selected_stack.get("buildable_now", True):
+        directive += (
+            "Note: this stack is valid but not yet buildable by VengaiCode's code "
+            "generator — the user has already been told code generation will "
+            "substitute the closest buildable stack, so still describe the "
+            "architecture in terms of their chosen stack here.\n"
+        )
+    return directive
+
+
 def build_architecture_prompt(
-    project_name: str, requirements: dict, uiux: dict
+    project_name: str, requirements: dict, uiux: dict, selected_stack: dict | None = None
 ) -> str:
     features = ", ".join(requirements.get("key_features", []))
     platforms = ", ".join(requirements.get("platforms", []))
     screen_names = ", ".join(s.get("name", "") for s in uiux.get("screens", []))
     tech_hint = requirements.get("tech_recommendations", "")
+    stack_directive = build_stack_directive(selected_stack)
 
     return f"""You are Baby Tiger 🐯, VengaiCode's AI architecture assistant. Based on this app's approved requirements and UI/UX design, propose a simple, open-source technical architecture.
 
@@ -82,7 +111,7 @@ Key features: {features}
 Platforms: {platforms}
 Screens: {screen_names}
 Complexity hint: {tech_hint}
-
+{stack_directive}
 If the app is a game or needs high-end 3D rendering, favor Open 3D Engine (O3DE) for the tech stack and explain why it fits. If it is not a game, favor simple open-source web or mobile technologies.
 
 Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
@@ -155,7 +184,7 @@ async def generate_architecture(
     uiux = (project.uiux_data or {}).get("design", {})
 
     try:
-        prompt = build_architecture_prompt(project.name, frd, uiux)
+        prompt = build_architecture_prompt(project.name, frd, uiux, project.selected_stack)
         ai_result = await generate_text(prompt)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:

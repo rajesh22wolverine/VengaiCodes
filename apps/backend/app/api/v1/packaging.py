@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.stack_matrix import FRONTEND_FRAMEWORKS, get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
@@ -143,6 +144,21 @@ async def trigger_build(
             detail=(
                 f"{len(validation_warnings)} generated file(s) failed validation and are "
                 f"likely to break the build: {bad_paths}. Regenerate the code before packaging."
+            ),
+        )
+
+    # This pipeline wraps a compiled web bundle (Vite frontend) in Tauri —
+    # it has no way to consume a Flutter/SwiftUI/Jetpack Compose project,
+    # none of which produce a web bundle at all. Same precedent O3DE
+    # already set: not run through installer-build CI, template+README only.
+    stack_info = get_project_stack(project)
+    if FRONTEND_FRAMEWORKS[stack_info["frontend_framework"]]["category"] != "web":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This project's frontend doesn't produce a web bundle this pipeline can wrap — "
+                "only React/Vue/Angular/Svelte/Plain HTML-JS support one-click packaging. "
+                "Download the source and follow README_SETUP.md instead."
             ),
         )
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { ArrowLeft, BookOpen, Download, FileCode2, ThumbsUp } from "lucide-react-native";
+import { AlertTriangle, ArrowLeft, BookOpen, Download, FileCode2, ThumbsUp } from "lucide-react-native";
 
 import apiClient from "@/lib/api";
 import { downloadAndShareFile } from "@/lib/download";
@@ -23,6 +23,14 @@ interface CodeGenResult {
   files: GeneratedFile[];
 }
 
+interface StackUsed {
+  codegen_target: string;
+  source: string;
+  fallback_reason: string | null;
+}
+
+const WARNING_COLOR = "#eab308";
+
 const LANGUAGE_COLORS: Record<string, string> = {
   python: "#38bdf8",
   typescript: "#f97316",
@@ -38,6 +46,7 @@ export default function CodeGenScreen() {
   const { showToast } = useToast();
 
   const [codegen, setCodegen] = useState<CodeGenResult | null>(null);
+  const [stackUsed, setStackUsed] = useState<StackUsed | null>(null);
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -53,6 +62,7 @@ export default function CodeGenScreen() {
     try {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
+      setStackUsed(data.stack_used || null);
       setIsLoading(false);
     } catch {
       await generate();
@@ -65,6 +75,7 @@ export default function CodeGenScreen() {
     try {
       const { data } = await apiClient.post("/codegen/generate", { project_id: projectId });
       setCodegen(data.codegen);
+      setStackUsed(data.stack_used || null);
       showToast("Your code is ready! 💻🐯");
     } catch (error: any) {
       showToast(error.message || "Failed to generate code.", "error");
@@ -128,6 +139,15 @@ export default function CodeGenScreen() {
         <Text style={{ color: colors.primary, fontSize: 12, lineHeight: 17 }}>{codegen.summary}</Text>
       </View>
 
+      {stackUsed?.fallback_reason && (
+        <View style={[styles.warningBanner, { borderBottomColor: colors.border }]}>
+          <AlertTriangle size={14} color={WARNING_COLOR} style={{ marginTop: 1 }} />
+          <Text style={{ color: colors.textSecondary, fontSize: 12, flex: 1, lineHeight: 17 }}>
+            {stackUsed.fallback_reason}
+          </Text>
+        </View>
+      )}
+
       {selectedFile ? (
         <View style={styles.flex}>
           <Pressable onPress={() => setSelectedFile(null)} style={styles.backToFilesRow}>
@@ -187,6 +207,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   flex: { flex: 1 },
   summaryBanner: { padding: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  warningBanner: { flexDirection: "row", gap: 8, padding: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   fileListContent: { padding: 12 },
   fileRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8 },
   backToFilesRow: { flexDirection: "row", alignItems: "center", gap: 6, padding: 12 },

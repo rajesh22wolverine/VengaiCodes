@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.orchestrator import AIError, generate_text
 from app.api.v1.auth import get_current_active_user
-from app.api.v1.codegen import strip_code_fences, validate_generated_content
+from app.ai.codegen_shared import strip_code_fences, validate_generated_content
 from app.config import settings
 from app.core.database import get_db
 from app.models.project import Project, SDLCPhase

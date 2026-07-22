@@ -41,7 +41,7 @@ async def _call_ollama(prompt: str, model: str | None = None) -> tuple[str, floa
     return data.get("response", "").strip(), duration_ms
 
 
-async def _call_groq(prompt: str) -> tuple[str, float]:
+async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, float]:
     """Call Groq cloud API."""
     if not settings.GROQ_API_KEY:
         raise AIError("Groq API key not configured")
@@ -62,7 +62,7 @@ async def _call_groq(prompt: str) -> tuple[str, float]:
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": settings.AI_TEMPERATURE,
-                "max_tokens": settings.AI_MAX_TOKENS,
+                "max_tokens": max_tokens or settings.AI_MAX_TOKENS,
             },
         )
 
@@ -78,9 +78,11 @@ async def _call_groq(prompt: str) -> tuple[str, float]:
     return text, duration_ms
 
 
-async def generate_text(prompt: str, model: str | None = None) -> dict:
+async def generate_text(prompt: str, model: str | None = None, max_tokens: int | None = None) -> dict:
     """
     Generate text using local Ollama first, falling back to Groq cloud.
+    `max_tokens` only applies to the Groq fallback — Ollama's local models
+    are bounded by their own context window, not a per-request token cap.
     """
     # ── Try Ollama first ──
     try:
@@ -97,7 +99,7 @@ async def generate_text(prompt: str, model: str | None = None) -> dict:
 
     # ── Fallback to Groq ──
     try:
-        text, duration_ms = await _call_groq(prompt)
+        text, duration_ms = await _call_groq(prompt, max_tokens)
         return {
             "text": text,
             "source": "groq",

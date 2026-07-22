@@ -13,6 +13,7 @@ import HomeScreen from "@/screens/home/HomeScreen";
 import WizardScreen from "@/screens/wizard/WizardScreen";
 import RequirementsScreen from "@/screens/requirements/RequirementsScreen";
 import UIUXScreen from "@/screens/uiux/UIUXScreen";
+import StackScreen from "@/screens/stack/StackScreen";
 import ArchitectureScreen from "@/screens/architecture/ArchitectureScreen";
 import CodeGenScreen from "@/screens/codegen/CodeGenScreen";
 import TestingScreen from "@/screens/testing/TestingScreen";
@@ -97,6 +98,7 @@ export default function App() {
           <Route path="project/:id/wizard" element={<WizardScreen />} />
         <Route path="project/:id/requirements" element={<RequirementsScreen />} />
           <Route path="project/:id/uiux" element={<UIUXScreen />} />
+          <Route path="project/:id/stack" element={<StackScreen />} />
           <Route path="project/:id/architecture" element={<ArchitectureScreen />} />
           <Route path="project/:id/codegen" element={<CodeGenScreen />} />
           <Route path="project/:id/testing" element={<TestingScreen />} />

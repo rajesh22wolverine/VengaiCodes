@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree, Download, BookOpen
+  ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree, Download, BookOpen, AlertTriangle
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
@@ -21,6 +21,12 @@ interface CodeGenResult {
   files: GeneratedFile[];
 }
 
+interface StackUsed {
+  codegen_target: string;
+  source: string;
+  fallback_reason: string | null;
+}
+
 const LANGUAGE_COLORS: Record<string, string> = {
   python: "var(--color-info)",
   typescript: "var(--color-primary)",
@@ -35,6 +41,7 @@ export default function CodeGenScreen() {
   const navigate = useNavigate();
 
   const [codegen, setCodegen] = useState<CodeGenResult | null>(null);
+  const [stackUsed, setStackUsed] = useState<StackUsed | null>(null);
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -50,6 +57,7 @@ export default function CodeGenScreen() {
     try {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
+      setStackUsed(data.stack_used || null);
       setSelectedFile(data.codegen.files?.[0] || null);
       setIsLoading(false);
     } catch {
@@ -65,6 +73,7 @@ export default function CodeGenScreen() {
         project_id: projectId,
       });
       setCodegen(data.codegen);
+      setStackUsed(data.stack_used || null);
       setSelectedFile(data.codegen.files?.[0] || null);
       toast.success("Your code is ready! 💻🐯");
     } catch (error: any) {
@@ -180,6 +189,18 @@ export default function CodeGenScreen() {
           {codegen.summary}
         </p>
       </div>
+
+      {/* Stack substitution banner — only shown when the chosen stack had to be swapped */}
+      {stackUsed?.fallback_reason && (
+        <div className="px-6 py-3 bg-[var(--color-warning-light)] border-b border-[var(--color-border)] flex-shrink-0">
+          <div className="flex items-start gap-2 max-w-3xl">
+            <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+              {stackUsed.fallback_reason}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Main content — file tree + code preview */}
       <div className="flex-1 flex overflow-hidden">

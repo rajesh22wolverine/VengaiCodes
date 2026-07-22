@@ -214,6 +214,22 @@ class Project(Base):
     #   "adrs": [...]           — Architecture Decision Records
     # }
 
+    # ── Structured Stack Selection (distinct from architecture_data's free-text tech_stack) ──
+    selected_stack: Optional[dict] = Column(JSON, nullable=True)
+    # {
+    #   "frontend_language": "javascript", "frontend_framework": "react",
+    #   "backend_language": "python", "backend_framework": "fastapi",
+    #   "api_style": "rest",
+    #   "buildable_now": true,
+    #   "validated_at": "..."
+    # }
+    # Set by POST /stack/select once the combo passes
+    # app.ai.stack_matrix.validate_stack(). Authoritative source for
+    # app.ai.stack_matrix.get_project_stack() — codegen.py and export.py
+    # read it (via that shared helper) instead of re-sniffing
+    # architecture_data's free-text tech_stack.frontend, which is
+    # legacy/best-effort only.
+
     # ── API Builder Phase Data ──
     api_data: Optional[dict] = Column(JSON, nullable=True)
     # {

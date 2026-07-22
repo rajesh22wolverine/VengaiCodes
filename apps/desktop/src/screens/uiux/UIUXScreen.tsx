@@ -217,8 +217,8 @@ export default function UIUXScreen() {
         project_id: projectId,
         approved: true,
       });
-      toast.success("Design approved! Next: Architecture 🐯");
-      navigate(`/project/${projectId}/architecture`);
+      toast.success("Design approved! Next: pick your tech stack 🐯");
+      navigate(`/project/${projectId}/stack`);
     } catch (error: any) {
       toast.error(error.message || "Failed to approve.");
     } finally {
