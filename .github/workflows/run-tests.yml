@@ -31,9 +31,12 @@
 #    testing_recipes.py, this workflow never attempts to build/run it
 #    (no .xcodeproj is ever generated for it, and no macOS runner is
 #    configured here).
-#  - Jetpack Compose only gets plain JVM unit tests (`./gradlew test`)
-#    — never instrumented/emulator Compose UI tests, which need a
-#    real Android emulator this workflow doesn't provision.
+#  - Jetpack Compose runs real Compose UI tests (render/click/assert)
+#    via Robolectric, which simulates the Android framework on the
+#    plain JVM — still `./gradlew test`, no emulator/device needed.
+#    True instrumented tests (`connectedAndroidTest` against a real
+#    emulator/device) are still out of scope — this workflow doesn't
+#    provision one.
 #  - Rust (actix/axum) results are parsed from cargo test's plain-text
 #    summary output via regex, not a structured format — stable Rust
 #    has no built-in JSON test output, and installing an extra cargo
@@ -325,7 +328,8 @@ jobs:
           flutter test --machine > ../../frontend-results.jsonl 2>&1 || true
 
       # ══════════════════════════════════════════════════════════
-      #  FRONTEND — Jetpack Compose (Gradle unit tests, JVM-only)
+      #  FRONTEND — Jetpack Compose (Robolectric-backed Compose UI
+      #  tests, run as a plain Gradle JVM unit test — no emulator)
       # ══════════════════════════════════════════════════════════
       - name: Setup Java (frontend)
         if: steps.write_files.outputs.frontend_recipe == 'gradle_unit_test'
@@ -334,7 +338,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Run frontend tests (Gradle unit tests)
+      - name: Run frontend tests (Gradle/Robolectric Compose UI tests)
         if: steps.write_files.outputs.frontend_recipe == 'gradle_unit_test'
         working-directory: project/frontend
         shell: bash

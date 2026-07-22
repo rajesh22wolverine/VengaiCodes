@@ -106,15 +106,19 @@ FRONTEND_TEST_RECIPES: dict[str, list[TestRecipe]] = {
     ],
     "angular": [
         TestRecipe("karma_jasmine", "Karma + Jasmine", "typescript", "frontend/src/app/screens/{name}.component.spec.ts",
-                   "Angular's standard `TestBed.configureTestingModule({{ imports: [{Name}Component] }})` + Jasmine's `describe`/`it`/`expect`, since the component is standalone", "junit-xml"),
+                   "Angular's standard `TestBed.configureTestingModule({ imports: [{Name}Component] })` + Jasmine's `describe`/`it`/`expect`, since the component is standalone", "junit-xml"),
     ],
     "flutter": [
         TestRecipe("flutter_test", "flutter_test", "dart", "frontend/test/{name}_test.dart",
-                   "Flutter's `flutter_test` package (`testWidgets('...', (tester) async {{ ... }})`, `find.text(...)`, `tester.pumpWidget(...)`, `expect(find..., findsOneWidget)`)", "flutter-jsonl"),
+                   "Flutter's `flutter_test` package (`testWidgets('...', (tester) async { ... })`, `find.text(...)`, `tester.pumpWidget(...)`, `expect(find..., findsOneWidget)`)", "flutter-jsonl"),
     ],
     "jetpack_compose": [
-        TestRecipe("gradle_unit_test", "Gradle unit test (JUnit, JVM-only)", "kotlin", "frontend/app/src/test/java/{package_path}/{Name}Test.kt",
-                   "plain JUnit 4 (`@Test`, `org.junit.Assert.assertEquals`) testing any non-Compose helper/parsing function only — this is a headless JVM unit test, NOT a Compose UI test (no ComposeTestRule, no emulator available in CI)", "junit-xml"),
+        TestRecipe("gradle_unit_test", "Gradle unit test (Robolectric + Compose UI testing)", "kotlin", "frontend/app/src/test/java/{package_path}/{Name}Test.kt",
+                   "a REAL Compose UI test: `@RunWith(RobolectricTestRunner::class)`, `@Config(sdk = [33])`, "
+                   "`@get:Rule val composeTestRule = createComposeRule()`, `composeTestRule.setContent { {Name}Screen() }`, "
+                   "then `composeTestRule.onNodeWithText(\"...\").assertIsDisplayed()`/`.performClick()` — this runs on the plain "
+                   "JVM via Robolectric (no Android emulator/device needed), and actually renders and interacts with the real "
+                   "composable, not just plain helper-function logic", "junit-xml"),
     ],
     "swiftui": [
         TestRecipe("xctest_stub", "XCTest (generated only, not run in CI)", "swift", "frontend/{Name}Tests.swift",

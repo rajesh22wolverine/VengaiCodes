@@ -226,6 +226,14 @@ android {{
     kotlinOptions {{
         jvmTarget = "17"
     }}
+    testOptions {{
+        // Required for Robolectric to load real Android resources/assets
+        // during `./gradlew test` — without this, Robolectric-backed
+        // Compose UI tests fail to resolve resources at test time.
+        unitTests {{
+            isIncludeAndroidResources = true
+        }}
+    }}
 }}
 
 dependencies {{
@@ -236,6 +244,14 @@ dependencies {{
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // Compose UI testing via Robolectric — real render/click/assert
+    // testing on the JVM, no Android emulator needed.
+    testImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("org.robolectric:robolectric:4.12.2")
+    testImplementation("junit:junit:4.13.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }}
 """
 
