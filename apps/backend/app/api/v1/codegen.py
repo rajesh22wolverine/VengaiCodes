@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.codegen import o3de
+from app.ai.codegen import godot, o3de
 from app.ai.codegen.backend import BACKEND_ADAPTERS
 from app.ai.codegen.frontend import FRONTEND_ADAPTERS
 from app.ai.codegen.readme import build_readme_setup
@@ -144,11 +144,12 @@ async def generate_code(
 
     stack_info = get_project_stack(project)
     is_o3de = stack_info["frontend_framework"] == "o3de"
+    is_godot = stack_info["frontend_framework"] == "godot"
 
     frd = requirements.get("frd", {}) or {}
     native_capabilities = detect_native_capabilities(
         " ".join(frd.get("key_features", []) or []) + " " + " ".join(frd.get("user_stories", []) or [])
-    ) if not is_o3de else []
+    ) if not (is_o3de or is_godot) else []
 
     validation_warnings: list[dict] = []
 
@@ -187,6 +188,32 @@ async def generate_code(
             summary = wiring_parsed.get(
                 "summary", f"Generated {len(real_files)} real implementation files plus wiring/config."
             )
+        elif is_godot:
+            # Godot has no separate backend either (same "none" sentinel as
+            # O3DE), but unlike O3DE its wiring/manifest files are built
+            # deterministically (no AI call) — see godot.py's manifest_files/
+            # entry_point_files, same pattern as the Compose/Flutter adapters.
+            model_files = []
+            routes_files = []
+            screen_files = [
+                _track(await godot.generate_screen(ScreenCtx(
+                    project_name=project.name,
+                    screen=screen,
+                    endpoints=endpoints,
+                    requirements_text=requirements_text,
+                    native_capabilities=[],
+                    language="gdscript",
+                )))
+                for screen in screens
+            ]
+
+            wiring_files = godot.manifest_files(project.name) + godot.entry_point_files(screen_files)
+            wiring_files.append(build_readme_setup(
+                project.name, None, godot.setup_commands(project.name), None,
+            ))
+            real_files = screen_files
+            generated_files = [f.model_dump() for f in real_files + wiring_files]
+            summary = f"Generated {len(real_files)} real Godot scene files plus wiring/config."
         else:
             frontend_adapter = FRONTEND_ADAPTERS[stack_info["frontend_framework"]]
             backend_adapter = BACKEND_ADAPTERS[stack_info["backend_framework"]]

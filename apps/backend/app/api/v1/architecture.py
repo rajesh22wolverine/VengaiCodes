@@ -112,7 +112,7 @@ Platforms: {platforms}
 Screens: {screen_names}
 Complexity hint: {tech_hint}
 {stack_directive}
-If the app is a game or needs high-end 3D rendering, favor Open 3D Engine (O3DE) for the tech stack and explain why it fits. If it is not a game, favor simple open-source web or mobile technologies.
+If the app is a game, favor Godot Engine for the tech stack — it's fully open-source, capable of high-end 2D/3D games, and VengaiCode can build it into a real installable APK automatically. Only suggest Open 3D Engine (O3DE) instead if the user explicitly asked for an AAA-grade engine by name — O3DE has no automated build pipeline here, so it stays a downloadable project template the user builds themselves. If the app is not a game, favor simple open-source web or mobile technologies.
 
 Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
 {{

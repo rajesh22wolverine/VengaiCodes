@@ -1,10 +1,16 @@
 """Rename the built APK to reflect the project's app name.
 
-Run from the `build/` working directory, after the Gradle build.
-Gradle always names its output app-debug.apk / app-release.apk
-regardless of applicationId or app label, so without this step the
-artifact a user downloads carries no trace of what they named
-their app.
+Run from the `build/` working directory, after the Gradle/Flutter/Godot
+build. The build tool always names its output something generic
+(app-debug.apk, app-release.apk, build.apk) regardless of applicationId
+or app label, so without this step the artifact a user downloads
+carries no trace of what they named their app.
+
+APK_GLOB defaults to the Capacitor pipeline's nested `android/` layout
+(build-android-installer.yml, where `npx cap add android` creates that
+subfolder). The native Compose/Flutter/Godot pipelines pass a different
+glob via the APK_GLOB env var, since their Gradle/build root IS build/
+itself — no extra `android/` nesting.
 """
 import glob
 import json
@@ -12,7 +18,7 @@ import os
 import re
 
 PROJECT_FILES_PATH = "../project_files.json"
-APK_GLOB = "android/app/build/outputs/apk/**/*.apk"
+APK_GLOB = os.environ.get("APK_GLOB", "android/app/build/outputs/apk/**/*.apk")
 
 
 def safe_filename(name: str) -> str:

@@ -48,6 +48,35 @@ def _pascal(name: str) -> str:
     return "".join(word.capitalize() for word in re.split(r"[^a-zA-Z0-9]+", name) if word) or "Item"
 
 
+# Android/Java package segments can't start with a digit or be a reserved
+# word (e.g. project "3D Notes" -> "3dnotes" is an invalid applicationId;
+# "Class Tracker" -> "class" collides with the keyword). Shared by every
+# adapter that emits a real Android applicationId/package (Jetpack Compose,
+# Godot's package/unique_name) — mirrors the same list the Capacitor CI
+# script (.github/scripts/update_capacitor_config.py) keeps independently,
+# since that one runs as a standalone CI script with no import access to
+# this module.
+JAVA_RESERVED_WORDS = {
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+    "class", "const", "continue", "default", "do", "double", "else", "enum",
+    "extends", "final", "finally", "float", "for", "goto", "if", "implements",
+    "import", "instanceof", "int", "interface", "long", "native", "new",
+    "package", "private", "protected", "public", "return", "short", "static",
+    "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
+    "transient", "try", "void", "volatile", "while", "true", "false", "null",
+}
+
+
+def android_package_segment(name: str) -> str:
+    """A single package-path segment safe to use in an Android applicationId."""
+    slug = re.sub(r"[^a-z0-9]", "", (name or "").lower())
+    if not slug:
+        return "generatedapp"
+    if slug[0].isdigit() or slug in JAVA_RESERVED_WORDS:
+        return f"app{slug}"
+    return slug
+
+
 def strip_code_fences(text: str) -> str:
     """Extract raw code from an AI response that may be wrapped in markdown fences."""
     cleaned = text.strip()

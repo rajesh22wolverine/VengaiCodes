@@ -1,0 +1,159 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Godot Engine Android Game Build (per-project)
+#
+#  Builds a REAL Android game APK from a Godot 4 project — not a
+#  WebView, not a wrapped web scene. app/ai/codegen/godot.py already
+#  emits a complete Godot project as generated files (project.godot,
+#  export_presets.cfg, Main.tscn/Main.gd, scenes/*.gd), so this
+#  workflow only fetches those and runs Godot's own headless export —
+#  no template merge step needed (same shape as the Compose pipeline).
+#
+#  Uses the barichello/godot-ci Docker image, the de facto standard
+#  open-source CI image for Godot (MIT-licensed Godot Engine +
+#  pre-built Android export templates + Android SDK/NDK baked in) —
+#  this avoids needing to hand-configure Android SDK/NDK/Gradle for
+#  Godot specifically (export_presets.cfg's gradle_build/use_gradle_
+#  build=false means Godot packages the APK directly from its own
+#  pre-built export templates, not a full Gradle project build).
+#
+#  Triggered via: repository_dispatch event type
+#  "build-android-game-godot-app" with client_payload:
+#  { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no Godot binary
+#  available in this dev environment to live-verify. The Docker image
+#  tag, headless export command syntax (--headless --export-debug/
+#  --export-release "Android"), and the keystore/release* sed-patching
+#  approach for signing were checked against a real, working reference
+#  (abarichello/godot-ci's own README + .gitlab-ci.yml) before writing
+#  this, not invented — see godot.py's header for the same diligence
+#  applied to export_presets.cfg's field names. Treat the export step
+#  as the least-verified part of this whole feature; a first real run
+#  may need a debugging pass, same honesty the original Capacitor
+#  workflow shipped with before its first proven run.
+#
+#  ── Enabling signed release builds (optional) ──
+#  Same 4 repo secrets as the other three Android pipelines
+#  (ANDROID_KEYSTORE_BASE64/_PASSWORD, ANDROID_KEY_ALIAS,
+#  ANDROID_KEY_PASSWORD) switch this to a signed --export-release —
+#  one keystore, reusable across every pipeline.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Android Game (Godot)
+run-name: "Android game (Godot) build — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [build-android-game-godot-app]
+
+jobs:
+  build-android-game-godot:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The godot-ci image is purpose-built for exports, not general
+      # scripting — python3 isn't guaranteed preinstalled, unlike the
+      # other three workflows' plain ubuntu-latest runners (which do
+      # ship it). Installed explicitly rather than assumed.
+      - name: Ensure python3 is available
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Write generated Godot project into build/
+        shell: bash
+        run: |
+          mkdir -p build
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Verify the Godot project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f
+
+          for required in project.godot export_presets.cfg Main.tscn Main.gd; do
+            if [ ! -f "$required" ]; then
+              echo "$required NOT FOUND"
+              exit 1
+            fi
+          done
+          echo "Godot project looks complete"
+
+      - name: Import project resources (generates .godot/ cache Godot needs before exporting)
+        working-directory: build
+        shell: bash
+        run: godot --headless --verbose --import
+
+      - name: Configure release signing (if configured)
+        working-directory: build
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
+            echo "Release signing secrets present — patching export_presets.cfg"
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > /root/release.keystore
+            sed -i "s#^keystore/release=.*#keystore/release=\"/root/release.keystore\"#" export_presets.cfg
+            sed -i "s#^keystore/release_user=.*#keystore/release_user=\"$ANDROID_KEY_ALIAS\"#" export_presets.cfg
+            sed -i "s#^keystore/release_password=.*#keystore/release_password=\"$ANDROID_KEYSTORE_PASSWORD\"#" export_presets.cfg
+            echo "signing_configured=1" >> "$GITHUB_ENV"
+          else
+            echo "Release signing secrets not fully configured — building an unsigned debug APK instead"
+          fi
+
+      - name: Compute output APK filename from the project's app name
+        id: apk_name
+        working-directory: build
+        shell: bash
+        run: |
+          SAFE_NAME=$(python3 -c "
+          import json, re
+          data = json.load(open('../project_files.json', encoding='utf-8'))
+          name = data.get('project_name') or 'vengaicode_app'
+          cleaned = re.sub(r'[^\w\s-]', '', name).strip()
+          cleaned = re.sub(r'\s+', '_', cleaned)
+          print((cleaned[:50] or 'vengaicode_app'))
+          ")
+          echo "Using output filename: $SAFE_NAME.apk"
+          echo "name=$SAFE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Export APK (signed release if configured, otherwise debug)
+        working-directory: build
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "$signing_configured" = "1" ]; then
+            godot --headless --verbose --export-release "Android" "dist/${{ steps.apk_name.outputs.name }}.apk"
+          else
+            godot --headless --verbose --export-debug "Android" "dist/${{ steps.apk_name.outputs.name }}.apk"
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-android-game-godot-apk
+          path: build/dist/*.apk
+          if-no-files-found: warn

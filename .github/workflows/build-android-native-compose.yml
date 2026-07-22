@@ -1,0 +1,136 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Jetpack Compose Native Android Build (per-project)
+#
+#  Builds a REAL native Android app (Kotlin + Jetpack Compose,
+#  compiled with the Android Gradle Plugin) — no WebView, no wrapped
+#  web bundle. Unlike build-android-installer.yml (which wraps a
+#  Vite/React web build in a Capacitor WebView), the Jetpack Compose
+#  adapter (app/ai/codegen/frontend/jetpack_compose.py) already emits
+#  a COMPLETE Gradle project as generated files — settings.gradle.kts,
+#  build.gradle.kts, AndroidManifest.xml, MainActivity.kt, all under
+#  frontend/ — so this workflow only has to fetch those files and run
+#  Gradle directly. No template merge step needed (contrast with the
+#  Capacitor pipeline's template+inject+merge dance).
+#
+#  Triggered via: repository_dispatch event type
+#  "build-android-native-compose-app" with client_payload:
+#  { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no Android SDK/
+#  Gradle available in this dev environment to live-verify. The
+#  Gradle/AGP/Kotlin/Compose-compiler version combination is pinned in
+#  jetpack_compose.py against JetBrains' official compatibility map
+#  (see that file's header) rather than guessed.
+#
+#  ── Enabling signed release builds (optional) ──
+#  Same 4 repo secrets as build-android-installer.yml switch this to a
+#  signed assembleRelease automatically — see apply_android_signing_
+#  compose.py. Uses the SAME keystore/secrets as the Capacitor and
+#  Flutter pipelines; no separate signing setup needed per pipeline.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Android (Jetpack Compose, native)
+run-name: "Android native (Compose) build — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [build-android-native-compose-app]
+
+jobs:
+  build-android-native-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.4"
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Write generated Gradle project into build/
+        shell: bash
+        run: |
+          mkdir -p build
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Verify the Gradle project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 4 -type f
+
+          for required in settings.gradle.kts build.gradle.kts app/build.gradle.kts app/src/main/AndroidManifest.xml; do
+            if [ ! -f "$required" ]; then
+              echo "$required NOT FOUND"
+              exit 1
+            fi
+          done
+          echo "Gradle project looks complete"
+
+      - name: Configure release signing (if configured)
+        working-directory: build
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 ../.github/scripts/apply_android_signing_compose.py
+
+      - name: Build APK (signed release if configured, otherwise debug)
+        working-directory: build
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -f app/signing.gradle.kts ]; then
+            echo "Signing configured — building signed release APK"
+            gradle assembleRelease
+          else
+            echo "No signing keystore configured — building debug APK"
+            gradle assembleDebug
+          fi
+
+      - name: Rename APK using the project's app name
+        working-directory: build
+        shell: bash
+        env:
+          APK_GLOB: "app/build/outputs/apk/**/*.apk"
+        run: |
+          python3 ../.github/scripts/rename_android_apk.py
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-android-compose-apk
+          path: build/app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn

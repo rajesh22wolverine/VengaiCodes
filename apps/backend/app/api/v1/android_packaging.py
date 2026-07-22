@@ -3,14 +3,30 @@
 #  api/v1/android_packaging.py — Trigger, poll, and download
 #  GitHub Actions-built Android APKs
 #
-#  Mirrors packaging.py (Windows installer builds) but targets
-#  build-android-installer.yml instead. Reuses the same
-#  GET /packaging/{project_id}/files endpoint for fetching generated
-#  code — that endpoint is platform-agnostic.
+#  Mirrors packaging.py (Windows installer builds) but targets one of
+#  FOUR Android workflows, chosen by the project's frontend framework
+#  (see _workflow_for_stack): a "web" category frontend (React/Vue/
+#  Angular/Svelte/Plain HTML-JS) gets wrapped in a Capacitor WebView
+#  (build-android-installer.yml, CONFIRMED WORKING — see that file's
+#  header); Jetpack Compose and Flutter get REAL native (non-WebView)
+#  builds since their codegen already emits a complete native project,
+#  not a web bundle (build-android-native-compose.yml / -flutter.yml);
+#  Godot gets a real game-engine export (build-android-game-godot.yml).
+#  O3DE and SwiftUI have no automated pipeline (O3DE's engine build is
+#  too heavy for CI; SwiftUI is iOS-only) and keep 400ing here — see
+#  stack_matrix.CI_BUILDABLE_GAME_ENGINES for why Godot but not O3DE.
 #
-#  HONEST STATUS: written but UNTESTED end-to-end, same caveats as
-#  packaging.py. Requires the same GITHUB_TOKEN / GITHUB_REPO /
-#  BUILD_SECRET settings — no separate configuration needed.
+#  All four workflows call back to GET /packaging/{project_id}/files
+#  to fetch the code to package — that endpoint is platform-agnostic.
+#
+#  HONEST STATUS: build-android-installer.yml is CONFIRMED WORKING
+#  (one real successful end-to-end run). The three new native/game
+#  workflows are written but UNTESTED end-to-end — no Android SDK/
+#  Gradle/Flutter SDK/Godot binary is available in this environment to
+#  live-verify them, same class of limitation documented in
+#  jetpack_compose.py's and godot.py's headers. Requires the same
+#  GITHUB_TOKEN / GITHUB_REPO / BUILD_SECRET settings for all four —
+#  no separate configuration needed.
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -22,7 +38,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.stack_matrix import FRONTEND_FRAMEWORKS, get_project_stack
+from app.ai.stack_matrix import CI_BUILDABLE_GAME_ENGINES, FRONTEND_FRAMEWORKS, get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
@@ -34,7 +50,28 @@ logger = logging.getLogger("vengaicode.android_packaging")
 router = APIRouter()
 
 GITHUB_API = "https://api.github.com"
-WORKFLOW_FILE = "build-android-installer.yml"
+
+# frontend_framework -> (workflow YAML file, repository_dispatch event_type).
+# "web" category frontends (react/vue/angular/svelte/html_css_js) all share
+# one entry, added below the literal dict since there are 5 of them and
+# they all route to the same Capacitor pipeline.
+_NATIVE_WORKFLOW_ROUTES: dict[str, tuple[str, str]] = {
+    "jetpack_compose": ("build-android-native-compose.yml", "build-android-native-compose-app"),
+    "flutter": ("build-android-native-flutter.yml", "build-android-native-flutter-app"),
+}
+_WEB_WORKFLOW: tuple[str, str] = ("build-android-installer.yml", "build-android-installer-app")
+_GODOT_WORKFLOW: tuple[str, str] = ("build-android-game-godot.yml", "build-android-game-godot-app")
+
+
+def _workflow_for_stack(stack_info: dict) -> tuple[str, str] | None:
+    """Returns (workflow_file, dispatch_event_type), or None if this
+    project's frontend has no automated Android build pipeline."""
+    fe = stack_info["frontend_framework"]
+    if FRONTEND_FRAMEWORKS[fe]["category"] == "web":
+        return _WEB_WORKFLOW
+    if fe in CI_BUILDABLE_GAME_ENGINES:
+        return _GODOT_WORKFLOW
+    return _NATIVE_WORKFLOW_ROUTES.get(fe)
 
 
 # ─── Schemas ───
@@ -100,21 +137,18 @@ async def trigger_build(
             ),
         )
 
-    # This pipeline wraps a compiled web bundle (Vite frontend) in a
-    # Capacitor WebView — it has no way to consume a Flutter/SwiftUI/
-    # Jetpack Compose project, none of which produce a web bundle at all.
-    # Same precedent O3DE already set: not run through installer-build CI,
-    # template+README only.
     stack_info = get_project_stack(project)
-    if FRONTEND_FRAMEWORKS[stack_info["frontend_framework"]]["category"] != "web":
+    route = _workflow_for_stack(stack_info)
+    if route is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "This project's frontend doesn't produce a web bundle this pipeline can wrap — "
-                "only React/Vue/Angular/Svelte/Plain HTML-JS support one-click packaging. "
+                "This project's frontend doesn't have an automated Android build pipeline yet "
+                "(SwiftUI is iOS-only; Open 3D Engine's build is too heavy to run in CI). "
                 "Download the source and follow README_SETUP.md instead."
             ),
         )
+    _, event_type = route
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -124,7 +158,7 @@ async def trigger_build(
                 "Accept": "application/vnd.github+json",
             },
             json={
-                "event_type": "build-android-installer-app",
+                "event_type": event_type,
                 "client_payload": {"project_id": payload.project_id},
             },
         )
@@ -171,10 +205,15 @@ async def get_build_status(
             detail="Packaging is not configured yet.",
         )
 
+    route = _workflow_for_stack(get_project_stack(project))
+    if route is None:
+        return BuildStatusResponse(status="not_started")
+    workflow_file, _ = route
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{WORKFLOW_FILE}/runs",
+            f"{workflow_file}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
@@ -231,10 +270,18 @@ async def list_build_artifacts(
             detail="Packaging is not configured yet.",
         )
 
+    route = _workflow_for_stack(get_project_stack(project))
+    if route is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed build found for this project. Trigger a build first.",
+        )
+    workflow_file, _ = route
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         runs_response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{WORKFLOW_FILE}/runs",
+            f"{workflow_file}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",

@@ -30,6 +30,28 @@ def _snake(name: str) -> str:
     return cleaned or "screen"
 
 
+# Dart package/project names can't collide with a reserved word (e.g. a
+# project named "Class" or "Void" -> "class"/"void" makes `flutter create`
+# and `dart analyze` reject the package outright) — same class of bug as
+# the Java-reserved-word Android applicationId fix (see
+# codegen_shared.android_package_segment), but Dart's reserved-word list
+# differs from Java's, so it's kept as its own small set here rather than
+# forced through that Android-specific helper.
+_DART_RESERVED_WORDS = {
+    "assert", "break", "case", "catch", "class", "const", "continue", "default",
+    "do", "else", "enum", "extends", "false", "final", "finally", "for", "if",
+    "in", "is", "new", "null", "rethrow", "return", "super", "switch", "this",
+    "throw", "true", "try", "var", "void", "while", "with",
+}
+
+
+def _package_slug(project_name: str) -> str:
+    slug = _snake(project_name) or "vengaicode_app"
+    if slug in _DART_RESERVED_WORDS:
+        slug = f"app_{slug}"
+    return slug
+
+
 async def generate_screen(ctx: ScreenCtx) -> FileResult:
     screen_name = ctx.screen.get("name", "Screen")
     class_name = f"{_pascal(screen_name)}Screen"
@@ -186,7 +208,7 @@ _ANALYSIS_OPTIONS = """include: package:flutter_lints/flutter.yaml
 
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    package_name = _snake(ctx.project_name) or "vengaicode_app"
+    package_name = _package_slug(ctx.project_name)
     return [
         GeneratedFile(path="frontend/pubspec.yaml", language="yaml", content=_pubspec_yaml(package_name), description="Flutter package manifest"),
         GeneratedFile(path="frontend/analysis_options.yaml", language="yaml", content=_ANALYSIS_OPTIONS, description="Dart analyzer config"),

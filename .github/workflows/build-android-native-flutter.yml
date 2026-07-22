@@ -1,0 +1,161 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Flutter Native Android Build (per-project)
+#
+#  Builds a REAL native Android app (Dart compiled to native ARM code
+#  via Flutter's own toolchain) — no WebView. The Flutter adapter
+#  (app/ai/codegen/frontend/flutter.py) only emits Dart SOURCE
+#  (pubspec.yaml + lib/) — unlike Jetpack Compose, it has no
+#  android/ios platform wrapper folders, because those are normally
+#  scaffolded by Flutter's own `flutter create` tool, not hand-rolled.
+#  So this workflow runs `flutter create` FIRST to generate a real
+#  Android project (and the applicationId, via --org), THEN overlays
+#  the generated pubspec.yaml/lib/ on top of that scaffold.
+#
+#  Triggered via: repository_dispatch event type
+#  "build-android-native-flutter-app" with client_payload:
+#  { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no Flutter SDK
+#  available in this dev environment to live-verify. subosito/
+#  flutter-action's inputs were checked against its README before
+#  writing this (not guessed) — see extract_flutter_project_name.py
+#  and apply_android_signing_flutter.py for the same diligence on the
+#  Dart-package-name and Groovy/Kotlin-DSL signing pieces.
+#
+#  ── Enabling signed release builds (optional) ──
+#  Same 4 repo secrets as the Capacitor and Jetpack Compose pipelines
+#  switch this to `flutter build apk --release` with real signing —
+#  see apply_android_signing_flutter.py. One keystore, reusable across
+#  all three Android pipelines.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Android (Flutter, native)
+run-name: "Android native (Flutter) build — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [build-android-native-flutter-app]
+
+jobs:
+  build-android-native-flutter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Determine Dart project name
+        id: project_name
+        shell: bash
+        run: |
+          NAME=$(python3 .github/scripts/extract_flutter_project_name.py)
+          echo "Using Flutter project name: $NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Scaffold a real Flutter project (android/ platform folder, applicationId)
+        shell: bash
+        run: |
+          flutter create --platforms=android \
+            --project-name "${{ steps.project_name.outputs.name }}" \
+            --org com.vengaicode.generated \
+            build
+
+      - name: Overlay generated Dart source onto the scaffold
+        shell: bash
+        run: |
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Verify the Flutter project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f -not -path "./android/gradle/*"
+
+          for required in pubspec.yaml lib/main.dart; do
+            if [ ! -f "$required" ]; then
+              echo "$required NOT FOUND"
+              exit 1
+            fi
+          done
+          if [ ! -f android/app/build.gradle ] && [ ! -f android/app/build.gradle.kts ]; then
+            echo "android/app/build.gradle(.kts) NOT FOUND"
+            exit 1
+          fi
+          echo "Flutter project looks complete"
+
+      - name: Configure release signing (if configured)
+        working-directory: build
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 ../.github/scripts/apply_android_signing_flutter.py
+
+      - name: Install Dart dependencies
+        working-directory: build
+        shell: bash
+        run: flutter pub get
+
+      - name: Build APK (signed release if configured, otherwise debug)
+        working-directory: build
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -f android/app/signing.gradle ] || [ -f android/app/signing.gradle.kts ]; then
+            echo "Signing configured — building signed release APK"
+            flutter build apk --release
+          else
+            echo "No signing keystore configured — building debug APK"
+            flutter build apk --debug
+          fi
+
+      - name: Rename APK using the project's app name
+        working-directory: build
+        shell: bash
+        env:
+          APK_GLOB: "build/app/outputs/flutter-apk/*.apk"
+        run: |
+          python3 ../.github/scripts/rename_android_apk.py
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-android-flutter-apk
+          path: build/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: warn

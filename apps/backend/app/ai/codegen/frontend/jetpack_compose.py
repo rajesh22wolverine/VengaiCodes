@@ -25,6 +25,7 @@ from app.ai.codegen_shared import (
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _pascal,
+    android_package_segment,
     generate_text_validated,
 )
 
@@ -45,10 +46,7 @@ def _snake(name: str) -> str:
 
 
 def _package_name(project_name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "", project_name.lower()) or "app"
-    if slug[0].isdigit():
-        slug = f"app{slug}"
-    return f"com.vengaicode.generated.{slug}"
+    return f"com.vengaicode.generated.{android_package_segment(project_name)}"
 
 
 def _package_path(package_name: str) -> str:

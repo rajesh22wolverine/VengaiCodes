@@ -53,7 +53,7 @@ LAYERS = {
     },
     4: {
         "label": "Platforms / Game Type",
-        "prompt_suffix": "Ask ONE question about which platforms they want — Web, Mobile (Android/iOS), Desktop (Windows/Mac), or all of them. If this app should be a game, also ask what type of game it should be and which device(s) it should target. If they want a high-end open-source game engine, mention Open 3D Engine (O3DE) as an option.",
+        "prompt_suffix": "Ask ONE question about which platforms they want — Web, Mobile (Android/iOS), Desktop (Windows/Mac), or all of them. If this app should be a game, also ask what type of game it should be and which device(s) it should target. Mention Godot Engine as the default high-end open-source game option (fully automated — VengaiCode builds it into a real APK), and Open 3D Engine (O3DE) as an alternative AAA-grade engine for users who specifically want it (manual build, no automated APK).",
     },
     5: {
         "label": "Target Users",
@@ -156,7 +156,7 @@ async def wizard_message(
     user_text = payload.user_message.lower()
     if project.category != AppCategory.GAME and any(
         term in user_text
-        for term in ["game", "gameplay", "fps", "rpg", "puzzle", "platformer", "strategy", "simulation", "adventure", "match-3", "o3de", "open 3d engine", "open3dengine"]
+        for term in ["game", "gameplay", "fps", "rpg", "puzzle", "platformer", "strategy", "simulation", "adventure", "match-3", "o3de", "open 3d engine", "open3dengine", "godot"]
     ):
         project.category = AppCategory.GAME
 

@@ -31,7 +31,16 @@ FRONTEND_FRAMEWORKS: dict[str, dict] = {
     "swiftui":          {"label": "SwiftUI",                "languages": ["swift"],                     "category": "mobile"},
     "jetpack_compose":  {"label": "Jetpack Compose",        "languages": ["kotlin"],                     "category": "mobile"},
     "o3de":             {"label": "Open 3D Engine (O3DE)",  "languages": ["o3de_script"],                "category": "game"},
+    "godot":            {"label": "Godot Engine",            "languages": ["gdscript"],                   "category": "game"},
 }
+
+# Game-category frontends that automated CI packaging can actually turn
+# into a real APK (see android_packaging.py). O3DE is "game" category but
+# NOT in this set — its engine build is too heavy for CI (10-20GB+ source
+# build, hours), so it stays template+README-only. Godot's CLI export
+# (pre-built export templates, no engine compile) is CI-practical, so it's
+# the one game engine with a real automated build pipeline.
+CI_BUILDABLE_GAME_ENGINES: frozenset[str] = frozenset({"godot"})
 
 # ─── Backend side ───
 BACKEND_FRAMEWORKS: dict[str, dict] = {
@@ -67,10 +76,16 @@ def _norm(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+def _is_game_engine(frontend: str) -> bool:
+    return FRONTEND_FRAMEWORKS.get(frontend, {}).get("category") == "game"
+
+
 def _game_pairing_ok(frontend: str, backend: str, api_style: str) -> bool:
-    """O3DE only ever pairs with the 'no backend' sentinel, and vice versa."""
-    if frontend == "o3de" or backend == "none":
-        return frontend == "o3de" and backend == "none" and api_style == "none"
+    """Every game-engine frontend (O3DE, Godot, ...) only ever pairs with
+    the 'no backend' sentinel, and vice versa — none of them route through
+    a separate REST/GraphQL/gRPC backend the way a web or mobile UI does."""
+    if _is_game_engine(frontend) or backend == "none":
+        return _is_game_engine(frontend) and backend == "none" and api_style == "none"
     return api_style != "none"
 
 
@@ -147,8 +162,13 @@ def _compute_buildable_now() -> dict[tuple[str, str, str, str, str], str]:
     buildable: dict[tuple[str, str, str, str, str], str] = {}
     for combo in ALL_COHERENT_COMBOS:
         fe, fe_lang, be, be_lang, api = combo
-        if fe == "o3de":
-            buildable[combo] = "o3de"
+        if _is_game_engine(fe):
+            # Game engines are handled by their own dedicated codegen module
+            # (app/ai/codegen/o3de.py, app/ai/codegen/godot.py) rather than
+            # the FrontendAdapter/BackendAdapter registry, so there's no
+            # adapter lookup to check here — see codegen.py's is_o3de/
+            # is_godot branches.
+            buildable[combo] = fe
             continue
         fe_adapter = FRONTEND_ADAPTERS.get(fe)
         be_adapter = BACKEND_ADAPTERS.get(be)
@@ -205,9 +225,9 @@ def _coherence_errors(selection: dict) -> list[str]:
 
     if fe_meta is not None and be_meta is not None and not _game_pairing_ok(fe, be, api):
         errors.append(
-            "Open 3D Engine (O3DE) doesn't pair with a separate web backend or API style — "
-            "pick 'No separate backend' alongside O3DE, or pick a non-O3DE UI framework "
-            "alongside a real backend."
+            f"{fe_meta['label']} doesn't pair with a separate web backend or API style — "
+            f"pick 'No separate backend' alongside {fe_meta['label']}, or pick a non-game-engine "
+            f"UI framework alongside a real backend."
         )
 
     return errors
@@ -283,8 +303,12 @@ def validate_stack(selection: dict) -> dict:
 
 
 # Default recommendations, exposed for stack.py's /options endpoint.
+# Godot is the default game suggestion (not O3DE) because it's the one game
+# engine with a real, automated CI->APK pipeline — see CI_BUILDABLE_GAME_ENGINES.
+# O3DE stays pickable for users who explicitly want it and are willing to
+# build the exported template themselves.
 DEFAULT_WEB_COMBO = _combo_from_tuple(("react", "javascript", "fastapi", "python", "rest"))
-DEFAULT_GAME_COMBO = _combo_from_tuple(("o3de", "o3de_script", "none", "none", "none"))
+DEFAULT_GAME_COMBO = _combo_from_tuple(("godot", "gdscript", "none", "none", "none"))
 
 
 def _stack_result(combo: tuple[str, str, str, str, str], source: str, fallback_reason: str | None) -> dict:
@@ -343,7 +367,11 @@ def get_project_stack(project) -> dict:
 
     architecture = (getattr(project, "architecture_data", None) or {}).get("architecture", {})
     frontend_text = (architecture.get("tech_stack", {}) or {}).get("frontend", "")
-    if isinstance(frontend_text, str) and ("o3de" in frontend_text.lower() or "open 3d engine" in frontend_text.lower()):
-        return _stack_result(("o3de", "o3de_script", "none", "none", "none"), "legacy_o3de_detection", None)
+    if isinstance(frontend_text, str):
+        lowered = frontend_text.lower()
+        if "o3de" in lowered or "open 3d engine" in lowered:
+            return _stack_result(("o3de", "o3de_script", "none", "none", "none"), "legacy_o3de_detection", None)
+        if "godot" in lowered:
+            return _stack_result(("godot", "gdscript", "none", "none", "none"), "legacy_o3de_detection", None)
 
     return _stack_result(("react", "javascript", "fastapi", "python", "rest"), "fallback_default", None)
