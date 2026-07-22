@@ -9,25 +9,37 @@
 #  Triggered via: repository_dispatch event type "run-tests-app"
 #  with client_payload: { "project_id": "..." }
 #
+#  Dispatches to the right toolchain based on backend_recipe/
+#  frontend_recipe (from app.ai.testing_recipes, surfaced via
+#  write_test_project_files.py's GITHUB_OUTPUT) — one job, many
+#  conditional steps, since exactly one backend recipe and one
+#  frontend recipe apply to any single project.
+#
 #  HONEST SCOPE:
-#  - Backend tests always run via pytest regardless of whether the
-#    user picked "pytest" or "unittest" as their style — pytest runs
-#    unittest.TestCase-based files natively, so this is safe and
-#    avoids a second Python test runner.
-#  - Frontend tests run via whichever the user actually picked
-#    (Jest or Vitest) — Jest needs a minimal babel/jest config
-#    written by write_test_project_files.py since the generated
-#    project is Vite-based and has no Jest transform pipeline by
-#    default; Vitest needs no extra config, it reads the project's
-#    own vite.config.js.
 #  - A Postgres service container is always available at
 #    localhost:5432 for backend tests that need a live database —
 #    but if the generated "starter skeleton" code doesn't actually
 #    wire up DATABASE_URL/migrations, DB-dependent tests may still
-#    fail for reasons outside this workflow's control.
+#    fail for reasons outside this workflow's control. Most codegen
+#    backend adapters default to a local SQLite file instead, so this
+#    is mainly useful for hand-edited projects that add Postgres
+#    themselves.
 #  - E2E frameworks (Playwright/Cypress) are intentionally not
 #    offered as selectable options (see testing.py) because they'd
-#    need a fully running deployed app, not just a checkout.
+#    need a fully running deployed app, not just a checkout. Same
+#    reasoning excludes SwiftUI — ci_runnable=False in
+#    testing_recipes.py, this workflow never attempts to build/run it
+#    (no .xcodeproj is ever generated for it, and no macOS runner is
+#    configured here).
+#  - Jetpack Compose only gets plain JVM unit tests (`./gradlew test`)
+#    — never instrumented/emulator Compose UI tests, which need a
+#    real Android emulator this workflow doesn't provision.
+#  - Rust (actix/axum) results are parsed from cargo test's plain-text
+#    summary output via regex, not a structured format — stable Rust
+#    has no built-in JSON test output, and installing an extra cargo
+#    subcommand (cargo2junit/cargo-nextest) just to get one added
+#    minutes to every Rust test run for a benefit (per-test failure
+#    messages beyond pass/fail counts) this MVP doesn't strictly need.
 # ═══════════════════════════════════════════════════════════════
 
 name: Run Tests
@@ -40,7 +52,7 @@ on:
 jobs:
   run-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -83,61 +95,262 @@ jobs:
         run: |
           python3 .github/scripts/write_test_project_files.py
 
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — Python (fastapi/flask -> pytest/unittest, django -> pytest-django)
+      # ══════════════════════════════════════════════════════════
       - name: Setup Python
-        if: steps.write_files.outputs.has_backend == 'true'
+        if: contains(fromJSON('["pytest","unittest","pytest_django"]'), steps.write_files.outputs.backend_recipe)
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install backend test dependencies
-        if: steps.write_files.outputs.has_backend == 'true'
+      - name: Install backend test dependencies (Python)
+        if: contains(fromJSON('["pytest","unittest","pytest_django"]'), steps.write_files.outputs.backend_recipe)
         shell: bash
         run: |
           pip install pytest pytest-json-report
+          if [ "${{ steps.write_files.outputs.backend_recipe }}" = "pytest_django" ]; then
+            pip install pytest-django
+          fi
           if [ -f project/backend/requirements.txt ]; then
             pip install -r project/backend/requirements.txt || echo "Some backend requirements failed to install — continuing anyway"
           fi
 
-      - name: Run backend tests
-        if: steps.write_files.outputs.has_backend == 'true'
+      - name: Run backend tests (pytest)
+        if: contains(fromJSON('["pytest","unittest"]'), steps.write_files.outputs.backend_recipe)
         working-directory: project/backend
         shell: bash
         continue-on-error: true
         run: |
           python -m pytest --json-report --json-report-file=../../backend-results.json tests/ || true
 
+      - name: Run backend tests (pytest-django)
+        if: steps.write_files.outputs.backend_recipe == 'pytest_django'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings
+        run: |
+          python -m pytest --json-report --json-report-file=../../backend-results.json tests/ || true
+
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — Ruby (rails -> rspec)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup Ruby
+        if: steps.write_files.outputs.backend_recipe == 'rspec'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: false
+
+      - name: Run backend tests (RSpec)
+        if: steps.write_files.outputs.backend_recipe == 'rspec'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          gem install rspec rspec-rails --no-document
+          bundle install || echo "Some gems failed to install — continuing anyway"
+          bundle exec rspec --format json --out ../../backend-results.json || rspec --format json --out ../../backend-results.json || true
+
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — PHP (laravel -> phpunit)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup PHP
+        if: steps.write_files.outputs.backend_recipe == 'phpunit'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer, phpunit
+
+      - name: Run backend tests (PHPUnit)
+        if: steps.write_files.outputs.backend_recipe == 'phpunit'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          composer install --no-interaction || echo "composer install failed — continuing anyway"
+          vendor/bin/phpunit --log-junit ../../backend-results.xml || phpunit --log-junit ../../backend-results.xml || true
+
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — Java (spring_boot -> JUnit 5 via Maven)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup Java (backend)
+        if: steps.write_files.outputs.backend_recipe == 'junit_spring'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Run backend tests (Maven/JUnit)
+        if: steps.write_files.outputs.backend_recipe == 'junit_spring'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          chmod +x mvnw 2>/dev/null || true
+          if [ -f mvnw ]; then ./mvnw -B test || true; else mvn -B test || true; fi
+
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — .NET (aspnet_core -> xUnit via dotnet test)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup .NET
+        if: steps.write_files.outputs.backend_recipe == 'xunit_aspnet'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Run backend tests (dotnet test)
+        if: steps.write_files.outputs.backend_recipe == 'xunit_aspnet'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          dotnet test --logger "trx;LogFileName=backend-results.trx" --results-directory ../../ || true
+
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — Rust (actix/axum -> cargo test)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup Rust
+        if: steps.write_files.outputs.backend_recipe == 'cargo_test'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run backend tests (cargo test)
+        if: steps.write_files.outputs.backend_recipe == 'cargo_test'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          cargo test -- --test-threads=1 > ../../backend-cargo-output.txt 2>&1 || true
+          cat ../../backend-cargo-output.txt
+
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — Go (gin -> go test)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup Go
+        if: steps.write_files.outputs.backend_recipe == 'go_test'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Run backend tests (go test)
+        if: steps.write_files.outputs.backend_recipe == 'go_test'
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          go mod tidy || true
+          go test ./... -json > ../../backend-results.jsonl 2>&1 || true
+
+      # ══════════════════════════════════════════════════════════
+      #  BACKEND — Node (express/nestjs -> Jest/Supertest, ts-jest)
+      #  Shares the "Setup Node.js" step below with the frontend,
+      #  since both may need it in the same run.
+      # ══════════════════════════════════════════════════════════
+      - name: Run backend tests (Jest)
+        if: contains(fromJSON('["jest_supertest","jest_nestjs"]'), steps.write_files.outputs.backend_recipe)
+        working-directory: project/backend
+        shell: bash
+        continue-on-error: true
+        run: |
+          npm install
+          npm install --no-save jest @types/jest ts-jest supertest @types/supertest
+          npx jest --json --outputFile=../../backend-results.json || true
+
+      # ══════════════════════════════════════════════════════════
+      #  FRONTEND — Node-based (react/vue/svelte/html_css_js/angular)
+      # ══════════════════════════════════════════════════════════
       - name: Setup Node.js
-        if: steps.write_files.outputs.has_frontend == 'true'
+        if: contains(fromJSON('["jest_rtl","vitest_rtl","vitest_vtu","vitest_svelte","vitest_jsdom","karma_jasmine"]'), steps.write_files.outputs.frontend_recipe) || contains(fromJSON('["jest_supertest","jest_nestjs"]'), steps.write_files.outputs.backend_recipe)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install frontend test dependencies
-        if: steps.write_files.outputs.has_frontend == 'true'
-        working-directory: project/frontend
-        shell: bash
-        run: |
-          npm install
-          if [ "${{ steps.write_files.outputs.frontend_engine }}" = "jest" ]; then
-            npm install --no-save jest jest-environment-jsdom babel-jest @babel/preset-env @babel/preset-react @testing-library/react @testing-library/jest-dom
-          else
-            npm install --no-save vitest @testing-library/react @testing-library/jest-dom jsdom
-          fi
-
-      - name: Run frontend tests
-        if: steps.write_files.outputs.has_frontend == 'true'
+      - name: Install + run frontend tests (Jest)
+        if: steps.write_files.outputs.frontend_recipe == 'jest_rtl'
         working-directory: project/frontend
         shell: bash
         continue-on-error: true
         run: |
-          if [ "${{ steps.write_files.outputs.frontend_engine }}" = "jest" ]; then
-            npx jest --json --outputFile=../../frontend-results.json || true
-          else
-            npx vitest run --environment=jsdom --reporter=json --outputFile=../../frontend-results.json || true
-          fi
+          npm install
+          npm install --no-save jest jest-environment-jsdom babel-jest @babel/preset-env @babel/preset-react @testing-library/react @testing-library/jest-dom
+          npx jest --json --outputFile=../../frontend-results.json || true
 
+      - name: Install + run frontend tests (Vitest)
+        if: contains(fromJSON('["vitest_rtl","vitest_vtu","vitest_svelte","vitest_jsdom"]'), steps.write_files.outputs.frontend_recipe)
+        working-directory: project/frontend
+        shell: bash
+        continue-on-error: true
+        run: |
+          npm install
+          case "${{ steps.write_files.outputs.frontend_recipe }}" in
+            vitest_rtl) npm install --no-save vitest @testing-library/react @testing-library/jest-dom jsdom ;;
+            vitest_vtu) npm install --no-save vitest @vue/test-utils jsdom ;;
+            vitest_svelte) npm install --no-save vitest @testing-library/svelte jsdom ;;
+            vitest_jsdom) npm install --no-save vitest jsdom ;;
+          esac
+          npx vitest run --environment=jsdom --reporter=json --outputFile=../../frontend-results.json || true
+
+      - name: Setup Chrome (Angular/Karma)
+        if: steps.write_files.outputs.frontend_recipe == 'karma_jasmine'
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install + run frontend tests (Karma/Jasmine)
+        if: steps.write_files.outputs.frontend_recipe == 'karma_jasmine'
+        working-directory: project/frontend
+        shell: bash
+        continue-on-error: true
+        run: |
+          npm install
+          npm install --no-save karma karma-jasmine karma-chrome-launcher karma-junit-reporter jasmine-core @types/jasmine
+          npx ng test --no-watch --no-progress || npx karma start karma.conf.js --single-run || true
+
+      # ══════════════════════════════════════════════════════════
+      #  FRONTEND — Flutter (flutter_test)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup Flutter
+        if: steps.write_files.outputs.frontend_recipe == 'flutter_test'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Run frontend tests (flutter test)
+        if: steps.write_files.outputs.frontend_recipe == 'flutter_test'
+        working-directory: project/frontend
+        shell: bash
+        continue-on-error: true
+        run: |
+          flutter pub get || true
+          flutter test --machine > ../../frontend-results.jsonl 2>&1 || true
+
+      # ══════════════════════════════════════════════════════════
+      #  FRONTEND — Jetpack Compose (Gradle unit tests, JVM-only)
+      # ══════════════════════════════════════════════════════════
+      - name: Setup Java (frontend)
+        if: steps.write_files.outputs.frontend_recipe == 'gradle_unit_test'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Run frontend tests (Gradle unit tests)
+        if: steps.write_files.outputs.frontend_recipe == 'gradle_unit_test'
+        working-directory: project/frontend
+        shell: bash
+        continue-on-error: true
+        run: |
+          chmod +x gradlew 2>/dev/null || true
+          if [ -f gradlew ]; then ./gradlew test --console=plain || true; else echo "No gradlew found — skipping" ; fi
+
+      # ══════════════════════════════════════════════════════════
+      #  Merge + report
+      # ══════════════════════════════════════════════════════════
       - name: Merge test results
         shell: bash
+        env:
+          BACKEND_RECIPE: ${{ steps.write_files.outputs.backend_recipe }}
+          FRONTEND_RECIPE: ${{ steps.write_files.outputs.frontend_recipe }}
         run: |
           python3 .github/scripts/merge_test_results.py
 

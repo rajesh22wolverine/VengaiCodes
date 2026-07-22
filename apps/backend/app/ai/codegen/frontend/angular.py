@@ -199,6 +199,16 @@ _TSCONFIG_APP_JSON = """{
 }
 """
 
+_TSCONFIG_SPEC_JSON = """{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/spec",
+    "types": ["jasmine"]
+  },
+  "include": ["src/**/*.spec.ts", "src/**/*.d.ts"]
+}
+"""
+
 
 def _angular_json(project_name: str) -> str:
     return f"""{{
@@ -239,6 +249,17 @@ def _angular_json(project_name: str) -> str:
             "development": {{ "buildTarget": "{project_name}:build:development" }}
           }},
           "defaultConfiguration": "development"
+        }},
+        "test": {{
+          "builder": "@angular-devkit/build-angular:karma",
+          "options": {{
+            "polyfills": ["zone.js", "zone.js/testing"],
+            "tsConfig": "tsconfig.spec.json",
+            "assets": [],
+            "styles": ["src/styles.css"],
+            "scripts": [],
+            "karmaConfig": "karma.conf.js"
+          }}
         }}
       }}
     }}
@@ -297,6 +318,7 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         GeneratedFile(path="frontend/angular.json", language="json", content=_angular_json(slug), description="Angular CLI project config"),
         GeneratedFile(path="frontend/tsconfig.json", language="json", content=_TSCONFIG_JSON, description="Base TypeScript config"),
         GeneratedFile(path="frontend/tsconfig.app.json", language="json", content=_TSCONFIG_APP_JSON, description="App TypeScript config"),
+        GeneratedFile(path="frontend/tsconfig.spec.json", language="json", content=_TSCONFIG_SPEC_JSON, description="Test TypeScript config (used by `ng test`)"),
         GeneratedFile(path="frontend/tailwind.config.js", language="javascript", content=_TAILWIND_CONFIG, description="Tailwind config"),
         GeneratedFile(path="frontend/postcss.config.js", language="javascript", content=_POSTCSS_CONFIG, description="PostCSS config"),
     ]

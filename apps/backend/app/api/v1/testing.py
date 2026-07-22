@@ -34,9 +34,17 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.orchestrator import AIError, generate_text
-from app.api.v1.auth import get_current_active_user
 from app.ai.codegen_shared import strip_code_fences, validate_generated_content
+from app.ai.orchestrator import AIError, generate_text
+from app.ai.stack_matrix import get_project_stack
+from app.ai.testing_recipes import (
+    BACKEND_TEST_RECIPES,
+    FRONTEND_TEST_RECIPES,
+    TestRecipe,
+    find_backend_recipe,
+    find_frontend_recipe,
+)
+from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
 from app.models.project import Project, SDLCPhase
@@ -146,16 +154,20 @@ class AutoFixResponse(BaseModel):
 
 # ─── Suitable-framework detection ───
 #
-# Keyword-matched against the free-text tech_stack strings the architecture
-# phase already generated (e.g. "FastAPI (Python) - ..."), same style as
-# detect_native_capabilities() in codegen.py. Only frameworks that can
-# actually run headlessly in CI are listed — see module docstring.
+# Legacy keyword fallback — matched against the free-text tech_stack
+# strings the architecture phase generated (e.g. "FastAPI (Python) - ...").
+# Only used for projects that never made a structured Stack Picker pick
+# at all (get_project_stack(...)["source"] == "fallback_default"); every
+# other project resolves its real recipe list from
+# app.ai.testing_recipes via its actual codegen stack instead of guessing
+# from prose. Only frameworks that can actually run headlessly in CI are
+# listed here — see module docstring.
 BACKEND_NODE_KEYWORDS = ["express", "node", "nest"]
 BACKEND_PYTHON_KEYWORDS = ["fastapi", "flask", "django", "python"]
 FRONTEND_VUE_KEYWORDS = ["vue"]
 
 BACKEND_FRAMEWORK_OPTIONS = {
-    "node": ["Jest + Supertest", "Mocha + Chai"],
+    "node": ["Jest + Supertest"],
     "python": ["pytest", "unittest"],
     "default": ["pytest", "unittest"],
 }
@@ -165,7 +177,7 @@ FRONTEND_FRAMEWORK_OPTIONS = {
 }
 
 
-def detect_suitable_test_frameworks(tech_stack: dict) -> dict:
+def _legacy_detect_suitable_test_frameworks(tech_stack: dict) -> dict:
     backend_text = (tech_stack.get("backend") or "").lower()
     frontend_text = (tech_stack.get("frontend") or "").lower()
 
@@ -185,13 +197,36 @@ def detect_suitable_test_frameworks(tech_stack: dict) -> dict:
     return {"backend": backend_options, "frontend": frontend_options}
 
 
+def detect_suitable_test_frameworks(project: Project) -> dict:
+    """
+    Stack-aware: resolves the project's real codegen stack via
+    get_project_stack() and looks up its actual test recipes from
+    app.ai.testing_recipes — replacing the old approach of guessing a
+    framework from free-text tech_stack keywords for every project.
+    Falls back to the legacy keyword heuristic only when the project
+    never made a structured Stack Picker pick at all, so old projects
+    that predate that feature keep working.
+    """
+    stack_info = get_project_stack(project)
+    if stack_info["source"] == "fallback_default":
+        tech_stack = (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
+        return _legacy_detect_suitable_test_frameworks(tech_stack)
+
+    backend_recipes = BACKEND_TEST_RECIPES.get(stack_info["backend_framework"], BACKEND_TEST_RECIPES["fastapi"])
+    frontend_recipes = FRONTEND_TEST_RECIPES.get(stack_info["frontend_framework"], FRONTEND_TEST_RECIPES["react"])
+    return {
+        "backend": [r.label for r in backend_recipes],
+        "frontend": [r.label for r in frontend_recipes if r.ci_runnable] or [frontend_recipes[0].label],
+    }
+
+
 # ─── Prompt builders ───
 def build_testing_prompt(
     project_name: str,
     architecture: dict,
     codegen: dict,
-    backend_framework: str,
-    frontend_framework: str,
+    backend_recipe: TestRecipe,
+    frontend_recipe: TestRecipe,
 ) -> str:
     endpoints = architecture.get("api_endpoints", [])
     files = codegen.get("files", [])
@@ -212,33 +247,33 @@ App: {project_name}
 API endpoints:
 {endpoints_text}
 
-Generated files:
+Generated files (derive the exact package/namespace path for test files from these paths where
+relevant, e.g. a Java/Kotlin file under ".../java/com/example/foo/Thing.java" means package
+"com.example.foo"):
 {files_text}
 
-Write backend tests using {backend_framework} conventions EXACTLY (e.g. pytest uses bare
-`assert` statements and fixtures; unittest uses `self.assertEqual` inside a `unittest.TestCase`
-subclass). Write frontend tests using {frontend_framework} conventions EXACTLY (e.g. Jest uses
-`jest.mock`; Vitest uses `vi.mock` and `import {{ describe, it, expect, vi }} from 'vitest'`).
+Write backend tests using {backend_recipe.label} conventions EXACTLY: {backend_recipe.style_notes}.
+Write frontend tests using {frontend_recipe.label} conventions EXACTLY: {frontend_recipe.style_notes}.
 
 These files get ACTUALLY EXECUTED in CI afterward, so file paths must follow discovery
 conventions exactly:
-- EVERY backend test file path MUST be "backend/tests/test_<name>.py" (pytest's default
-  discovery pattern — it will not find files that don't start with "test_").
-- EVERY frontend test file path MUST end in ".test.jsx" or ".test.js" and live under
-  "frontend/src/" (e.g. "frontend/src/screens/Home.test.jsx") — this is the default
-  discovery pattern for both Jest and Vitest.
+- EVERY backend test file path MUST match this template (replace any "{{name}}"/"{{Name}}"/
+  "{{package_path}}" placeholder with a real value appropriate to what's being tested):
+  "{backend_recipe.test_path_template}"
+- EVERY frontend test file path MUST match this template, same placeholder rule:
+  "{frontend_recipe.test_path_template}"
 
 Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
 {{
   "summary": "2-3 sentences on what test coverage was generated and its purpose",
   "test_files": [
     {{
-      "path": "backend/tests/test_example.py",
-      "language": "python",
+      "path": "the real path, following the template above exactly",
+      "language": "{backend_recipe.language}",
       "content": "# actual test code in the requested framework's style, 15-40 lines, syntactically valid",
       "description": "1 sentence describing what this test file covers",
       "tests_what": "the file or endpoint this targets, e.g. 'POST /api/workouts'",
-      "framework": "the exact framework this file was written for, e.g. '{backend_framework}' or '{frontend_framework}'"
+      "framework": "the exact framework this file was written for, e.g. '{backend_recipe.label}' or '{frontend_recipe.label}'"
     }}
   ],
   "coverage_notes": "1-2 honest sentences on what these test stubs DO cover and what they DON'T (e.g. happy-path only, no edge cases, no auth failure cases, not yet runnable without a live database)"
@@ -290,7 +325,7 @@ async def get_test_frameworks(
         )
 
     tech_stack = (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
-    options = detect_suitable_test_frameworks(tech_stack)
+    options = detect_suitable_test_frameworks(project)
     selected = (project.testing_data or {}).get("selected_frameworks")
 
     return TestFrameworksResponse(
@@ -344,15 +379,17 @@ async def generate_tests(
 
     architecture = (project.architecture_data or {}).get("architecture", {})
     codegen = (project.codegen_data or {}).get("codegen", {})
-    tech_stack = architecture.get("tech_stack", {})
+    stack_info = get_project_stack(project)
 
-    suitable = detect_suitable_test_frameworks(tech_stack)
+    suitable = detect_suitable_test_frameworks(project)
     backend_framework = payload.backend_framework or suitable["backend"][0]
     frontend_framework = payload.frontend_framework or suitable["frontend"][0]
+    backend_recipe = find_backend_recipe(stack_info["backend_framework"], backend_framework)
+    frontend_recipe = find_frontend_recipe(stack_info["frontend_framework"], frontend_framework)
 
     try:
         prompt = build_testing_prompt(
-            project.name, architecture, codegen, backend_framework, frontend_framework
+            project.name, architecture, codegen, backend_recipe, frontend_recipe
         )
         ai_result = await generate_text(prompt)
         parsed = parse_ai_json(ai_result["text"])
@@ -390,6 +427,10 @@ async def generate_tests(
         "total_tests": len(testing_result.test_files),
         "suitable_frameworks": suitable,
         "selected_frameworks": {"backend": backend_framework, "frontend": frontend_framework},
+        # Stable recipe keys (not the display label) for run-tests.yml/
+        # write_test_project_files.py to switch on — a label can be
+        # ambiguous or reworded, the key never is.
+        "selected_recipe_keys": {"backend": backend_recipe.key, "frontend": frontend_recipe.key},
         "user_approved": False,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "auto_fix_attempts": 0,
@@ -433,8 +474,9 @@ async def add_custom_test_module(
 
     codegen = (project.codegen_data or {}).get("codegen", {})
     selected = project.testing_data.get("selected_frameworks", {})
-    backend_framework = selected.get("backend", "pytest")
-    frontend_framework = selected.get("frontend", "Jest + React Testing Library")
+    stack_info = get_project_stack(project)
+    backend_recipe = find_backend_recipe(stack_info["backend_framework"], selected.get("backend"))
+    frontend_recipe = find_frontend_recipe(stack_info["frontend_framework"], selected.get("frontend"))
 
     files_text = "\n".join(
         f"- {f.get('path')} ({f.get('language')}): {f.get('description')}"
@@ -449,12 +491,13 @@ User's testing request: "{payload.description}"
 Generated files available:
 {files_text}
 
-Use {backend_framework} conventions for any backend test, {frontend_framework} conventions for any frontend test.
+Use {backend_recipe.label} conventions for any backend test ({backend_recipe.style_notes}),
+{frontend_recipe.label} conventions for any frontend test ({frontend_recipe.style_notes}).
 
 These files get ACTUALLY EXECUTED in CI afterward, so file paths must follow discovery
-conventions exactly: backend test paths MUST be "backend/tests/test_<name>.py" (pytest only
-discovers files starting with "test_"); frontend test paths MUST end in ".test.jsx" or
-".test.js" under "frontend/src/" (the default Jest/Vitest discovery pattern).
+conventions exactly: backend test paths MUST match "{backend_recipe.test_path_template}";
+frontend test paths MUST match "{frontend_recipe.test_path_template}" (replace any
+"{{name}}"/"{{Name}}"/"{{package_path}}" placeholder with a real, appropriate value).
 
 Generate a JSON object with EXACTLY this field (no markdown, no extra text, just valid JSON):
 {{
@@ -504,7 +547,7 @@ Respond with ONLY the JSON object, nothing else."""
             content=content,
             description=raw.get("description", ""),
             tests_what=raw.get("tests_what", payload.description),
-            framework=raw.get("framework") or (backend_framework if language == "python" else frontend_framework),
+            framework=raw.get("framework") or (backend_recipe.label if language == backend_recipe.language else frontend_recipe.label),
             source="custom",
         ))
 
@@ -601,13 +644,25 @@ async def get_test_run_files(
         )
 
     tech_stack = (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
+    selected_frameworks = project.testing_data.get("selected_frameworks", {})
+
+    # Older projects generated their tests before selected_recipe_keys
+    # existed — re-derive the keys from the stored label strings so
+    # run-tests.yml still gets a stable key to switch on either way.
+    recipe_keys = project.testing_data.get("selected_recipe_keys")
+    if not recipe_keys:
+        stack_info = get_project_stack(project)
+        backend_recipe = find_backend_recipe(stack_info["backend_framework"], selected_frameworks.get("backend"))
+        frontend_recipe = find_frontend_recipe(stack_info["frontend_framework"], selected_frameworks.get("frontend"))
+        recipe_keys = {"backend": backend_recipe.key, "frontend": frontend_recipe.key}
 
     return {
         "project_id": project_id,
         "codegen_files": project.codegen_data.get("codegen", {}).get("files", []),
         "test_files": project.testing_data.get("testing", {}).get("test_files", []),
         "tech_stack": tech_stack,
-        "selected_frameworks": project.testing_data.get("selected_frameworks", {}),
+        "selected_frameworks": selected_frameworks,
+        "selected_recipe_keys": recipe_keys,
     }
 
 
