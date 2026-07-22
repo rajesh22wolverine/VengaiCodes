@@ -1,14 +1,31 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — Packaging API Routes (Windows .exe/.msi builds)
+#  VengaiCode — Packaging API Routes (Windows builds)
 #  api/v1/packaging.py — Trigger, poll, and download GitHub
-#  Actions-built Windows installers
+#  Actions-built Windows binaries
 #
-#  HONEST STATUS: written but UNTESTED end-to-end. Requires:
+#  Mirrors android_packaging.py's routing: a "web" category frontend
+#  (React/Vue/Angular/Svelte/Plain HTML-JS) gets wrapped in Tauri/
+#  WebView2 (build-windows-installer.yml, CONFIRMED WORKING — 5
+#  consecutive successful runs); Flutter gets a REAL native (non-
+#  WebView) build since its codegen already emits a complete Dart
+#  project (build-windows-native-flutter.yml); Godot gets a real game
+#  engine export (build-windows-game-godot.yml). O3DE and Jetpack
+#  Compose/SwiftUI have no automated Windows pipeline — O3DE's engine
+#  build is too heavy for CI, Compose/SwiftUI are mobile-only
+#  frameworks with no Windows target at all — see
+#  stack_matrix.CI_BUILDABLE_GAME_ENGINES for why Godot but not O3DE.
+#
+#  HONEST STATUS: build-windows-installer.yml is CONFIRMED WORKING.
+#  The two new native/game workflows are written but UNTESTED end-to-
+#  end — no Flutter SDK/Godot binary available in this dev environment
+#  to live-verify, same class of limitation documented in
+#  android_packaging.py's header for its own new pipelines. Requires:
 #  - GITHUB_TOKEN (a GitHub Personal Access Token with 'repo' and
 #    'workflow' scopes) set in Render environment variables
-#  - GITHUB_REPO setting (e.g. "KalRaj2/VengaiCodes")
+#  - GITHUB_REPO setting (e.g. "rajesh22wolverine/VengaiCodes")
 #  - BUILD_SECRET setting, matching secrets.VENGAICODE_BUILD_SECRET
 #    configured in the GitHub repo's Actions secrets
+#  — same for all three workflows, no separate configuration needed.
 #
 #  KNOWN LIMITATION: GitHub's repository_dispatch API does not
 #  return a run ID directly. This module finds "the most recent
@@ -27,7 +44,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.stack_matrix import FRONTEND_FRAMEWORKS, get_project_stack
+from app.ai.stack_matrix import CI_BUILDABLE_GAME_ENGINES, FRONTEND_FRAMEWORKS, get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
@@ -39,6 +56,25 @@ logger = logging.getLogger("vengaicode.packaging")
 router = APIRouter()
 
 GITHUB_API = "https://api.github.com"
+
+# frontend_framework -> (workflow YAML file, repository_dispatch event_type).
+# Mirrors android_packaging.py's _WORKFLOW_ROUTES/_workflow_for_stack shape.
+_NATIVE_WORKFLOW_ROUTES: dict[str, tuple[str, str]] = {
+    "flutter": ("build-windows-native-flutter.yml", "build-windows-native-flutter-app"),
+}
+_WEB_WORKFLOW: tuple[str, str] = ("build-windows-installer.yml", "build-windows-app")
+_GODOT_WORKFLOW: tuple[str, str] = ("build-windows-game-godot.yml", "build-windows-game-godot-app")
+
+
+def _workflow_for_stack(stack_info: dict) -> tuple[str, str] | None:
+    """Returns (workflow_file, dispatch_event_type), or None if this
+    project's frontend has no automated Windows build pipeline."""
+    fe = stack_info["frontend_framework"]
+    if FRONTEND_FRAMEWORKS[fe]["category"] == "web":
+        return _WEB_WORKFLOW
+    if fe in CI_BUILDABLE_GAME_ENGINES:
+        return _GODOT_WORKFLOW
+    return _NATIVE_WORKFLOW_ROUTES.get(fe)
 
 
 # ─── Schemas ───
@@ -147,20 +183,18 @@ async def trigger_build(
             ),
         )
 
-    # This pipeline wraps a compiled web bundle (Vite frontend) in Tauri —
-    # it has no way to consume a Flutter/SwiftUI/Jetpack Compose project,
-    # none of which produce a web bundle at all. Same precedent O3DE
-    # already set: not run through installer-build CI, template+README only.
     stack_info = get_project_stack(project)
-    if FRONTEND_FRAMEWORKS[stack_info["frontend_framework"]]["category"] != "web":
+    route = _workflow_for_stack(stack_info)
+    if route is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "This project's frontend doesn't produce a web bundle this pipeline can wrap — "
-                "only React/Vue/Angular/Svelte/Plain HTML-JS support one-click packaging. "
-                "Download the source and follow README_SETUP.md instead."
+                "This project's frontend doesn't have an automated Windows build pipeline yet "
+                "(Jetpack Compose/SwiftUI are mobile-only; Open 3D Engine's build is too heavy "
+                "to run in CI). Download the source and follow README_SETUP.md instead."
             ),
         )
+    _, event_type = route
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -170,7 +204,7 @@ async def trigger_build(
                 "Accept": "application/vnd.github+json",
             },
             json={
-                "event_type": "build-windows-app",
+                "event_type": event_type,
                 "client_payload": {"project_id": payload.project_id},
             },
         )
@@ -202,9 +236,10 @@ async def get_build_status(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Finds the most recent build-windows-installer.yml workflow run
-    and returns its status. See module docstring for the known
-    limitation on tracking concurrent builds.
+    Finds the most recent workflow run (for whichever of the three
+    Windows pipelines this project's stack routes to) and returns its
+    status. See module docstring for the known limitation on tracking
+    concurrent builds.
     """
     result = await db.execute(
         select(Project).where(
@@ -222,10 +257,15 @@ async def get_build_status(
             detail="Packaging is not configured yet.",
         )
 
+    route = _workflow_for_stack(get_project_stack(project))
+    if route is None:
+        return BuildStatusResponse(status="not_started")
+    workflow_file, _ = route
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"build-windows-installer.yml/runs",
+            f"{workflow_file}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
@@ -285,10 +325,18 @@ async def list_build_artifacts(
             detail="Packaging is not configured yet.",
         )
 
+    route = _workflow_for_stack(get_project_stack(project))
+    if route is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed build found for this project. Trigger a build first.",
+        )
+    workflow_file, _ = route
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         runs_response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"build-windows-installer.yml/runs",
+            f"{workflow_file}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",

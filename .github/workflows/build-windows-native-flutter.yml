@@ -1,0 +1,128 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Flutter Native Windows Build (per-project)
+#
+#  Builds a REAL native Windows desktop app (Dart compiled to native
+#  x64 code via Flutter's own Windows toolchain, MSVC/Win32 under the
+#  hood) — no WebView, no wrapped web bundle. Same shape as
+#  build-android-native-flutter.yml: the Flutter adapter only emits
+#  Dart SOURCE (pubspec.yaml + lib/), so `flutter create` scaffolds
+#  the windows/ platform folder FIRST, then the generated pubspec.yaml/
+#  lib/ overlay on top of that scaffold.
+#
+#  Runs on windows-latest specifically (not ubuntu-latest, unlike
+#  every other new pipeline this session) — `flutter build windows`
+#  needs the MSVC/Visual Studio C++ toolchain, which GitHub's
+#  windows-latest hosted runner ships preinstalled ("Desktop
+#  development with C++" workload) and Linux runners can't provide.
+#
+#  No release/signing gate (unlike the Android Flutter pipeline):
+#  Windows desktop apps have no keystore-equivalent blocking a release
+#  build, so this always builds --release for a real, optimized binary.
+#
+#  Triggered via: repository_dispatch event type
+#  "build-windows-native-flutter-app" with client_payload:
+#  { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no Flutter SDK
+#  available in this dev environment to live-verify, same caveat as
+#  the Android Flutter pipeline. Flutter's Windows build output
+#  directory layout has changed across versions (some ship an
+#  extra x64/ subdirectory under build/windows/, some don't) — the
+#  upload step below uses a glob covering both rather than a single
+#  hardcoded path, to avoid guessing which this CI runner's Flutter
+#  version uses.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Windows (Flutter, native)
+run-name: "Windows native (Flutter) build — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [build-windows-native-flutter-app]
+
+jobs:
+  build-windows-native-flutter:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop support
+        shell: bash
+        run: flutter config --enable-windows-desktop
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Determine Dart project name
+        id: project_name
+        shell: bash
+        run: |
+          NAME=$(python .github/scripts/extract_flutter_project_name.py)
+          echo "Using Flutter project name: $NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Scaffold a real Flutter project (windows/ platform folder)
+        shell: bash
+        run: |
+          flutter create --platforms=windows \
+            --project-name "${{ steps.project_name.outputs.name }}" \
+            --org com.vengaicode.generated \
+            build
+
+      - name: Overlay generated Dart source onto the scaffold
+        shell: bash
+        run: |
+          python .github/scripts/inject_frontend_files.py
+
+      - name: Verify the Flutter project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f -not -path "./windows/flutter/ephemeral/*"
+
+          for required in pubspec.yaml lib/main.dart windows/CMakeLists.txt; do
+            if [ ! -f "$required" ]; then
+              echo "$required NOT FOUND"
+              exit 1
+            fi
+          done
+          echo "Flutter project looks complete"
+
+      - name: Install Dart dependencies
+        working-directory: build
+        shell: bash
+        run: flutter pub get
+
+      - name: Build Windows app (release)
+        working-directory: build
+        shell: bash
+        run: flutter build windows --release
+
+      - name: Upload Windows app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-windows-flutter-exe
+          path: |
+            build/build/windows/x64/runner/Release/**
+            build/build/windows/runner/Release/**
+          if-no-files-found: warn

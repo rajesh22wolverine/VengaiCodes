@@ -1,0 +1,121 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Godot Engine Windows Game Build (per-project)
+#
+#  Builds a REAL Windows game .exe from a Godot 4 project — the same
+#  generated project as build-android-game-godot.yml (one
+#  export_presets.cfg holds both the "Android" and "Windows Desktop"
+#  presets — see godot.py header), just exported for a different
+#  target. Godot's headless export packages the pre-built export
+#  templates for the CHOSEN target platform regardless of the host
+#  OS — it doesn't compile the engine — so this still runs on the
+#  same Linux barichello/godot-ci image as the Android workflow, no
+#  Windows runner needed.
+#
+#  Triggered via: repository_dispatch event type
+#  "build-windows-game-godot-app" with client_payload:
+#  { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — same caveats as
+#  build-android-game-godot.yml (no Godot binary available in this dev
+#  environment to live-verify). The Windows Desktop preset's field
+#  names were cross-checked against abarichello/godot-ci's real
+#  test-project export_presets.cfg — see godot.py's header for the
+#  full diligence note. No code-signing step: codesign/enable=false
+#  in the preset (no certificate available), matching the existing
+#  build-windows-installer.yml (Tauri) pipeline, which also ships
+#  unsigned by default.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Windows Game (Godot)
+run-name: "Windows game (Godot) build — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [build-windows-game-godot-app]
+
+jobs:
+  build-windows-game-godot:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Same as the Android Godot workflow — this image is purpose-built
+      # for exports, python3 isn't guaranteed preinstalled.
+      - name: Ensure python3 is available
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Write generated Godot project into build/
+        shell: bash
+        run: |
+          mkdir -p build
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Verify the Godot project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 3 -type f
+
+          for required in project.godot export_presets.cfg Main.tscn Main.gd; do
+            if [ ! -f "$required" ]; then
+              echo "$required NOT FOUND"
+              exit 1
+            fi
+          done
+          echo "Godot project looks complete"
+
+      - name: Import project resources (generates .godot/ cache Godot needs before exporting)
+        working-directory: build
+        shell: bash
+        run: godot --headless --verbose --import
+
+      - name: Compute output filename from the project's app name
+        id: exe_name
+        working-directory: build
+        shell: bash
+        run: |
+          SAFE_NAME=$(python3 -c "
+          import json, re
+          data = json.load(open('../project_files.json', encoding='utf-8'))
+          name = data.get('project_name') or 'vengaicode_app'
+          cleaned = re.sub(r'[^\w\s-]', '', name).strip()
+          cleaned = re.sub(r'\s+', '_', cleaned)
+          print((cleaned[:50] or 'vengaicode_app'))
+          ")
+          echo "Using output filename: $SAFE_NAME.exe"
+          echo "name=$SAFE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Export Windows build (release — no signing dependency to gate on, unlike the Android preset)
+        working-directory: build
+        shell: bash
+        run: |
+          mkdir -p dist
+          godot --headless --verbose --export-release "Windows Desktop" "dist/${{ steps.exe_name.outputs.name }}.exe"
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-windows-game-godot-exe
+          path: build/dist/*.exe
+          if-no-files-found: warn

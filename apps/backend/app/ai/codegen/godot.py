@@ -9,8 +9,13 @@
 #  UNLIKE O3DE, Godot is registered in stack_matrix.CI_BUILDABLE_GAME_
 #  ENGINES: its CLI export (`godot --headless --export-release`) uses
 #  pre-built export templates, not a multi-hour engine compile, so
-#  android_packaging.py can actually turn this into a real installable
-#  APK via CI — see .github/workflows/build-android-game-godot.yml.
+#  both android_packaging.py AND packaging.py (Windows) can turn this
+#  into a real installable build via CI — see
+#  .github/workflows/build-android-game-godot.yml and
+#  build-windows-game-godot.yml. ONE export_presets.cfg holds both
+#  platform presets (Godot's normal convention — a project's presets
+#  all live in one file), so codegen only runs once regardless of
+#  which platform(s) a user ends up building.
 #
 #  HONEST STATUS: no Godot editor/binary is available in this
 #  environment to live-verify a real export (same class of limitation
@@ -18,14 +23,20 @@
 #  used in the screen prompt (HTTPRequest, JSON.parse_string, the
 #  Control-node layout calls) and the project.godot / Main.tscn shapes
 #  below are standard, stable Godot 4 patterns. export_presets.cfg's
-#  field names (keystore/debug, keystore/release, package/unique_name,
-#  architectures/arm64-v8a, gradle_build/use_gradle_build) were cross-
-#  checked against a real, working reference project — abarichello/
-#  godot-ci's test-project — rather than invented; that project is also
-#  the source for the CI keystore-signing approach used in the
-#  workflow (sed-patching keystore/release* fields, never regenerating
-#  the whole file). Treat export_presets.cfg as the least-verified
-#  piece here — the workflow's own header repeats this caveat.
+#  field names for BOTH presets (Android: keystore/debug, keystore/
+#  release, package/unique_name, architectures/arm64-v8a, gradle_build/
+#  use_gradle_build; Windows Desktop: binary_format/architecture,
+#  texture_format/s3tc_bptc, codesign/enable, application/product_name)
+#  were cross-checked against a real, working reference project —
+#  abarichello/godot-ci's test-project — rather than invented; that
+#  project is also the source for the CI keystore-signing approach used
+#  in the Android workflow (sed-patching keystore/release* fields,
+#  never regenerating the whole file). binary_format/embed_pck is set
+#  to true (unlike that reference's default of false) so a Windows
+#  export produces one standalone .exe instead of an .exe+.pck pair —
+#  a real, documented toggle, not an invented field. Treat
+#  export_presets.cfg as the least-verified piece here — both
+#  workflows' own headers repeat this caveat.
 # ═══════════════════════════════════════════════════════════════
 
 from app.ai.codegen.types import FileResult, ScreenCtx
@@ -176,6 +187,60 @@ keystore/debug_password=""
 keystore/release=""
 keystore/release_user=""
 keystore/release_password=""
+
+[preset.1]
+
+name="Windows Desktop"
+platform="Windows Desktop"
+runnable=true
+advanced_options=false
+dedicated_server=false
+custom_features=""
+export_filter="all_resources"
+include_filter=""
+exclude_filter=""
+export_path="build.exe"
+encryption_include_filters=""
+encryption_exclude_filters=""
+encrypt_pck=false
+encrypt_directory=false
+script_export_mode=2
+
+[preset.1.options]
+
+custom_template/debug=""
+custom_template/release=""
+debug/export_console_wrapper=1
+binary_format/embed_pck=true
+binary_format/architecture="x86_64"
+binary_format/64_bits=true
+texture_format/s3tc_bptc=true
+texture_format/etc2_astc=false
+texture_format/bptc=true
+texture_format/s3tc=true
+texture_format/etc=true
+texture_format/etc2=true
+texture_format/no_bptc_fallbacks=true
+codesign/enable=false
+codesign/timestamp=true
+codesign/timestamp_server_url=""
+codesign/digest_algorithm=1
+codesign/description=""
+application/modify_resources=true
+application/icon=""
+application/console_wrapper_icon=""
+application/icon_interpolation=4
+application/file_version="1.0.0"
+application/product_version="1.0.0"
+application/company_name=""
+application/product_name="{project_name}"
+application/file_description="{project_name}"
+application/copyright=""
+application/trademarks=""
+application/export_angle=0
+application/export_d3d12=0
+application/d3d12_agility_sdk_multiarch=true
+ssh_remote_deploy/enabled=false
 """
 
 _MAIN_TSCN = """[gd_scene load_steps=2 format=3]
@@ -254,7 +319,7 @@ def manifest_files(project_name: str) -> list[GeneratedFile]:
             path="frontend/export_presets.cfg",
             language="ini",
             content=_EXPORT_PRESETS_CFG.format(package_name=package_name, project_name=project_name),
-            description="Android export preset (least-verified file in this pipeline — see godot.py header)",
+            description="Android + Windows Desktop export presets (least-verified file in this pipeline — see godot.py header)",
         ),
     ]
 
@@ -282,6 +347,7 @@ def setup_commands(project_name: str) -> list[str]:
         "cd frontend",
         "# Requires the Godot 4 editor installed (https://godotengine.org/download)",
         "# Open this folder as a project in Godot, or run headlessly:",
-        'godot --headless --export-debug "Android" build.apk   # requires Android export templates installed',
+        'godot --headless --export-debug "Android" build.apk           # requires Android export templates installed',
+        'godot --headless --export-debug "Windows Desktop" build.exe   # requires Windows export templates installed',
         "# Or open the project in the Godot editor and use Project > Export.",
     ]
