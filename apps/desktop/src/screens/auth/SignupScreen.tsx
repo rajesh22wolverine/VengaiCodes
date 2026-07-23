@@ -472,7 +472,7 @@ export default function SignupScreen() {
 // ─── Helper — mirrors backend mask_email() ───
 function maskEmail(email: string): string {
   const [local, domain] = email.split("@");
-  if (!domain) return email;
+  if (!local || !domain) return email;
   const masked = local.length <= 2 ? local[0] + "*" : local.slice(0, 2) + "*".repeat(local.length - 2);
   return `${masked}@${domain}`;
 }

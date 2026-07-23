@@ -52,7 +52,7 @@
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true
   },
-  "include": ["src", "vite.config.ts", "tailwind.config.ts"],
+  "include": ["src"],
   "exclude": ["node_modules", "dist", "src-tauri", "tests"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
