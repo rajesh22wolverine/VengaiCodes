@@ -20,9 +20,12 @@
     },
     "bundle": {
       "active": true,
-      "targets": ["msi", "nsis"],
+      "targets": ["msi", "nsis", "deb", "appimage"],
       "identifier": "com.vengaicode.desktop",
       "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
         "icons/icon.ico"
       ],
       "resources": [],
@@ -42,6 +45,9 @@
           "installMode": "currentUser",
           "languages": ["English"]
         }
+      },
+      "deb": {
+        "depends": []
       }
     },
     "security": {
