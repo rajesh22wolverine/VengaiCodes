@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Desktop App Windows Build (VengaiCode's OWN product)
+#
+#  NOT to be confused with build-windows-installer.yml, which packages
+#  a per-project GENERATED app (fetched from the backend via
+#  project_id) — this workflow builds VengaiCode's own fixed source
+#  tree at apps/desktop into a real, installable Windows app. There is
+#  no project_id here; it always builds whatever's on the checked-out
+#  branch, the same way build-android-apk.yml builds VengaiCode's own
+#  mobile client.
+#
+#  Uses the repo's own pnpm/turborepo scripts (root package.json's
+#  "build:desktop" -> `turbo run tauri:build --filter=@vengaicode/
+#  desktop` -> `tauri build` inside apps/desktop) rather than
+#  reimplementing the build steps here — apps/desktop/src-tauri's
+#  Cargo.toml/tauri.conf.json/main.rs/build.rs were the missing piece
+#  (previously empty stub files; the frontend and this turbo pipeline
+#  wiring already existed).
+#
+#  VITE_API_URL is set to the deployed backend so the compiled app
+#  talks to production, not localhost:8000 (api.ts's dev-only default)
+#  — see tauri.conf.json's CSP, which explicitly allows this origin.
+#
+#  Triggered manually (workflow_dispatch) — this is a product release
+#  build, not a per-user/per-project action, so nothing in the backend
+#  ever dispatches this automatically.
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no Rust/Tauri
+#  toolchain available in this dev environment to live-verify a real
+#  build. Only "msi"/"nsis" (Windows) targets are configured in
+#  tauri.conf.json — icons/icon.icns is an empty stub (0 bytes) and no
+#  PNG icon set exists, so macOS/Linux bundling isn't attempted here;
+#  that would need real icon assets added first.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build Desktop App (Windows)
+run-name: "VengaiCode desktop Windows build — ${{ github.sha }}"
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-desktop-windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@8.15.1 --activate
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows app (msi + nsis)
+        env:
+          VITE_API_URL: https://vengaicode-backend.onrender.com
+        run: pnpm run build:desktop
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-desktop-windows-msi
+          path: apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+
+      - name: Upload NSIS EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-desktop-windows-exe
+          path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
