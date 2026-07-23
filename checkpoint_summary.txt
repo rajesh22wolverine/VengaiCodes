@@ -1,0 +1,41 @@
+Checkpoint Summary
+
+What we accomplished
+- Added real O3DE build support scaffolding and integration points
+- Implemented backend prompt routing for O3DE-aware architecture and code generation
+- Added placeholder console support folders for PlayStation, Xbox, and Nintendo
+- Added export logic to include O3DE template files in ZIP downloads for O3DE projects
+- Added O3DE build scripts for Windows (build_o3de_project.ps1) and Linux/macOS (build_o3de_project.sh)
+- Added documentation for O3DE/native build support
+
+Files changed
+- apps/backend/app/api/v1/wizard.py
+- apps/backend/app/api/v1/architecture.py
+- apps/backend/app/api/v1/codegen.py
+- apps/backend/app/api/v1/export.py
+- README.md
+- docs/README.md
+
+Files added
+- docs/o3de-native-builds.md
+- templates/o3de/README.md
+- templates/o3de/.gitignore
+- templates/o3de/ProjectName.project
+- templates/o3de/ProjectName.workspace
+- templates/o3de/build_o3de_project.ps1
+- templates/o3de/build_o3de_project.sh
+- templates/o3de/Project/README.md
+- templates/o3de/Project/Assets/placeholder.txt
+- templates/o3de/Project/Scripts/placeholder.py
+- templates/console/README.md
+- templates/console/playstation/README.md
+- templates/console/xbox/README.md
+- templates/console/nintendo/README.md
+
+Pending / still required
+- A full real O3DE project template with actual engine files, scenes, scripts, and assets
+- Real console build integration using licensed SDKs and platform-specific tooling
+- Frontend/UI support to select O3DE or console build options in the app
+- Validation of O3DE build scripts against a real O3DE install
+
+The code and docs are now in place for an O3DE path, but the actual engine/project content and console SDK build pipeline remain to be implemented.
