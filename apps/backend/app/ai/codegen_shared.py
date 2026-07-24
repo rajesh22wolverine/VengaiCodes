@@ -151,9 +151,13 @@ def _validate_brace_heuristic(content: str) -> str | None:
 
 # Curly-brace languages the balanced-delimiter heuristic transfers to
 # directly. "javascript" is the original, already-shipped case; the rest
-# are unlocked as their adapters land.
+# are unlocked as their adapters land. "lua" doesn't use braces for
+# control flow (if/then/end), but its Properties table syntax does use
+# {}, so the heuristic still catches truncated-output failures there —
+# listed explicitly rather than relying on VALIDATORS.get()'s fallback,
+# so it reads as a reviewed decision, not an accident.
 _BRACE_HEURISTIC_LANGUAGES = {
-    "javascript", "typescript", "csharp", "rust", "go", "kotlin", "swift", "dart", "php",
+    "javascript", "typescript", "csharp", "rust", "go", "kotlin", "swift", "dart", "php", "lua",
 }
 
 VALIDATORS: dict[str, Callable[[str], str | None]] = {

@@ -1,4 +1,0 @@
-# O3DE Asset Placeholder
-
-This folder should contain O3DE asset files such as scenes, materials, and prefabs.
-Replace this placeholder with actual game assets during project creation.

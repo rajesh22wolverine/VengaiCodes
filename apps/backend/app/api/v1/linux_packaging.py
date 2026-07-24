@@ -140,8 +140,10 @@ async def trigger_build(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "This project's frontend doesn't have an automated Linux build pipeline yet "
-                "(Jetpack Compose/SwiftUI are mobile-only; Open 3D Engine's build is too heavy "
-                "to run in CI). Download the source and follow README_SETUP.md instead."
+                "(Jetpack Compose/SwiftUI are mobile-only). For Open 3D Engine, its full build "
+                "is too heavy to run in CI — use POST /api/v1/packaging/o3de/package instead, "
+                "which validates and zips a real project for you to open/build in your own "
+                "O3DE Editor."
             ),
         )
     _, event_type = route

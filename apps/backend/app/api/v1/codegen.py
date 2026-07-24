@@ -23,13 +23,11 @@ from app.ai.codegen.frontend import FRONTEND_ADAPTERS
 from app.ai.codegen.readme import build_readme_setup
 from app.ai.codegen.types import ModelCtx, RoutesCtx, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
-    GROQ_WIRING_MAX_TOKENS,
     GeneratedFile,
     apply_package_json_name,
     detect_native_capabilities,
-    parse_ai_json,
 )
-from app.ai.orchestrator import AIError, generate_text
+from app.ai.orchestrator import AIError
 from app.ai.stack_matrix import get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
@@ -173,21 +171,22 @@ async def generate_code(
                     endpoints=endpoints,
                     requirements_text=requirements_text,
                     native_capabilities=[],
-                    language="o3de_script",
+                    language="lua",
                 )))
                 for screen in screens
             ]
 
-            wiring_prompt = o3de.build_wiring_prompt(
-                project.name, ", ".join(f.path for f in screen_files) or "(none)"
-            )
-            wiring_result = await generate_text(wiring_prompt, max_tokens=GROQ_WIRING_MAX_TOKENS)
-            wiring_parsed = parse_ai_json(wiring_result["text"])
+            # Deterministic wiring — no AI call, same reasoning as Godot's
+            # branch below: project.json/the level prefab are real O3DE
+            # formats that a freeform AI JSON call can't be trusted to
+            # reproduce correctly (see o3de.py's header for what changed).
+            wiring_files = o3de.manifest_files(project.name, screen_files)
+            wiring_files.append(build_readme_setup(
+                project.name, None, o3de.setup_commands(project.name), None,
+            ))
             real_files = screen_files
-            generated_files = [f.model_dump() for f in real_files] + wiring_parsed.get("files", [])
-            summary = wiring_parsed.get(
-                "summary", f"Generated {len(real_files)} real implementation files plus wiring/config."
-            )
+            generated_files = [f.model_dump() for f in real_files + wiring_files]
+            summary = f"Generated {len(real_files)} real O3DE Lua behavior scripts plus project/level wiring."
         elif is_godot:
             # Godot has no separate backend either (same "none" sentinel as
             # O3DE), but unlike O3DE its wiring/manifest files are built

@@ -34,13 +34,26 @@ FRONTEND_FRAMEWORKS: dict[str, dict] = {
     "godot":            {"label": "Godot Engine",            "languages": ["gdscript"],                   "category": "game"},
 }
 
-# Game-category frontends that automated CI packaging can actually turn
-# into a real APK (see android_packaging.py). O3DE is "game" category but
-# NOT in this set — its engine build is too heavy for CI (10-20GB+ source
-# build, hours), so it stays template+README-only. Godot's CLI export
-# (pre-built export templates, no engine compile) is CI-practical, so it's
-# the one game engine with a real automated build pipeline.
+# Game-category frontends that automated CI packaging can actually
+# COMPILE into a real installable APK/exe/binary (see android_packaging.py
+# / packaging.py / linux_packaging.py). O3DE is "game" category but NOT in
+# this set — its engine build is too heavy for CI (10-20GB+ source build,
+# hours, typically wants a GPU). Godot's CLI export (pre-built export
+# templates, no engine compile) is CI-practical, so it's the one game
+# engine with a real automated COMPILE pipeline.
+#
+# O3DE isn't fully manual either, though — see CI_PACKAGEABLE_GAME_ENGINES
+# just below for the lighter-weight thing CI *can* do for it.
 CI_BUILDABLE_GAME_ENGINES: frozenset[str] = frozenset({"godot"})
+
+# Game-category frontends where CI can validate + zip a real generated
+# project (see o3de_packaging.py / .github/workflows/package-o3de-project.
+# yml) even though it can't compile one (CI_BUILDABLE_GAME_ENGINES above).
+# The result is a project the user opens/builds in their own engine
+# Editor, not an installable binary — a genuinely different guarantee
+# than CI_BUILDABLE_GAME_ENGINES, kept as a separate set rather than
+# folded in so callers can't conflate "packaged" with "compiled".
+CI_PACKAGEABLE_GAME_ENGINES: frozenset[str] = frozenset({"o3de"})
 
 # ─── Backend side ───
 BACKEND_FRAMEWORKS: dict[str, dict] = {

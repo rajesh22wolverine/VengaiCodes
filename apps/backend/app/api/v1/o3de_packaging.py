@@ -1,31 +1,25 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — Android Packaging API Routes (per-project APK builds)
-#  api/v1/android_packaging.py — Trigger, poll, and download
-#  GitHub Actions-built Android APKs
+#  VengaiCode — O3DE Packaging API Routes (per-project)
+#  api/v1/o3de_packaging.py — Trigger, poll, and download a validated,
+#  zipped O3DE project via GitHub Actions.
 #
-#  Mirrors packaging.py (Windows installer builds) but targets one of
-#  FOUR Android workflows, chosen by the project's frontend framework
-#  (see _workflow_for_stack): a "web" category frontend (React/Vue/
-#  Angular/Svelte/Plain HTML-JS) gets wrapped in a Capacitor WebView
-#  (build-android-installer.yml, CONFIRMED WORKING — see that file's
-#  header); Jetpack Compose and Flutter get REAL native (non-WebView)
-#  builds since their codegen already emits a complete native project,
-#  not a web bundle (build-android-native-compose.yml / -flutter.yml);
-#  Godot gets a real game-engine export (build-android-game-godot.yml).
-#  O3DE and SwiftUI have no automated pipeline (O3DE's engine build is
-#  too heavy for CI; SwiftUI is iOS-only) and keep 400ing here — see
-#  stack_matrix.CI_BUILDABLE_GAME_ENGINES for why Godot but not O3DE.
+#  Deliberately named "package", not "build" — package-o3de-project.yml
+#  does NOT compile anything (see that workflow's header for why: a real
+#  O3DE engine build is tens of GB and hours, not something a GitHub-
+#  hosted runner can do — same reasoning stack_matrix.CI_BUILDABLE_
+#  GAME_ENGINES already documents for why O3DE isn't in that set, unlike
+#  Godot). What this DOES do: fetch the project's generated files (real
+#  project.json / level prefab / Lua scripts — see app/ai/codegen/
+#  o3de.py), validate them (JSON parses, Lua syntax checks), and zip the
+#  result as a downloadable artifact the user opens in their own O3DE
+#  Editor. Mirrors android_packaging.py's route shape (trigger/status/
+#  artifacts/download) but for one engine, not a multi-stack dispatch
+#  table — there's no "_workflow_for_stack" here since this router is
+#  only ever reached for O3DE projects.
 #
-#  All four workflows call back to GET /packaging/{project_id}/files
-#  to fetch the code to package — that endpoint is platform-agnostic.
-#
-#  HONEST STATUS: build-android-installer.yml is CONFIRMED WORKING
-#  (one real successful end-to-end run). The three new native/game
-#  workflows are written but UNTESTED end-to-end — no Android SDK/
-#  Gradle/Flutter SDK/Godot binary is available in this environment to
-#  live-verify them, same class of limitation documented in
-#  jetpack_compose.py's and godot.py's headers. Requires the same
-#  GITHUB_TOKEN / GITHUB_REPO / BUILD_SECRET settings for all four —
+#  HONEST STATUS: written but UNTESTED end-to-end — no O3DE-aware CI
+#  run has ever been triggered. Requires the same GITHUB_TOKEN/
+#  GITHUB_REPO/BUILD_SECRET settings as every other packaging module —
 #  no separate configuration needed.
 # ═══════════════════════════════════════════════════════════════
 
@@ -38,7 +32,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.stack_matrix import CI_BUILDABLE_GAME_ENGINES, FRONTEND_FRAMEWORKS, get_project_stack
+from app.ai.stack_matrix import get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
@@ -46,62 +40,62 @@ from app.core.naming import safe_filename
 from app.models.project import Project
 from app.models.user import User
 
-logger = logging.getLogger("vengaicode.android_packaging")
+logger = logging.getLogger("vengaicode.o3de_packaging")
 router = APIRouter()
 
 GITHUB_API = "https://api.github.com"
-
-# frontend_framework -> (workflow YAML file, repository_dispatch event_type).
-# "web" category frontends (react/vue/angular/svelte/html_css_js) all share
-# one entry, added below the literal dict since there are 5 of them and
-# they all route to the same Capacitor pipeline.
-_NATIVE_WORKFLOW_ROUTES: dict[str, tuple[str, str]] = {
-    "jetpack_compose": ("build-android-native-compose.yml", "build-android-native-compose-app"),
-    "flutter": ("build-android-native-flutter.yml", "build-android-native-flutter-app"),
-}
-_WEB_WORKFLOW: tuple[str, str] = ("build-android-installer.yml", "build-android-installer-app")
-_GODOT_WORKFLOW: tuple[str, str] = ("build-android-game-godot.yml", "build-android-game-godot-app")
-
-
-def _workflow_for_stack(stack_info: dict) -> tuple[str, str] | None:
-    """Returns (workflow_file, dispatch_event_type), or None if this
-    project's frontend has no automated Android build pipeline."""
-    fe = stack_info["frontend_framework"]
-    if FRONTEND_FRAMEWORKS[fe]["category"] == "web":
-        return _WEB_WORKFLOW
-    if fe in CI_BUILDABLE_GAME_ENGINES:
-        return _GODOT_WORKFLOW
-    return _NATIVE_WORKFLOW_ROUTES.get(fe)
+_WORKFLOW_FILE = "package-o3de-project.yml"
+_EVENT_TYPE = "package-o3de-project-app"
 
 
 # ─── Schemas ───
-class TriggerBuildRequest(BaseModel):
+class TriggerPackageRequest(BaseModel):
     project_id: str
 
 
-class BuildStatusResponse(BaseModel):
+class PackageStatusResponse(BaseModel):
     success: bool = True
     status: str  # "not_started" | "queued" | "in_progress" | "completed" | "failed"
     run_url: str | None = None
     conclusion: str | None = None  # "success" | "failure" | None
 
 
+async def _get_o3de_project(project_id: str, user: User, db: AsyncSession) -> Project:
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    if get_project_stack(project)["frontend_framework"] != "o3de":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This project isn't using Open 3D Engine — nothing to package here.",
+        )
+    return project
+
+
 # ═══════════════════════════════════════════════════════════════
-#  POST /build — trigger an Android APK build
+#  POST /package — trigger a validate-and-zip O3DE package
 # ═══════════════════════════════════════════════════════════════
 @router.post(
-    "/build",
-    summary="Trigger an Android APK build via GitHub Actions",
+    "/package",
+    summary="Validate and zip this project's generated O3DE files via GitHub Actions",
 )
-async def trigger_build(
-    payload: TriggerBuildRequest,
+async def trigger_package(
+    payload: TriggerPackageRequest,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Triggers the build-android-installer.yml GitHub Actions workflow
-    via the repository_dispatch API. The workflow then calls back to
-    GET /packaging/{project_id}/files to fetch the code to package.
+    Triggers package-o3de-project.yml via repository_dispatch. That
+    workflow calls back to GET /packaging/{project_id}/files (the same
+    platform-agnostic endpoint every other packaging workflow uses) to
+    fetch the code, then validates and zips it — it does NOT compile
+    an O3DE build. See this module's header for why.
     """
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -109,16 +103,7 @@ async def trigger_build(
             detail="Packaging is not configured yet (missing GitHub credentials).",
         )
 
-    result = await db.execute(
-        select(Project).where(
-            Project.id == payload.project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_o3de_project(payload.project_id, user, db)
 
     if not project.codegen_data or not project.codegen_data.get("user_approved"):
         raise HTTPException(
@@ -133,23 +118,9 @@ async def trigger_build(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"{len(validation_warnings)} generated file(s) failed validation and are "
-                f"likely to break the build: {bad_paths}. Regenerate the code before packaging."
+                f"likely broken: {bad_paths}. Regenerate the code before packaging."
             ),
         )
-
-    stack_info = get_project_stack(project)
-    route = _workflow_for_stack(stack_info)
-    if route is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "This project's frontend doesn't have an automated Android build pipeline yet "
-                "(SwiftUI is iOS-only). For Open 3D Engine, its full build is too heavy to run "
-                "in CI — use POST /api/v1/packaging/o3de/package instead, which validates and "
-                "zips a real project for you to open/build in your own O3DE Editor."
-            ),
-        )
-    _, event_type = route
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -159,46 +130,41 @@ async def trigger_build(
                 "Accept": "application/vnd.github+json",
             },
             json={
-                "event_type": event_type,
+                "event_type": _EVENT_TYPE,
                 "client_payload": {"project_id": payload.project_id},
             },
         )
 
     if response.status_code != 204:
-        logger.error(f"Failed to trigger build: {response.status_code} {response.text}")
+        logger.error(f"Failed to trigger O3DE package: {response.status_code} {response.text}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to start the build. Please try again.",
+            detail="Failed to start packaging. Please try again.",
         )
 
     return {
         "success": True,
-        "message": "Build started! This takes 10-25 minutes. Check status for progress. 🐯🏗️",
+        "message": (
+            "Packaging started! This validates and zips your O3DE project (a few minutes) — "
+            "it does NOT compile a game. Open the result in your own O3DE Editor afterward. 🐯📦"
+        ),
     }
 
 
 # ═══════════════════════════════════════════════════════════════
-#  GET /{project_id}/status — poll build status
+#  GET /{project_id}/status — poll packaging status
 # ═══════════════════════════════════════════════════════════════
 @router.get(
     "/{project_id}/status",
-    response_model=BuildStatusResponse,
-    summary="Check the status of the most recent Android APK build",
+    response_model=PackageStatusResponse,
+    summary="Check the status of the most recent O3DE packaging run",
 )
-async def get_build_status(
+async def get_package_status(
     project_id: str,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    await _get_o3de_project(project_id, user, db)
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -206,15 +172,10 @@ async def get_build_status(
             detail="Packaging is not configured yet.",
         )
 
-    route = _workflow_for_stack(get_project_stack(project))
-    if route is None:
-        return BuildStatusResponse(status="not_started")
-    workflow_file, _ = route
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{workflow_file}/runs",
+            f"{_WORKFLOW_FILE}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
@@ -225,7 +186,7 @@ async def get_build_status(
     if response.status_code != 200:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to check build status.",
+            detail="Failed to check packaging status.",
         )
 
     # The run's display name is set via `run-name:` in the workflow file to
@@ -234,9 +195,9 @@ async def get_build_status(
     runs = response.json().get("workflow_runs", [])
     matching = next((r for r in runs if project_id in (r.get("name") or "")), None)
     if matching is None:
-        return BuildStatusResponse(status="not_started")
+        return PackageStatusResponse(status="not_started")
 
-    return BuildStatusResponse(
+    return PackageStatusResponse(
         status=matching.get("status", "unknown"),
         conclusion=matching.get("conclusion"),
         run_url=matching.get("html_url"),
@@ -244,26 +205,18 @@ async def get_build_status(
 
 
 # ═══════════════════════════════════════════════════════════════
-#  GET /{project_id}/artifacts — list available APK artifacts
+#  GET /{project_id}/artifacts — list the packaged project zip
 # ═══════════════════════════════════════════════════════════════
 @router.get(
     "/{project_id}/artifacts",
-    summary="List available downloadable artifacts for a completed Android build",
+    summary="List available downloadable artifacts for a completed O3DE packaging run",
 )
-async def list_build_artifacts(
+async def list_package_artifacts(
     project_id: str,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_o3de_project(project_id, user, db)
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -271,18 +224,10 @@ async def list_build_artifacts(
             detail="Packaging is not configured yet.",
         )
 
-    route = _workflow_for_stack(get_project_stack(project))
-    if route is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No completed build found for this project. Trigger a build first.",
-        )
-    workflow_file, _ = route
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         runs_response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{workflow_file}/runs",
+            f"{_WORKFLOW_FILE}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
@@ -295,7 +240,7 @@ async def list_build_artifacts(
         if matching is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No completed build found for this project. Trigger a build first.",
+                detail="No completed packaging run found for this project. Trigger one first.",
             )
 
         run_id = matching["id"]
@@ -312,7 +257,7 @@ async def list_build_artifacts(
     if not artifacts:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Build completed but no APK artifact was found.",
+            detail="Packaging completed but no project zip artifact was found.",
         )
 
     return {
@@ -334,23 +279,15 @@ async def list_build_artifacts(
 # ═══════════════════════════════════════════════════════════════
 @router.get(
     "/{project_id}/artifacts/{artifact_id}/download",
-    summary="Stream a specific Android build artifact for direct download",
+    summary="Stream the packaged O3DE project zip for direct download",
 )
-async def download_build_artifact(
+async def download_package_artifact(
     project_id: str,
     artifact_id: int,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_o3de_project(project_id, user, db)
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -380,7 +317,7 @@ async def download_build_artifact(
                 async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
                     yield chunk
 
-    filename = f"{safe_filename(project.name)}-android-{artifact_id}.zip"
+    filename = f"{safe_filename(project.name)}-o3de-{artifact_id}.zip"
     return StreamingResponse(
         stream_artifact(),
         media_type="application/zip",

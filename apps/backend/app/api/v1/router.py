@@ -210,3 +210,11 @@ api_router.include_router(
     prefix="/packaging/linux",
     tags=["Packaging"],
 )
+
+# ── Packaging (O3DE — validate + zip a real project, no compile) ──
+from app.api.v1 import o3de_packaging
+api_router.include_router(
+    o3de_packaging.router,
+    prefix="/packaging/o3de",
+    tags=["Packaging"],
+)

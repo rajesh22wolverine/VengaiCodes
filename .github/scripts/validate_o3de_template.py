@@ -1,27 +1,36 @@
-"""Structural validation for templates/o3de/ — CI-friendly, no engine required.
+"""Structural validation for templates/o3de/ - CI-friendly, no engine required.
 
 Checks that the O3DE scaffold hasn't silently broken: required files exist,
-project/workspace XML parses, and the placeholder Python script compiles.
-Does NOT attempt to actually build or run an O3DE project — that requires a
-real O3DE engine install (tens of GB, no GPU on hosted runners) and is
-intentionally out of scope for hosted CI. See templates/o3de/README.md.
+project.json/the level prefab parse as valid JSON. Does NOT attempt to
+actually build or run an O3DE project - that requires a real O3DE engine
+install (tens of GB, no GPU on hosted runners) and is intentionally out of
+scope for hosted CI. See templates/o3de/README.md.
+
+Lua syntax itself is checked separately in the workflow via `luac -p`
+(not here) since that needs the `lua`/`luac` binary, not just Python stdlib.
 """
-import py_compile
+import json
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 TEMPLATE_ROOT = Path("templates/o3de")
 
 REQUIRED_FILES = [
-    "ProjectName.project",
-    "ProjectName.workspace",
+    "project.json",
     "README.md",
     "build_o3de_project.sh",
     "build_o3de_project.ps1",
-    "Project/README.md",
-    "Project/Assets/placeholder.txt",
-    "Project/Scripts/placeholder.py",
+    "Levels/Main/Main.prefab",
+    "Scripts/main.lua",
+]
+
+# Real O3DE project.json fields - see o3de.py's _project_json() and this
+# module's own header for where these were confirmed (AutomatedTesting/
+# project.json in the o3de/o3de repo).
+REQUIRED_PROJECT_JSON_FIELDS = [
+    "project_name", "product_name", "version", "executable_name",
+    "modules", "project_id", "display_name", "icon_path",
+    "external_subdirectories", "gem_names",
 ]
 
 errors = []
@@ -36,32 +45,38 @@ def check_required_files():
             print(f"found: {path}")
 
 
-def check_xml(rel_path):
+def check_project_json():
+    path = TEMPLATE_ROOT / "project.json"
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        errors.append(f"invalid JSON in {path}: {e}")
+        return
+    print(f"valid JSON: {path}")
+    for field in REQUIRED_PROJECT_JSON_FIELDS:
+        if field not in data:
+            errors.append(f"{path} is missing required field: {field}")
+
+
+def check_prefab_json(rel_path):
     path = TEMPLATE_ROOT / rel_path
     if not path.is_file():
         return
     try:
-        ET.parse(path)
-        print(f"valid XML: {path}")
-    except ET.ParseError as e:
-        errors.append(f"invalid XML in {path}: {e}")
-
-
-def check_python_compiles(rel_path):
-    path = TEMPLATE_ROOT / rel_path
-    if not path.is_file():
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        errors.append(f"invalid JSON in {path}: {e}")
         return
-    try:
-        py_compile.compile(str(path), doraise=True)
-        print(f"compiles: {path}")
-    except py_compile.PyCompileError as e:
-        errors.append(f"Python syntax error in {path}: {e}")
+    print(f"valid JSON: {path}")
+    if "ContainerEntity" not in data or "Entities" not in data:
+        errors.append(f"{path} is missing ContainerEntity/Entities - not a valid O3DE prefab shape")
 
 
 check_required_files()
-check_xml("ProjectName.project")
-check_xml("ProjectName.workspace")
-check_python_compiles("Project/Scripts/placeholder.py")
+check_project_json()
+check_prefab_json("Levels/Main/Main.prefab")
 
 if errors:
     print("\nO3DE template validation FAILED:")

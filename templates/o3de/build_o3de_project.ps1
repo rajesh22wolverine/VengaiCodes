@@ -1,4 +1,15 @@
-# O3DE build script for Windows
+# Registers this O3DE project with your local engine install. This is the
+# real first step for any hand-authored O3DE project - confirmed against
+# the engine's own CLI (scripts/o3de/o3de/register.py in the o3de/o3de
+# repo), unlike this script's previous version, which called
+# `o3de project --generate` / `o3de asset build` / `o3de build --platform`
+# - none of which are real o3de CLI subcommands.
+#
+# There is deliberately no unattended "build" step after this: O3DE's own
+# export tooling (`o3de export-project`) requires a project-specific
+# --export-script, and getting a project into a compilable state the
+# first time normally happens through the Editor (Project Manager builds
+# it on first open), not a one-shot CLI command. See README.md.
 
 param(
     [string]$ProjectPath = ".",
@@ -17,26 +28,11 @@ if (-not (Test-Path $o3deCmd)) {
 }
 
 Write-Host "Using O3DE engine at: $EnginePath"
-Write-Host "Building O3DE project at: $ProjectPath"
+Write-Host "Registering O3DE project at: $ProjectPath"
 
-Push-Location $ProjectPath
-try {
-    & $o3deCmd project --generate
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to generate project files."
-    }
-
-    & $o3deCmd asset --project-path "$ProjectPath" build
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to build O3DE assets."
-    }
-
-    & $o3deCmd build --project-path "$ProjectPath" --platform win64
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to build O3DE project."
-    }
-
-    Write-Host "O3DE build completed successfully."
-} finally {
-    Pop-Location
+& $o3deCmd register --project-path "$ProjectPath"
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to register the project."
 }
+
+Write-Host "Registered. Open O3DE's Project Manager to build and open this project in the Editor."

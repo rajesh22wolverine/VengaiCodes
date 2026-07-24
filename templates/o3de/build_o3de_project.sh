@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Registers this O3DE project with your local engine install. This is the
+# real first step for any hand-authored O3DE project — confirmed against
+# the engine's own CLI (scripts/o3de/o3de/register.py in the o3de/o3de
+# repo), unlike this script's previous version, which called
+# `o3de project --generate` / `o3de asset build` / `o3de build --platform`
+# — none of which are real o3de CLI subcommands.
+#
+# There is deliberately no unattended "build" step after this: O3DE's own
+# export tooling (`o3de export-project`) requires a project-specific
+# `--export-script`, and getting a project into a compilable state the
+# first time normally happens through the Editor (Project Manager builds
+# it on first open), not a one-shot CLI command. See README.md.
+
 PROJECT_PATH="${1:-.}"
 ENGINE_PATH="${O3DE_ENGINE_PATH:-}"
 
@@ -16,13 +29,8 @@ if [[ ! -x "$O3DE_CMD" ]]; then
 fi
 
 echo "Using O3DE engine at: $ENGINE_PATH"
-echo "Building O3DE project at: $PROJECT_PATH"
+echo "Registering O3DE project at: $PROJECT_PATH"
 
-pushd "$PROJECT_PATH" >/dev/null
+"$O3DE_CMD" register --project-path "$PROJECT_PATH"
 
-$O3DE_CMD project --generate
-$O3DE_CMD asset --project-path "$PROJECT_PATH" build
-$O3DE_CMD build --project-path "$PROJECT_PATH" --platform linux64
-
-echo "O3DE build completed successfully."
-popd >/dev/null
+echo "Registered. Open O3DE's Project Manager to build and open this project in the Editor."

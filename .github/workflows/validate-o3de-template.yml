@@ -9,13 +9,15 @@
 #  step (see templates/o3de/README.md).
 #
 #  What this DOES do, on free hosted runners, using only standard
-#  open-source tooling (Python stdlib, bash, pwsh — all already on
-#  the runner image, no paid or proprietary bits):
+#  open-source tooling (Python stdlib, bash, pwsh, lua5.4 — all either
+#  already on the runner image or a small apt package, no paid or
+#  proprietary bits):
 #    - required scaffold files are present
-#    - ProjectName.project / .workspace parse as valid XML
+#    - project.json / Levels/Main/Main.prefab parse as valid JSON with
+#      the real O3DE fields/shape (see validate_o3de_template.py)
 #    - build_o3de_project.sh passes `bash -n` (syntax only)
 #    - build_o3de_project.ps1 parses as valid PowerShell
-#    - Project/Scripts/placeholder.py compiles
+#    - Scripts/main.lua passes `luac5.4 -p` (real Lua syntax check)
 #
 #  Catches "someone broke the scaffold" without pretending to catch
 #  "the game builds" — those are different guarantees.
@@ -45,7 +47,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check required files and validate XML / Python
+      - name: Check required files and validate JSON
         shell: bash
         run: python3 .github/scripts/validate_o3de_template.py
 
@@ -66,3 +68,11 @@ jobs:
             exit 1
           }
           Write-Host "build_o3de_project.ps1 parses cleanly"
+
+      - name: Check Lua syntax (Scripts/main.lua)
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+          luac5.4 -p templates/o3de/Scripts/main.lua
+          echo "Scripts/main.lua parses cleanly"

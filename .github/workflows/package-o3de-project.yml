@@ -1,0 +1,143 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — O3DE Project Packaging (per-project)
+#
+#  Does NOT compile or export a game — see templates/o3de/README.md and
+#  app/ai/codegen/o3de.py's header for why: a real O3DE engine build is
+#  tens of GB and hours, and typically wants a GPU, none of which a
+#  GitHub-hosted runner provides (same reasoning stack_matrix.
+#  CI_BUILDABLE_GAME_ENGINES already documents for excluding O3DE from
+#  the "real CI build" set that Godot IS in).
+#
+#  What this DOES do: fetch the project's generated files (a real
+#  project.json, a real level prefab, and real Lua behavior scripts —
+#  see app/ai/codegen/o3de.py), validate them (JSON parses with the
+#  right shape, Lua syntax checks with a real Lua compiler), and zip the
+#  result as a downloadable artifact. The user opens that zip in their
+#  own O3DE Editor — see the generated README_O3DE_SETUP.md for the
+#  one-time manual script re-link step and how to register the project.
+#
+#  Triggered via: repository_dispatch event type
+#  "package-o3de-project-app" with client_payload: { "project_id": "..." }
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no live run has ever
+#  been triggered. The validation steps (JSON parsing, `luac5.4 -p`) are
+#  real and don't depend on anything O3DE-specific being installed, so
+#  they're the most trustworthy part of this workflow; the packaged
+#  zip's actual openability in a real O3DE Editor is unverified.
+# ═══════════════════════════════════════════════════════════════
+
+name: Package O3DE Project
+run-name: "O3DE project package — ${{ github.event.client_payload.project_id }}"
+
+on:
+  repository_dispatch:
+    types: [package-o3de-project-app]
+
+jobs:
+  package-o3de-project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch generated project files from VengaiCode backend
+        shell: bash
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.VENGAICODE_BUILD_SECRET }}
+          BACKEND_URL: https://vengaicode-backend.onrender.com
+        run: |
+          echo "Fetching files for project $PROJECT_ID"
+          curl -f -H "X-Build-Secret: $BUILD_SECRET" \
+            "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
+            -o project_files.json
+          echo "Fetched project_files.json"
+
+      - name: Write generated O3DE project into build/
+        shell: bash
+        run: |
+          mkdir -p build
+          python3 .github/scripts/inject_frontend_files.py
+
+      - name: Verify the O3DE project looks complete
+        working-directory: build
+        shell: bash
+        run: |
+          echo "Files inside build:"
+          find . -maxdepth 4 -type f
+
+          if [ ! -f project.json ]; then
+            echo "project.json NOT FOUND"
+            exit 1
+          fi
+          if [ ! -f Levels/Main/Main.prefab ]; then
+            echo "Levels/Main/Main.prefab NOT FOUND"
+            exit 1
+          fi
+          if [ -z "$(find Scripts -name '*.lua' 2>/dev/null)" ]; then
+            echo "No .lua files found under Scripts/"
+            exit 1
+          fi
+          echo "O3DE project looks complete"
+
+      - name: Validate JSON files (project.json + every prefab)
+        working-directory: build
+        shell: bash
+        run: |
+          python3 -c "
+          import json, sys, pathlib
+          ok = True
+          for p in [pathlib.Path('project.json')] + list(pathlib.Path('Levels').rglob('*.prefab')):
+              try:
+                  json.loads(p.read_text(encoding='utf-8'))
+                  print(f'valid JSON: {p}')
+              except json.JSONDecodeError as e:
+                  print(f'INVALID JSON in {p}: {e}')
+                  ok = False
+          sys.exit(0 if ok else 1)
+          "
+
+      - name: Install Lua (for syntax checking only — not the engine)
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+
+      - name: Check Lua syntax of every generated script
+        working-directory: build
+        shell: bash
+        run: |
+          status=0
+          for f in $(find Scripts -name '*.lua'); do
+            if luac5.4 -p "$f"; then
+              echo "OK: $f"
+            else
+              echo "SYNTAX ERROR: $f"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Zip the validated project (no compilation)
+        working-directory: build
+        shell: bash
+        run: |
+          mkdir -p ../dist
+          SAFE_NAME=$(python3 -c "
+          import json, re
+          data = json.load(open('../project_files.json', encoding='utf-8'))
+          name = data.get('project_name') or 'vengaicode_o3de_project'
+          cleaned = re.sub(r'[^\w\s-]', '', name).strip()
+          cleaned = re.sub(r'\s+', '_', cleaned)
+          print((cleaned[:50] or 'vengaicode_o3de_project'))
+          ")
+          zip -r "../dist/${SAFE_NAME}-o3de-project.zip" .
+
+      - name: Upload packaged project artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vengaicode-app-o3de-project
+          path: dist/*.zip
+          if-no-files-found: error

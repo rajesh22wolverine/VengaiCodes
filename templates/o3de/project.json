@@ -1,0 +1,12 @@
+{
+    "project_name": "VengaiCodeO3DETemplate",
+    "product_name": "VengaiCodeO3DETemplate",
+    "version": "1.0.0",
+    "executable_name": "VengaiCodeO3DETemplateLauncher",
+    "modules": [],
+    "project_id": "{6C6F5C6F-7665-4E67-A163-6F6465544D50}",
+    "display_name": "VengaiCode O3DE Template",
+    "icon_path": "preview.png",
+    "external_subdirectories": [],
+    "gem_names": []
+}
