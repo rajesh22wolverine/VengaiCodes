@@ -129,7 +129,6 @@ async def generate_routes(ctx: RoutesCtx) -> list[FileResult]:
 def _build_migration_php(index: int, table: dict) -> tuple[str, str]:
     table_name = table.get("name", "Item")
     plural = _table_slug(table_name)
-    class_name = f"Create{_pascal(plural)}Table"
     fields = [f for f in (table.get("key_fields", []) or []) if _slug(f) not in ("created_at", "updated_at")]
     columns = "\n".join(f"            $table->{_infer_column_type(f)}('{_slug(f)}');" for f in fields)
 

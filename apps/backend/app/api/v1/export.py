@@ -23,7 +23,7 @@ from app.ai.stack_matrix import get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
 from app.core.naming import safe_filename
-from app.models.project import AppCategory, Project
+from app.models.project import Project
 from app.models.user import User
 
 logger = logging.getLogger("vengaicode.export")

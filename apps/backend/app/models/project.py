@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy import (
     Boolean, Column, DateTime, Enum, Float,
     ForeignKey, Integer, String, Text, JSON,
-    Index, UniqueConstraint
+    Index
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func

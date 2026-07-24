@@ -152,45 +152,45 @@ Return ONLY the raw Lua code for this one file. No markdown fences, no explanati
     ), issue
 
 
+def _new_component(rng: random.Random, components: dict, type_str: str, **fields) -> None:
+    """Adds one component to `components`, generating exactly ONE id shared
+    by the `Component_[id]` key and the nested "Id" field — real O3DE
+    prefabs always match the two (confirmed against DefaultLevel.prefab).
+    A previous version of this module called _new_numeric_id() separately
+    for the key and the "Id" field, so they'd almost never match — a real
+    bug caught by ruff's F601 check (repeated dict-key-literal pattern)
+    during a pre-commit/CI wiring pass, not by manual review."""
+    component_id = _new_numeric_id(rng)
+    components[f"Component_[{component_id}]"] = {"$type": type_str, "Id": component_id, **fields}
+
+
 def _entity_json(rng: random.Random, name: str, script_asset_hint: str | None) -> tuple[str, dict]:
     """One O3DE prefab entity: real Transform + (optionally) a Lua Script
     component. Component set and $type shapes (which get a "{UUID} Name"
     type string vs. a bare class name) mirror DefaultLevel.prefab — see
     module header."""
     entity_id = _new_numeric_id(rng)
-    components = {
-        f"Component_[{_new_numeric_id(rng)}]": {
-            "$type": "EditorLockComponent",
-            "Id": _new_numeric_id(rng),
-        },
-        f"Component_[{_new_numeric_id(rng)}]": {
-            "$type": "EditorVisibilityComponent",
-            "Id": _new_numeric_id(rng),
-        },
-        f"Component_[{_new_numeric_id(rng)}]": {
-            "$type": "EditorInspectorComponent",
-            "Id": _new_numeric_id(rng),
-        },
-        f"Component_[{_new_numeric_id(rng)}]": {
-            "$type": f"{_TRANSFORM_COMPONENT_UUID} TransformComponent",
-            "Id": _new_numeric_id(rng),
-            "Parent Entity": "",
-        },
-    }
+    components: dict = {}
+    _new_component(rng, components, "EditorLockComponent")
+    _new_component(rng, components, "EditorVisibilityComponent")
+    _new_component(rng, components, "EditorInspectorComponent")
+    _new_component(rng, components, f"{_TRANSFORM_COMPONENT_UUID} TransformComponent", **{"Parent Entity": ""})
+
     if script_asset_hint:
-        components[f"Component_[{_new_numeric_id(rng)}]"] = {
-            "$type": f"{_SCRIPT_EDITOR_COMPONENT_UUID} ScriptEditorComponent",
-            "Id": _new_numeric_id(rng),
+        _new_component(
+            rng,
+            components,
+            f"{_SCRIPT_EDITOR_COMPONENT_UUID} ScriptEditorComponent",
             # HONEST GAP #1 (see module header): assetId is the canonical
             # null/unresolved GUID — a real one can only be assigned by
             # O3DE's own Asset Processor, not computed here. assetHint is
             # the real relative path, so the Editor's "browse to file"
             # re-link is a one-click fix, not a guess.
-            "ScriptAsset": {
+            ScriptAsset={
                 "assetId": dict(_NULL_ASSET_ID),
                 "assetHint": script_asset_hint,
             },
-        }
+        )
 
     entity_key = f"Entity_[{entity_id}]"
     return entity_key, {
@@ -225,38 +225,21 @@ def _level_prefab(project_name: str, screen_files: list[GeneratedFile]) -> dict:
         entities[entity_key] = entity
         child_order.append(entity_key)
 
+    container_components: dict = {}
+    _new_component(rng, container_components, "EditorInspectorComponent")
+    _new_component(rng, container_components, "EditorEntitySortComponent", **{"Child Entity Order": child_order})
+    _new_component(
+        rng, container_components, f"{_TRANSFORM_COMPONENT_UUID} TransformComponent", **{"Parent Entity": ""}
+    )
+    _new_component(rng, container_components, "EditorPrefabComponent")
+    _new_component(rng, container_components, "EditorLockComponent")
+    _new_component(rng, container_components, "EditorVisibilityComponent")
+
     return {
         "ContainerEntity": {
             "Id": container_key,
             "Name": "Level",
-            "Components": {
-                f"Component_[{_new_numeric_id(rng)}]": {
-                    "$type": "EditorInspectorComponent",
-                    "Id": _new_numeric_id(rng),
-                },
-                f"Component_[{_new_numeric_id(rng)}]": {
-                    "$type": "EditorEntitySortComponent",
-                    "Id": _new_numeric_id(rng),
-                    "Child Entity Order": child_order,
-                },
-                f"Component_[{_new_numeric_id(rng)}]": {
-                    "$type": f"{_TRANSFORM_COMPONENT_UUID} TransformComponent",
-                    "Id": _new_numeric_id(rng),
-                    "Parent Entity": "",
-                },
-                f"Component_[{_new_numeric_id(rng)}]": {
-                    "$type": "EditorPrefabComponent",
-                    "Id": _new_numeric_id(rng),
-                },
-                f"Component_[{_new_numeric_id(rng)}]": {
-                    "$type": "EditorLockComponent",
-                    "Id": _new_numeric_id(rng),
-                },
-                f"Component_[{_new_numeric_id(rng)}]": {
-                    "$type": "EditorVisibilityComponent",
-                    "Id": _new_numeric_id(rng),
-                },
-            },
+            "Components": container_components,
         },
         "Entities": entities,
     }

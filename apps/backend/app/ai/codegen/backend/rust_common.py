@@ -63,7 +63,6 @@ def _infer_sql_type(field_name: str) -> str:
 
 
 def build_create_table_sql(table: dict) -> str:
-    import re
 
     plural = f"{_slug(table.get('name', 'item'))}s"
     fields = [f for f in (table.get("key_fields", []) or []) if _slug(f) not in ("created_at", "updated_at")]

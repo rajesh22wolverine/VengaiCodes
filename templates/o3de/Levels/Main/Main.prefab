@@ -1,63 +1,63 @@
 {
     "ContainerEntity": {
-        "Id": "Entity_[7204759863115856909]",
+        "Id": "Entity_[3072103379133368635]",
         "Name": "Level",
         "Components": {
-            "Component_[6877165005812816254]": {
+            "Component_[570204358084279395]": {
                 "$type": "EditorInspectorComponent",
-                "Id": 4705766204579267266
+                "Id": 570204358084279395
             },
-            "Component_[6226166139393241315]": {
+            "Component_[8025916675502470096]": {
                 "$type": "EditorEntitySortComponent",
-                "Id": 5401467084945224816,
+                "Id": 8025916675502470096,
                 "Child Entity Order": [
-                    "Entity_[1405933692599971870]"
+                    "Entity_[5216865897257383770]"
                 ]
             },
-            "Component_[9105644653159107215]": {
+            "Component_[1733385133008970933]": {
                 "$type": "{27F1E1A1-8D9D-4C3B-BD3A-AFB9762449C0} TransformComponent",
-                "Id": 7591356745276811430,
+                "Id": 1733385133008970933,
                 "Parent Entity": ""
             },
-            "Component_[7035887524778133550]": {
+            "Component_[2700515488847800689]": {
                 "$type": "EditorPrefabComponent",
-                "Id": 3411125698051810550
+                "Id": 2700515488847800689
             },
-            "Component_[6736174996705898679]": {
+            "Component_[1487643861630098885]": {
                 "$type": "EditorLockComponent",
-                "Id": 173016146427108514
+                "Id": 1487643861630098885
             },
-            "Component_[6033561065106930125]": {
+            "Component_[7306319425147108071]": {
                 "$type": "EditorVisibilityComponent",
-                "Id": 7499370792285794402
+                "Id": 7306319425147108071
             }
         }
     },
     "Entities": {
-        "Entity_[1405933692599971870]": {
-            "Id": "Entity_[1405933692599971870]",
+        "Entity_[5216865897257383770]": {
+            "Id": "Entity_[5216865897257383770]",
             "Name": "Main",
             "Components": {
-                "Component_[3511690903687671133]": {
+                "Component_[9027769538139151090]": {
                     "$type": "EditorLockComponent",
-                    "Id": 6417365424422458967
+                    "Id": 9027769538139151090
                 },
-                "Component_[8868576417476929299]": {
+                "Component_[3695284144221439442]": {
                     "$type": "EditorVisibilityComponent",
-                    "Id": 63019022639278247
+                    "Id": 3695284144221439442
                 },
-                "Component_[7976402861394629391]": {
+                "Component_[3895482886263517625]": {
                     "$type": "EditorInspectorComponent",
-                    "Id": 5393984687259018326
+                    "Id": 3895482886263517625
                 },
-                "Component_[2657183127655873868]": {
+                "Component_[6918878298596777465]": {
                     "$type": "{27F1E1A1-8D9D-4C3B-BD3A-AFB9762449C0} TransformComponent",
-                    "Id": 6936941350534132666,
+                    "Id": 6918878298596777465,
                     "Parent Entity": ""
                 },
-                "Component_[2055659049636430563]": {
+                "Component_[4029948582748647847]": {
                     "$type": "{B5FC8679-FA2A-4C7C-AC42-DCC279EA613A} ScriptEditorComponent",
-                    "Id": 6944470165376194999,
+                    "Id": 4029948582748647847,
                     "ScriptAsset": {
                         "assetId": {
                             "guid": "{00000000-0000-0000-0000-000000000000}",

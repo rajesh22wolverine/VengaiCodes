@@ -142,8 +142,9 @@ async def verify_otp_code(
     if otp_record.is_exhausted():
         return False, "Too many incorrect attempts. Please request a new OTP."
 
-    # Track attempts in Redis (fast) and DB (durable)
-    attempts = await increment_otp_attempts(
+    # Track attempts in Redis (fast) and DB (durable) — DB's otp_record.attempts
+    # below is what remaining-attempts logic actually reads.
+    await increment_otp_attempts(
         target, purpose, ttl_seconds=settings.MSG91_OTP_EXPIRE_MINUTES * 60
     )
     otp_record.attempts += 1

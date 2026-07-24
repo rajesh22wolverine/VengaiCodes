@@ -1,0 +1,62 @@
+# VengaiCode pre-commit hooks.
+#
+# One-time setup (each dev does this once):
+#   pip install pre-commit
+#   pre-commit install
+# After that, these hooks run automatically on `git commit`, only against
+# the files you've staged — they don't touch or reformat the whole repo.
+#
+# This was an empty file before — present in the repo but wired to
+# nothing. Root package.json's `lint-staged` config already declares the
+# SAME intent (ruff for *.py, prettier for *.{json,md,yaml,yml}) via
+# Husky, but `.husky/pre-commit` was never actually created, so neither
+# mechanism did anything. This file is the one now doing the real work;
+# it isn't required to also finish wiring Husky/lint-staged, since having
+# both fully wired would just be two hook systems fighting over the same
+# job.
+#
+# Deliberately NOT running eslint here: `.eslintrc.js` is an empty file
+# (checked directly — running eslint against it fails immediately with a
+# parse error on `const`, since it has no parserOptions/env at all). Wiring
+# in a hook that's broken on contact would be worse than not having it;
+# fixing the actual eslint config is a separate, bigger task.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-ast
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: mixed-line-ending
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.22
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^apps/backend/
+      # ruff-format is deliberately NOT wired in here yet: with default
+      # settings it wants to reformat 58 of 78 backend files on first run
+      # (checked directly with `ruff format --check`), and a wider
+      # line-length didn't meaningfully shrink that — this codebase was
+      # simply never run through an auto-formatter before. Turning it on
+      # now would mean someone's next unrelated commit to any touched
+      # file drags in a big, surprising reformat diff. Root package.json's
+      # lint-staged config already lists "ruff format" as intended future
+      # behavior — add the hook back once a deliberate one-time repo-wide
+      # reformat commit has been done separately, not silently here.
+
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (JS/TS/JSON/MD/YAML)
+        description: Uses the repo's own pnpm-installed prettier — no separate install.
+        entry: npx --no-install prettier --write
+        language: system
+        files: \.(js|jsx|ts|tsx|json|md|ya?ml)$
+        exclude: ^apps/backend/

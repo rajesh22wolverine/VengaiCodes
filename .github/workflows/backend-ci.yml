@@ -1,0 +1,60 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Backend CI (lint + unit tests)
+#
+#  Runs on every push/PR touching apps/backend so a broken commit is
+#  caught BEFORE Render's auto-deploy-on-push picks it up — previously
+#  nothing gated that deploy at all: two real test files existed
+#  (tests/unit/test_export.py, test_stack_matrix_adapters.py) but no
+#  workflow ever ran them, and pytest wasn't even declared as a
+#  dependency anywhere.
+#
+#  Two checks, both fast (no DB/services needed — these are pure unit
+#  tests and static analysis):
+#    - ruff check: lint, using the repo-root ruff.toml (same tool/config
+#      lint-staged already calls locally per root package.json, and the
+#      same one .pre-commit-config.yaml runs at commit time — this is
+#      the backstop for anyone who commits with --no-verify).
+#    - pytest: the actual unit test suite.
+# ═══════════════════════════════════════════════════════════════
+
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend/**"
+      - "ruff.toml"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "apps/backend/**"
+      - "ruff.toml"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: apps/backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: apps/backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check apps/backend/app
+
+      - name: Run unit tests (pytest)
+        working-directory: apps/backend
+        run: pytest tests/ -v

@@ -144,7 +144,7 @@ async def browse_listings(
     result = await db.execute(query)
     listings = result.scalars().all()
 
-    seller_ids = {l.seller_id for l in listings}
+    seller_ids = {listing.seller_id for listing in listings}
     sellers_by_id: dict[str, User] = {}
     if seller_ids:
         sellers_result = await db.execute(select(User).where(User.id.in_(seller_ids)))
@@ -152,7 +152,7 @@ async def browse_listings(
 
     return {
         "success": True,
-        "listings": [_serialize(l, sellers_by_id.get(l.seller_id)) for l in listings],
+        "listings": [_serialize(listing, sellers_by_id.get(listing.seller_id)) for listing in listings],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -170,7 +170,7 @@ async def get_my_listings(
         .order_by(MarketplaceApp.created_at.desc())
     )
     listings = result.scalars().all()
-    return {"success": True, "listings": [_serialize(l, user) for l in listings]}
+    return {"success": True, "listings": [_serialize(listing, user) for listing in listings]}
 
 
 @router.get("/apps/{listing_id}", summary="Get a single listing's details")

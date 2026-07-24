@@ -1,0 +1,21 @@
+# Ruff config for apps/backend (the only Python code in this monorepo).
+# Root package.json's lint-staged config already calls `ruff check --fix` /
+# `ruff format` on `*.py` — this file is what makes those runs use sensible,
+# intentional settings instead of defaults with no repo-specific context.
+target-version = "py311"
+
+[lint]
+# Ruff's own default select ("E4", "E7", "E9", "F") — listed explicitly so
+# it reads as a reviewed choice, not "whatever the installed version
+# happens to default to".
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# api/v1/router.py deliberately imports each sub-router immediately above
+# the api_router.include_router() call that registers it, grouped under a
+# "# ── Feature ──" comment per section — see the file itself. That's a
+# readability choice (import + registration kept visually together), not
+# an accident, so E402 ("import not at top of file") is expected here and
+# shouldn't be "fixed" by hoisting every import to the top, which would
+# undo the whole point of the file's structure.
+"apps/backend/app/api/v1/router.py" = ["E402"]

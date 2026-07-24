@@ -3,7 +3,7 @@
 #  config.py — All settings loaded from environment variables
 #  Uses Pydantic BaseSettings for type-safe config
 # ═══════════════════════════════════════════════════════════════
-from typing import List, Optional
+from typing import List
 from functools import lru_cache
 
 from pydantic import field_validator, model_validator

@@ -24,7 +24,7 @@ from app.core.security import (
     mask_mobile,
     verify_password,
 )
-from app.models.user import OTPRecord, User, UserStatus, VerificationStatus
+from app.models.user import User, UserStatus, VerificationStatus
 from app.schemas.auth import (
     ErrorResponse,
     ForgotPasswordRequest,
@@ -43,7 +43,6 @@ from app.schemas.auth import (
     UserResponse,
     VerifyOTPRequest,
     VerifyOTPResponse,
-    VerifySessionRequest,
     VerifySessionResponse,
     validate_indian_mobile,
 )

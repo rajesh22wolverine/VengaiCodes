@@ -12,8 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text, event, inspect
-from sqlalchemy.schema import CreateIndex
+from sqlalchemy import text, inspect
 from sqlalchemy.types import JSON
 
 from app.config import settings

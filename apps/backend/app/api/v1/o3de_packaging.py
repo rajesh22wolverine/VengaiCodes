@@ -69,7 +69,9 @@ async def _get_o3de_project(project_id: str, user: User, db: AsyncSession) -> Pr
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
     if get_project_stack(project)["frontend_framework"] != "o3de":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -136,7 +138,9 @@ async def trigger_package(
         )
 
     if response.status_code != 204:
-        logger.error(f"Failed to trigger O3DE package: {response.status_code} {response.text}")
+        logger.error(
+            f"Failed to trigger O3DE package: {response.status_code} {response.text}"
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to start packaging. Please try again.",

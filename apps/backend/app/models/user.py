@@ -6,14 +6,13 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Enum, Float, ForeignKey,
     Integer, String, Text, JSON, UniqueConstraint, Index
 )
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship, Mapped
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -347,7 +346,6 @@ class OTPRecord(Base):
     user_id: Optional[str] = Column(String(36), ForeignKey("users.id"), nullable=True)
 
     def is_expired(self) -> bool:
-        from datetime import timezone
         expires = self.expires_at
         if expires.tzinfo is None:
             # SQLite stores timezone-naive datetimes — treat as UTC
@@ -388,7 +386,7 @@ class AdminAction(Base):
     target_user_id: str = Column(
         String(36),
         ForeignKey("users.id"),
-        nullable=False,        
+        nullable=False,
     )
     action_type: str = Column(String(100), nullable=False)
     # "extend_free", "restrict", "ban", "warn", "upgrade_tier",

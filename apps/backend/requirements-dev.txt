@@ -1,0 +1,11 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Backend Dev/Test Dependencies
+#  requirements-dev.txt — test + lint tooling, not shipped to production
+#
+#  Install: pip install -r requirements.txt -r requirements-dev.txt
+# ═══════════════════════════════════════════════════════════════
+
+-r requirements.txt
+
+pytest==8.0.0
+ruff==0.15.22
