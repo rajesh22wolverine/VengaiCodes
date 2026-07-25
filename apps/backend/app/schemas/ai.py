@@ -18,7 +18,7 @@ class AskResponse(BaseModel):
     """Response from the AI orchestrator."""
     success: bool = True
     text: str
-    source: str  # "ollama" | "groq"
+    source: str  # "ollama" | "groq" | "byo:groq" | "byo:openai" | "byo:custom"
     model: str
     duration_ms: float
 

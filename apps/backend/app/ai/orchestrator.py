@@ -5,10 +5,16 @@
 
 import logging
 import time
+from typing import Optional
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.crypto import decrypt_secret
+from app.models.ai_config import UserAIConfig
+from app.models.user import User
 
 logger = logging.getLogger("vengaicode.ai")
 
@@ -41,23 +47,28 @@ async def _call_ollama(prompt: str, model: str | None = None) -> tuple[str, floa
     return data.get("response", "").strip(), duration_ms
 
 
-async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, float]:
-    """Call Groq cloud API."""
-    if not settings.GROQ_API_KEY:
-        raise AIError("Groq API key not configured")
-
-    model = settings.GROQ_DEFAULT_MODEL
+async def _call_openai_compatible(
+    base_url: str,
+    api_key: Optional[str],
+    model: str,
+    prompt: str,
+    max_tokens: int | None = None,
+    timeout: float = 60.0,
+) -> tuple[str, float]:
+    """
+    Call any OpenAI-compatible /chat/completions endpoint. Shared by Groq,
+    OpenAI, and BYO custom endpoints (e.g. a self-hosted llama.cpp server) —
+    they all speak the same request/response shape.
+    """
     start = time.perf_counter()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
-    print(f"[DEBUG] Calling Groq with model={model}, key={settings.GROQ_API_KEY[:10]}...", flush=True)
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
-            f"{settings.GROQ_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            f"{base_url}/chat/completions",
+            headers=headers,
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -66,10 +77,8 @@ async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, f
             },
         )
 
-    print(f"[DEBUG] Groq response status: {response.status_code}", flush=True)
-
     if response.status_code != 200:
-        print(f"[DEBUG] Groq error body: {response.text}", flush=True)
+        logger.error(f"{base_url} error: {response.status_code} {response.text}")
         response.raise_for_status()
 
     data = response.json()
@@ -78,12 +87,117 @@ async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, f
     return text, duration_ms
 
 
-async def generate_text(prompt: str, model: str | None = None, max_tokens: int | None = None) -> dict:
+async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, float]:
+    """Call Groq cloud API using VengaiCode's own key."""
+    if not settings.GROQ_API_KEY:
+        raise AIError("Groq API key not configured")
+
+    return await _call_openai_compatible(
+        settings.GROQ_BASE_URL,
+        settings.GROQ_API_KEY,
+        settings.GROQ_DEFAULT_MODEL,
+        prompt,
+        max_tokens,
+        timeout=settings.GROQ_TIMEOUT,
+    )
+
+
+async def _call_anthropic(
+    base_url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    max_tokens: int | None = None,
+    timeout: float = 60.0,
+) -> tuple[str, float]:
     """
-    Generate text using local Ollama first, falling back to Groq cloud.
+    Call Anthropic's Messages API — a different shape from the OpenAI-
+    compatible providers: x-api-key header (not Bearer), /messages path
+    (not /chat/completions), and a content[] response array.
+    """
+    start = time.perf_counter()
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            f"{base_url}/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": max_tokens or settings.AI_MAX_TOKENS,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        )
+
+    if response.status_code != 200:
+        logger.error(f"{base_url} error: {response.status_code} {response.text}")
+        response.raise_for_status()
+
+    data = response.json()
+    duration_ms = (time.perf_counter() - start) * 1000
+    text = data["content"][0]["text"].strip()
+    return text, duration_ms
+
+
+async def _call_user_ai_config(config: UserAIConfig, prompt: str, max_tokens: int | None = None) -> tuple[str, float]:
+    """Call a user's own saved BYO AI config (their key, or their custom endpoint)."""
+    api_key = decrypt_secret(config.api_key_encrypted) if config.api_key_encrypted else None
+
+    if config.provider_type == "anthropic":
+        if not api_key:
+            raise AIError("Anthropic requires an API key")
+        return await _call_anthropic(config.base_url, api_key, config.model_name, prompt, max_tokens)
+
+    return await _call_openai_compatible(config.base_url, api_key, config.model_name, prompt, max_tokens)
+
+
+async def generate_text(
+    prompt: str,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    user: Optional[User] = None,
+    db: Optional[AsyncSession] = None,
+) -> dict:
+    """
+    Generate text using local Ollama first, falling back to Groq cloud —
+    unless `user` has an active BYO AI config (their own key or a custom
+    endpoint like a local server), in which case that's used exclusively.
+
+    A BYO config never falls back to the platform Ollama/Groq path on
+    failure — it raises AIError directly. Silently falling back would
+    spend VengaiCode's own Groq quota on a request the user deliberately
+    routed elsewhere, and would hide the real problem with their config.
+
     `max_tokens` only applies to the Groq fallback — Ollama's local models
     are bounded by their own context window, not a per-request token cap.
     """
+    # ── Use the user's own AI config, if they have one active ──
+    if user is not None and db is not None:
+        result = await db.execute(
+            select(UserAIConfig).where(
+                UserAIConfig.user_id == user.id, UserAIConfig.is_active.is_(True)
+            )
+        )
+        byo_config = result.scalar_one_or_none()
+        if byo_config is not None:
+            try:
+                text, duration_ms = await _call_user_ai_config(byo_config, prompt, max_tokens)
+                return {
+                    "text": text,
+                    "source": f"byo:{byo_config.provider_type}",
+                    "duration_ms": duration_ms,
+                    "model": byo_config.model_name,
+                }
+            except Exception as e:
+                logger.error(f"BYO AI config '{byo_config.label}' failed: {e}")
+                raise AIError(
+                    f"Your configured AI model ('{byo_config.label}') didn't respond: {e}. "
+                    "Check it's running and reachable, or switch back to VengaiCode's default AI in Settings."
+                )
+
     # ── Try Ollama first ──
     try:
         text, duration_ms = await _call_ollama(prompt, model)

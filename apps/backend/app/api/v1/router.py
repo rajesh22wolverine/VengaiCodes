@@ -54,6 +54,15 @@ api_router.include_router(
     tags=["AI Engine"],
 )
 
+# ── AI Engine — BYO model configs ──
+# /api/v1/ai/configs, /api/v1/ai/configs/{id}
+from app.api.v1 import ai_config
+api_router.include_router(
+    ai_config.router,
+    prefix="/ai/configs",
+    tags=["AI Engine"],
+)
+
 # ───────────────────────────────────────────────
 #  Future routers — uncomment as each module is built
 #  Each module follows the same pattern as auth/projects above

@@ -8,9 +8,11 @@
 # ═══════════════════════════════════════════════════════════════
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.orchestrator import AIError, check_ai_availability, generate_text
 from app.api.v1.auth import get_current_active_user
+from app.core.database import get_db
 from app.models.user import User
 from app.schemas.ai import AIStatusResponse, AskRequest, AskResponse
 from app.schemas.auth import ErrorResponse
@@ -50,12 +52,14 @@ async def ai_status(user: User = Depends(get_current_active_user)):
 async def ask(
     payload: AskRequest,
     user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Send a prompt to the AI engine and get a text response.
 
-    Tries local Ollama first (free, private). Falls back to Groq
-    cloud API if Ollama is unavailable or too slow.
+    If the user has an active BYO AI config (Settings → AI Model), that's
+    used instead. Otherwise tries local Ollama first (free, private),
+    falling back to Groq cloud API if Ollama is unavailable or too slow.
 
     This is intentionally minimal — Sprint 2+ will replace this
     with the full 8-layer question engine, understanding score,
@@ -63,7 +67,7 @@ async def ask(
     to prove the AI plumbing works end-to-end right now.
     """
     try:
-        result = await generate_text(payload.prompt)
+        result = await generate_text(payload.prompt, user=user, db=db)
     except AIError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

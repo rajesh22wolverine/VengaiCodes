@@ -6,7 +6,8 @@ import aiReducer from "./slices/aiSlice";
 import uiReducer from "./slices/uiSlice";
 import notificationReducer from "./slices/notificationSlice";
 import settingsReducer from "./slices/settingsSlice";
- 
+import aiConfigReducer from "./slices/aiConfigSlice";
+
 export const store = configureStore({
   reducer: {
     auth: authReducer,
@@ -16,6 +17,7 @@ export const store = configureStore({
     ui: uiReducer,
     notifications: notificationReducer,
     settings: settingsReducer,
+    aiConfig: aiConfigReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
