@@ -22,6 +22,10 @@ build/
 keys/
 *.pem
 
+# Self-hosted production Postgres — private key + real data dumps, never commit
+postgres-ssl/
+backups/
+
 # Node
 node_modules/
 .next/

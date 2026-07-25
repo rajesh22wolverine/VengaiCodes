@@ -1,0 +1,91 @@
+version: "3.9"
+
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Self-Hosted Production Postgres
+#
+#  This was an empty file before — a stub with nothing in it. It's
+#  scoped to ONLY the database (not the backend, which stays on
+#  Render), for moving off Supabase's Postgres onto your own VPS.
+#
+#  Full setup steps (cert generation, firewall guidance, pointing
+#  Render's DATABASE_URL here, backup/restore): docs/self-hosted-postgres.md
+#
+#  Usage on your VPS:
+#    1. Generate the SSL cert once: ./scripts/generate-postgres-ssl-cert.sh
+#    2. Create a .env next to this file with POSTGRES_USER/PASSWORD/DB
+#    3. docker compose -f docker-compose.prod.yml up -d
+# ═══════════════════════════════════════════════════════════════
+
+volumes:
+  postgres_prod_data:
+    name: vengaicode_postgres_prod_data
+
+services:
+  # ─────────────────────────────────────────────
+  #  PostgreSQL — real production data, SSL required
+  #
+  #  connect_args={"ssl": "require"} is already hardcoded in
+  #  apps/backend/app/core/database.py for every non-SQLite connection
+  #  (that's what made Supabase's connections encrypted too) — this
+  #  server MUST have SSL enabled and listening or the backend can't
+  #  connect at all. ssl=on + the cert/key below + pg_hba.conf's
+  #  `hostssl`-only rules (see postgres-prod-pg_hba.conf) is what
+  #  actually turns that requirement into a real, enforced guarantee
+  #  server-side, not just something the client asks for.
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: vengaicode_postgres_prod
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vengaicode}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    command: >
+      -c ssl=on
+      -c ssl_cert_file=/etc/postgresql-ssl/server.crt
+      -c ssl_key_file=/etc/postgresql-ssl/server.key
+      -c hba_file=/etc/postgresql-config/pg_hba.conf
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./postgres-ssl/server.crt:/etc/postgresql-ssl/server.crt:ro
+      - ./postgres-ssl/server.key:/etc/postgresql-ssl/server.key:ro
+      - ./postgres-prod-pg_hba.conf:/etc/postgresql-config/pg_hba.conf:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-vengaicode_user} -d ${POSTGRES_DB:-vengaicode}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─────────────────────────────────────────────
+  #  Automated daily backups — a single VPS has none of Supabase's
+  #  built-in redundancy, so this is not optional. Open source
+  #  (MIT-licensed, prodrigestivill/docker-postgres-backup-local),
+  #  writes gzipped pg_dump files to ./backups with daily/weekly/
+  #  monthly rotation. See docs/self-hosted-postgres.md for restoring.
+  # ─────────────────────────────────────────────
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: vengaicode_postgres_prod_backup
+    restart: always
+    user: postgres:postgres
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      - postgres
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-vengaicode}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
