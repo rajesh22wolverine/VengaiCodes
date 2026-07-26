@@ -3,6 +3,7 @@
 #  ai/orchestrator.py — Ollama (local) first, Groq (cloud) fallback
 # ═══════════════════════════════════════════════════════════════
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -59,23 +60,43 @@ async def _call_openai_compatible(
     Call any OpenAI-compatible /chat/completions endpoint. Shared by Groq,
     OpenAI, and BYO custom endpoints (e.g. a self-hosted llama.cpp server) —
     they all speak the same request/response shape.
+
+    Retries on 429 (rate limited) with backoff — honors the provider's
+    Retry-After header when present, since Groq's shared/free tier trips
+    this under normal load and a transient rate-limit shouldn't surface
+    as a hard failure to the user.
     """
     start = time.perf_counter()
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": settings.AI_TEMPERATURE,
+        "max_tokens": max_tokens or settings.AI_MAX_TOKENS,
+    }
+
+    max_attempts = 3
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(
-            f"{base_url}/chat/completions",
-            headers=headers,
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": settings.AI_TEMPERATURE,
-                "max_tokens": max_tokens or settings.AI_MAX_TOKENS,
-            },
-        )
+        for attempt in range(1, max_attempts + 1):
+            response = await client.post(
+                f"{base_url}/chat/completions", headers=headers, json=payload
+            )
+
+            if response.status_code != 429 or attempt == max_attempts:
+                break
+
+            try:
+                delay = min(float(response.headers.get("retry-after", "")), 10.0)
+            except ValueError:
+                delay = attempt * 1.5
+            logger.warning(
+                f"{base_url} rate limited (429) — retrying in {delay:.1f}s "
+                f"(attempt {attempt}/{max_attempts})"
+            )
+            await asyncio.sleep(delay)
 
     if response.status_code != 200:
         logger.error(f"{base_url} error: {response.status_code} {response.text}")

@@ -41,8 +41,11 @@ pub fn list_removable_drives() -> Vec<DriveInfo> {
         .collect()
 }
 
-// Bounded so a huge/slow drive can't hang the scan indefinitely.
-const MAX_SCAN_DEPTH: u32 = 3;
+// Bounded so a huge/slow drive can't hang the scan indefinitely. Needs
+// enough headroom for real-world layouts like a GitHub zip extracting
+// into a doubled `repo-main/repo-main/` folder with models nested a
+// few levels under that (e.g. `repo-main/repo-main/app/llm-models/*.gguf`).
+const MAX_SCAN_DEPTH: u32 = 6;
 
 fn display_name_from_filename(filename: &str) -> String {
     filename
