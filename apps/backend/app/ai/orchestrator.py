@@ -270,6 +270,10 @@ async def _call_groq_vision(prompt: str, image_base64: str, media_type: str) -> 
                 ],
                 "temperature": settings.AI_TEMPERATURE,
                 "max_tokens": settings.AI_MAX_TOKENS,
+                # qwen/qwen3.6-27b is a reasoning-capable model — without
+                # this, its <think>...</think> preamble lands in `content`
+                # ahead of the JSON we expect, breaking parse_ai_json().
+                "reasoning_format": "hidden",
             },
         )
 
