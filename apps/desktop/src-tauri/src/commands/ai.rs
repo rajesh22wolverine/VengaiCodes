@@ -26,8 +26,13 @@ pub struct PortableEngineStatus {
     pub ready: bool,
 }
 
-const HEALTH_CHECK_ATTEMPTS: u32 = 40;
-const HEALTH_CHECK_INTERVAL_MS: u64 = 500;
+// Loading a multi-GB model straight off a USB drive is far slower than
+// off an internal SSD — measured ~59s for a 986MB model over USB2-ish
+// throughput, so a 3GB model needs several minutes of headroom, not
+// seconds. Interval is coarser than before since we're now polling for
+// minutes, not fractions of a second.
+const HEALTH_CHECK_ATTEMPTS: u32 = 240;
+const HEALTH_CHECK_INTERVAL_MS: u64 = 1000;
 
 fn stop_child_on_port(engines: &PortableEngines, port: u16) {
     if let Some(child) = engines.0.lock().unwrap().remove(&port) {
