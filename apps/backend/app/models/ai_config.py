@@ -45,9 +45,11 @@ class UserAIConfig(Base):
         nullable=False,
     )
 
-    # "groq" | "openai" | "custom" — all three speak the same
-    # OpenAI-compatible /chat/completions request shape, so one
-    # generic call path in orchestrator.py serves all of them.
+    # "groq" | "openai" | "anthropic" | "custom" | "portable" — all but
+    # "anthropic" speak the same OpenAI-compatible /chat/completions
+    # request shape, so one generic call path in orchestrator.py serves
+    # them. "portable" is a custom endpoint backed by a locally-launched
+    # inference engine (e.g. a model found on a USB drive).
     provider_type: str = Column(String(20), nullable=False)
 
     base_url: str = Column(String(500), nullable=False)
@@ -65,6 +67,14 @@ class UserAIConfig(Base):
 
     is_active: bool = Column(Boolean, default=False, nullable=False)
     # Only one True per user_id — enforced in the API layer, not the DB.
+
+    priority: Optional[str] = Column(String(10), nullable=True)
+    # "primary" | "secondary" | "tertiary" | None — an optional fallback
+    # order across a user's own configs. At most one config per slot per
+    # user_id, enforced in the API layer. When any config has a priority
+    # set, orchestrator.generate_text() tries them in order instead of
+    # just the single is_active one; when none do, is_active alone still
+    # decides which config is used (unchanged legacy behavior).
 
     created_at: datetime = Column(
         DateTime(timezone=True),

@@ -53,6 +53,20 @@ async def _deactivate_others(db: AsyncSession, user: User, keep_id: str | None =
     await db.execute(stmt)
 
 
+async def _clear_priority_slot(
+    db: AsyncSession, user: User, priority: str, keep_id: str | None = None
+) -> None:
+    """Only one config may hold a given priority slot per user — clear the rest."""
+    stmt = (
+        update(UserAIConfig)
+        .where(UserAIConfig.user_id == user.id, UserAIConfig.priority == priority)
+        .values(priority=None)
+    )
+    if keep_id is not None:
+        stmt = stmt.where(UserAIConfig.id != keep_id)
+    await db.execute(stmt)
+
+
 # ═══════════════════════════════════════════════════════════════
 #  GET /ai/configs — list current user's saved AI configs
 # ═══════════════════════════════════════════════════════════════
@@ -106,6 +120,8 @@ async def create_ai_config(
 
     if payload.is_active:
         await _deactivate_others(db, user)
+    if payload.priority:
+        await _clear_priority_slot(db, user, payload.priority)
 
     config = UserAIConfig(
         user_id=user.id,
@@ -115,6 +131,7 @@ async def create_ai_config(
         model_name=payload.model_name,
         label=payload.label,
         is_active=payload.is_active,
+        priority=payload.priority,
     )
     db.add(config)
     await db.commit()
@@ -152,6 +169,11 @@ async def update_ai_config(
         if payload.is_active:
             await _deactivate_others(db, user, keep_id=config.id)
         config.is_active = payload.is_active
+    if payload.priority is not None:
+        await _clear_priority_slot(db, user, payload.priority, keep_id=config.id)
+        config.priority = payload.priority
+    elif payload.clear_priority:
+        config.priority = None
 
     await db.commit()
     await db.refresh(config)

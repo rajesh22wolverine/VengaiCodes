@@ -15,7 +15,15 @@
       "all": false,
       "shell": {
         "all": false,
-        "open": true
+        "open": true,
+        "execute": true,
+        "sidecar": true,
+        "scope": [
+          {
+            "name": "binaries/llama-server",
+            "sidecar": true
+          }
+        ]
       }
     },
     "bundle": {
@@ -29,7 +37,7 @@
         "icons/icon.ico"
       ],
       "resources": [],
-      "externalBin": [],
+      "externalBin": ["binaries/llama-server"],
       "copyright": "",
       "category": "DeveloperTool",
       "shortDescription": "Build any app in 30 minutes. Zero coding.",

@@ -163,19 +163,57 @@ async def generate_text(
 ) -> dict:
     """
     Generate text using local Ollama first, falling back to Groq cloud —
-    unless `user` has an active BYO AI config (their own key or a custom
-    endpoint like a local server), in which case that's used exclusively.
+    unless `user` has their own AI config(s), in which case those are
+    used exclusively instead of the platform default.
 
-    A BYO config never falls back to the platform Ollama/Groq path on
-    failure — it raises AIError directly. Silently falling back would
-    spend VengaiCode's own Groq quota on a request the user deliberately
-    routed elsewhere, and would hide the real problem with their config.
+    If the user has assigned a priority (primary/secondary/tertiary) to
+    any of their configs, they're tried in that order, falling through
+    to the next on failure. If none have a priority set, the single
+    `is_active` config is used instead (legacy behavior, unchanged).
+
+    Either way, a BYO config never falls back to the platform Ollama/Groq
+    path on failure — it raises AIError directly once the chain (or the
+    single active config) is exhausted. Silently falling back would spend
+    VengaiCode's own Groq quota on a request the user deliberately routed
+    elsewhere, and would hide the real problem with their config.
 
     `max_tokens` only applies to the Groq fallback — Ollama's local models
     are bounded by their own context window, not a per-request token cap.
     """
-    # ── Use the user's own AI config, if they have one active ──
+    # ── Use the user's own AI config(s), if they have any ──
     if user is not None and db is not None:
+        result = await db.execute(
+            select(UserAIConfig).where(
+                UserAIConfig.user_id == user.id, UserAIConfig.priority.is_not(None)
+            )
+        )
+        priority_rank = {"primary": 0, "secondary": 1, "tertiary": 2}
+        chain = sorted(result.scalars().all(), key=lambda c: priority_rank[c.priority])
+
+        if chain:
+            errors: list[str] = []
+            for byo_config in chain:
+                try:
+                    text, duration_ms = await _call_user_ai_config(byo_config, prompt, max_tokens)
+                    return {
+                        "text": text,
+                        "source": f"byo:{byo_config.provider_type}",
+                        "duration_ms": duration_ms,
+                        "model": byo_config.model_name,
+                    }
+                except Exception as e:
+                    logger.warning(
+                        f"BYO AI config '{byo_config.label}' ({byo_config.priority}) failed: {e} "
+                        "— trying next in the fallback chain"
+                    )
+                    errors.append(f"{byo_config.label}: {e}")
+            raise AIError(
+                "None of your configured AI models responded (tried in order: "
+                f"{', '.join(errors)}). Check they're running and reachable, or switch "
+                "back to VengaiCode's default AI in Settings."
+            )
+
+        # No fallback chain set up — fall back to the legacy single-active lookup.
         result = await db.execute(
             select(UserAIConfig).where(
                 UserAIConfig.user_id == user.id, UserAIConfig.is_active.is_(True)

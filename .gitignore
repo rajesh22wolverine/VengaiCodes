@@ -33,6 +33,7 @@ out/
 
 # Tauri
 src-tauri/target/
+**/src-tauri/target/
 
 # OS
 .DS_Store

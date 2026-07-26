@@ -8,7 +8,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ProviderType = Literal["groq", "openai", "anthropic", "custom"]
+ProviderType = Literal["groq", "openai", "anthropic", "custom", "portable"]
+PriorityTier = Literal["primary", "secondary", "tertiary"]
 
 # All schemas below have a `model_name` field, which collides with
 # Pydantic v2's reserved `model_*` namespace — silence the warning.
@@ -40,6 +41,7 @@ class AIConfigCreate(BaseModel):
     model_name: str = Field(..., min_length=1, max_length=255)
     label: str = Field(..., min_length=1, max_length=100)
     is_active: bool = False
+    priority: Optional[PriorityTier] = None
 
 
 class AIConfigUpdate(BaseModel):
@@ -50,6 +52,11 @@ class AIConfigUpdate(BaseModel):
     model_name: Optional[str] = Field(None, min_length=1, max_length=255)
     label: Optional[str] = Field(None, min_length=1, max_length=100)
     is_active: Optional[bool] = None
+    priority: Optional[PriorityTier] = None
+    clear_priority: bool = False
+    # PATCH bodies can't distinguish "omit this field" from "set it to
+    # null" for a plain Optional field once received — set clear_priority
+    # to explicitly drop a config out of the fallback chain.
 
 
 # ───────────────────────────────────────────────
@@ -64,6 +71,7 @@ class AIConfigResponse(BaseModel):
     model_name: str
     label: str
     is_active: bool
+    priority: Optional[PriorityTier] = None
     created_at: datetime
     updated_at: datetime
 
@@ -79,6 +87,7 @@ class AIConfigResponse(BaseModel):
             model_name=config.model_name,
             label=config.label,
             is_active=config.is_active,
+            priority=config.priority,
             created_at=config.created_at,
             updated_at=config.updated_at,
         )

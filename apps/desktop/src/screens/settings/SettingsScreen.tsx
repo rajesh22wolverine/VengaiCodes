@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { motion } from "framer-motion";
-import { Check, Cpu, Loader2, Plus, Radar, Trash2 } from "lucide-react";
+import { Check, Cpu, HardDrive, Loader2, Plus, Radar, Sparkles, Trash2, Usb } from "lucide-react";
 import toast from "react-hot-toast";
+import { invoke } from "@tauri-apps/api/tauri";
 
 import { AppDispatch, RootState } from "@/store";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import {
+  AIConfigPriority,
   AIProviderType,
   createAIConfig,
   deleteAIConfig,
   fetchAIConfigs,
   setActiveAIConfig,
+  setConfigPriority,
   useDefaultAI,
 } from "@/store/slices/aiConfigSlice";
 
@@ -20,7 +23,38 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openai: "OpenAI (your own key)",
   anthropic: "Anthropic Claude (your own key)",
   custom: "Custom endpoint (self-hosted / local)",
+  portable: "Portable AI model (USB)",
 };
+
+const PRIORITY_LABELS: Record<AIConfigPriority, string> = {
+  primary: "Primary",
+  secondary: "Secondary",
+  tertiary: "Tertiary",
+};
+
+// Fixed local ports the bundled portable-engine sidecar can run on — one
+// per fallback-chain slot, so up to 3 portable models can be configured.
+const PORTABLE_ENGINE_PORTS = [11501, 11502, 11503];
+
+// Rust command return shapes — see apps/desktop/src-tauri/src/commands/{scan,ai}.rs.
+// Tauri serializes these with serde's default (snake_case) field names.
+interface DriveInfo {
+  mount_point: string;
+  name: string;
+  available_space: number;
+  total_space: number;
+}
+interface PortableModelInfo {
+  path: string;
+  filename: string;
+  size_bytes: number;
+  display_name: string;
+}
+interface PortableEngineStatus {
+  port: number;
+  base_url: string;
+  ready: boolean;
+}
 
 // Uncensored AI Studio's local llama.cpp server — the verified "USB pendrive
 // AI model" case this button is built for. Always available at /health.
@@ -37,6 +71,14 @@ export default function SettingsScreen() {
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState("");
   const [label, setLabel] = useState("");
+
+  const [isScanningDrives, setIsScanningDrives] = useState(false);
+  const [foundModels, setFoundModels] = useState<PortableModelInfo[]>([]);
+  const [launchingModelPath, setLaunchingModelPath] = useState<string | null>(null);
+  const [pendingPortable, setPendingPortable] = useState<{
+    engine: PortableEngineStatus;
+    model: PortableModelInfo;
+  } | null>(null);
 
   useEffect(() => {
     dispatch(fetchAIConfigs());
@@ -120,6 +162,94 @@ export default function SettingsScreen() {
     }
   };
 
+  // ── Portable AI model (USB drive) — detect, launch, and assign priority ──
+
+  const detectPortableModel = async () => {
+    setIsScanningDrives(true);
+    setFoundModels([]);
+    try {
+      const drives = await invoke<DriveInfo[]>("list_removable_drives");
+      if (drives.length === 0) {
+        toast.error("No USB/removable drive detected. Plug one in and try again.");
+        return;
+      }
+
+      const perDrive = await Promise.all(
+        drives.map((d) =>
+          invoke<PortableModelInfo[]>("scan_drive_for_models", { path: d.mount_point })
+        )
+      );
+      const models = perDrive.flat();
+
+      if (models.length === 0) {
+        toast.error("No AI model files found on the connected drive(s).");
+        return;
+      }
+      setFoundModels(models);
+      toast.success(`Found ${models.length} AI model file${models.length > 1 ? "s" : ""} 🐯`);
+    } catch (error: any) {
+      toast.error(error?.toString?.() || "Failed to scan for portable AI models.");
+    } finally {
+      setIsScanningDrives(false);
+    }
+  };
+
+  const nextPortablePort = () => {
+    const usedPorts = new Set(
+      configs
+        .filter((c) => c.provider_type === "portable")
+        .map((c) => Number(c.base_url.match(/:(\d+)\//)?.[1]))
+    );
+    return PORTABLE_ENGINE_PORTS.find((p) => !usedPorts.has(p)) ?? PORTABLE_ENGINE_PORTS[0];
+  };
+
+  const handleAddPortableModel = async (model: PortableModelInfo) => {
+    setLaunchingModelPath(model.path);
+    try {
+      const engine = await invoke<PortableEngineStatus>("launch_portable_model", {
+        modelPath: model.path,
+        port: nextPortablePort(),
+      });
+      setPendingPortable({ engine, model });
+      setFoundModels((prev) => prev.filter((m) => m.path !== model.path));
+      toast.success(`"${model.display_name}" is running — choose its priority below.`);
+    } catch (error: any) {
+      toast.error(error?.toString?.() || "Failed to start the portable AI model.");
+    } finally {
+      setLaunchingModelPath(null);
+    }
+  };
+
+  const handleConfirmPortablePriority = async (priority: AIConfigPriority | null) => {
+    if (!pendingPortable) return;
+    const { engine, model } = pendingPortable;
+
+    const result = await dispatch(
+      createAIConfig({
+        provider_type: "portable",
+        base_url: engine.base_url,
+        model_name: model.display_name,
+        label: `${model.display_name} (USB)`,
+        is_active: configs.length === 0,
+        priority: priority ?? undefined,
+      })
+    );
+
+    if (createAIConfig.fulfilled.match(result)) {
+      toast.success(`"${model.display_name}" added 🐯`);
+      setPendingPortable(null);
+    } else {
+      toast.error((result.payload as string) || "Failed to save the portable AI model.");
+    }
+  };
+
+  const handleChangePriority = async (id: string, priority: AIConfigPriority | null) => {
+    const result = await dispatch(setConfigPriority({ id, priority }));
+    if (setConfigPriority.fulfilled.match(result)) {
+      toast.success(priority ? `Set as ${PRIORITY_LABELS[priority]}.` : "Removed from fallback order.");
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full bg-[var(--color-background)] overflow-hidden">
       {/* Header */}
@@ -149,19 +279,97 @@ export default function SettingsScreen() {
                   self-hosted local model. Switching to your own never uses VengaiCode's AI quota.
                 </p>
               </div>
-              <button
-                onClick={detectLocalModel}
-                disabled={isDetecting}
-                className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors disabled:opacity-60"
-              >
-                {isDetecting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Radar className="w-3.5 h-3.5" />
-                )}
-                Detect local AI model
-              </button>
+              <div className="flex-shrink-0 flex items-center gap-2">
+                <button
+                  onClick={detectLocalModel}
+                  disabled={isDetecting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors disabled:opacity-60"
+                >
+                  {isDetecting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Radar className="w-3.5 h-3.5" />
+                  )}
+                  Detect local AI model
+                </button>
+                <button
+                  onClick={detectPortableModel}
+                  disabled={isScanningDrives}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors disabled:opacity-60"
+                >
+                  {isScanningDrives ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Usb className="w-3.5 h-3.5" />
+                  )}
+                  Detect Portable AI Model
+                </button>
+              </div>
             </div>
+
+            {/* Portable model found on a USB drive — launch & save */}
+            {foundModels.length > 0 && (
+              <div className="space-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+                <p className="text-xs font-medium text-[var(--color-text-secondary)] flex items-center gap-1.5">
+                  <HardDrive className="w-3.5 h-3.5" /> Found on your USB drive
+                </p>
+                {foundModels.map((model) => (
+                  <div
+                    key={model.path}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">
+                        {model.display_name}
+                      </p>
+                      <p className="text-xs text-[var(--color-text-tertiary)] truncate">
+                        {model.filename} · {(model.size_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleAddPortableModel(model)}
+                      disabled={launchingModelPath !== null}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60"
+                    >
+                      {launchingModelPath === model.path ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3.5 h-3.5" />
+                      )}
+                      Add portable AI model
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Portable model launched — ask primary/secondary/tertiary */}
+            {pendingPortable && (
+              <div className="space-y-2.5 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] p-4">
+                <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                  "{pendingPortable.model.display_name}" is running. Set its priority among your AI models:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(["primary", "secondary", "tertiary"] as AIConfigPriority[]).map((tier) => (
+                    <button
+                      key={tier}
+                      onClick={() => handleConfirmPortablePriority(tier)}
+                      disabled={isSaving}
+                      className="px-3 py-1.5 rounded-lg border border-[var(--color-primary)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white transition-colors disabled:opacity-60"
+                    >
+                      {PRIORITY_LABELS[tier]}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => handleConfirmPortablePriority(null)}
+                    disabled={isSaving}
+                    className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60"
+                  >
+                    Just save, no order yet
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Current status */}
             <div className="flex items-center justify-between rounded-xl bg-[var(--color-background)] border border-[var(--color-border)] px-4 py-3">
@@ -204,12 +412,33 @@ export default function SettingsScreen() {
                               <Check className="w-2.5 h-2.5" /> Active
                             </span>
                           )}
+                          {config.priority && (
+                            <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[10px] font-semibold">
+                              {PRIORITY_LABELS[config.priority]}
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-[var(--color-text-tertiary)] truncate">
                           {PROVIDER_LABELS[config.provider_type]} · {config.model_name}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
+                        <select
+                          value={config.priority ?? ""}
+                          onChange={(e) =>
+                            handleChangePriority(
+                              config.id,
+                              (e.target.value || null) as AIConfigPriority | null
+                            )
+                          }
+                          title="Fallback order"
+                          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-secondary)] outline-none focus:border-[var(--color-primary)]"
+                        >
+                          <option value="">No order</option>
+                          <option value="primary">Primary</option>
+                          <option value="secondary">Secondary</option>
+                          <option value="tertiary">Tertiary</option>
+                        </select>
                         {!config.is_active && (
                           <button
                             onClick={() => handleSetActive(config.id)}
