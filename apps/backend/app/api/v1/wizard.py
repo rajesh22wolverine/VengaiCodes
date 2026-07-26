@@ -182,7 +182,7 @@ async def wizard_message(
             current_layer=payload.current_layer,
             user_message=payload.user_message,
         )
-        ai_result = await generate_text(prompt)
+        ai_result = await generate_text(prompt, user=user, db=db)
         ai_response = ai_result["text"]
     except AIError as e:
         raise HTTPException(

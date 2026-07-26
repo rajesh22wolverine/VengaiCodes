@@ -111,7 +111,7 @@ Requirements:
 
 Return ONLY the raw GDScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "gdscript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "gdscript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"frontend/scenes/{class_name}.gd",
         language="gdscript",

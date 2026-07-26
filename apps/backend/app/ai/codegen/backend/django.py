@@ -51,7 +51,7 @@ Requirements:
 
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "python", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "python", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"backend/api/models/{_slug(table_name)}.py",
         language="python",
@@ -97,7 +97,7 @@ Requirements:
 
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "python", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "python", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return [(
         GeneratedFile(
             path="backend/api/views.py",

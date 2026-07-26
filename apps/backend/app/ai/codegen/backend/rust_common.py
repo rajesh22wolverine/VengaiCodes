@@ -37,7 +37,7 @@ Requirements:
 
 Return ONLY the raw Rust code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "rust", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "rust", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"backend/src/models/{_slug(table_name)}.rs",
         language="rust",

@@ -97,7 +97,7 @@ Requirements:
 Return ONLY the raw Kotlin code for this one file (package line + imports + the composable
 function). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "kotlin", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "kotlin", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"frontend/app/src/main/java/{_package_path(package_name)}/screens/{class_name}.kt",
         language="kotlin",

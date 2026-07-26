@@ -138,7 +138,7 @@ async def send_message(
     prompt = build_chat_prompt(payload.phase, frd, messages[:-1], payload.message)
 
     try:
-        ai_result = await generate_text(prompt)
+        ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))

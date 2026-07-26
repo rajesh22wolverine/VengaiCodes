@@ -143,7 +143,7 @@ Requirements — follow O3DE's REAL Lua component script structure exactly, noth
 
 Return ONLY the raw Lua code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "lua", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "lua", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"frontend/Scripts/{file_slug}.lua",
         language="lua",

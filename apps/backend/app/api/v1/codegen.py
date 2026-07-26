@@ -172,6 +172,8 @@ async def generate_code(
                     requirements_text=requirements_text,
                     native_capabilities=[],
                     language="lua",
+                    user=user,
+                    db=db,
                 )))
                 for screen in screens
             ]
@@ -202,6 +204,8 @@ async def generate_code(
                     requirements_text=requirements_text,
                     native_capabilities=[],
                     language="gdscript",
+                    user=user,
+                    db=db,
                 )))
                 for screen in screens
             ]
@@ -223,6 +227,8 @@ async def generate_code(
                     table=table,
                     requirements_text=requirements_text,
                     language=stack_info["backend_language"],
+                    user=user,
+                    db=db,
                 )))
                 for table in tables
             ]
@@ -236,6 +242,8 @@ async def generate_code(
                     requirements_text=requirements_text,
                     api_style=stack_info["api_style"],
                     language=stack_info["backend_language"],
+                    user=user,
+                    db=db,
                 ))
                 routes_files = [_track(r) for r in routes_results]
 
@@ -247,6 +255,8 @@ async def generate_code(
                     requirements_text=requirements_text,
                     native_capabilities=native_capabilities,
                     language=stack_info["frontend_language"],
+                    user=user,
+                    db=db,
                 )))
                 for screen in screens
             ]

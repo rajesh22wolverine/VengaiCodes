@@ -70,7 +70,7 @@ Requirements:
 
 Return ONLY the raw JavaScript module content. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     if issue is None and not _exports_render(content):
         # Cheap structural check the generic brace/TODO heuristic can't
         # catch: this adapter's wiring (main.js) does

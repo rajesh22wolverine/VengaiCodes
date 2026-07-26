@@ -133,7 +133,7 @@ async def generate_requirements(
 
     try:
         prompt = build_frd_prompt(project.name, project.raw_idea or project.name, conversation)
-        ai_result = await generate_text(prompt)
+        ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))

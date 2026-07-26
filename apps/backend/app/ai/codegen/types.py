@@ -13,9 +13,12 @@
 # ═══════════════════════════════════════════════════════════════
 
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.codegen_shared import GeneratedFile
+from app.models.user import User
 
 # (file, validation_issue) — issue is None when the file looked OK.
 FileResult = tuple[GeneratedFile, str | None]
@@ -27,6 +30,14 @@ class ModelCtx:
     table: dict
     requirements_text: str
     language: str
+    # Whichever user triggered this generation — threaded down to
+    # generate_text_validated() so their BYO/portable AI config (Settings
+    # -> AI Model) is actually used instead of always falling back to the
+    # platform default Ollama/Groq path. None only in contexts with no
+    # authenticated user (there are none today, but keeps this optional
+    # rather than forcing every construction site to supply it).
+    user: Optional[User] = None
+    db: Optional[AsyncSession] = None
 
 
 @dataclass
@@ -37,6 +48,8 @@ class RoutesCtx:
     requirements_text: str
     api_style: str
     language: str
+    user: Optional[User] = None
+    db: Optional[AsyncSession] = None
 
 
 @dataclass
@@ -47,6 +60,8 @@ class ScreenCtx:
     requirements_text: str
     native_capabilities: list[str]
     language: str
+    user: Optional[User] = None
+    db: Optional[AsyncSession] = None
 
 
 @dataclass

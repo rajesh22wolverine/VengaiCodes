@@ -12,12 +12,14 @@ import ast
 import json
 import logging
 import re
-from typing import Callable
+from typing import Callable, Optional
 
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.orchestrator import generate_text
 from app.core.naming import slugify_app_name
+from app.models.user import User
 
 logger = logging.getLogger("vengaicode.codegen")
 
@@ -173,10 +175,21 @@ def validate_generated_content(language: str, content: str) -> str | None:
     return VALIDATORS.get(language, _validate_brace_heuristic)(content)
 
 
-async def generate_text_validated(prompt: str, language: str, max_tokens: int) -> tuple[str, str | None]:
+async def generate_text_validated(
+    prompt: str,
+    language: str,
+    max_tokens: int,
+    user: Optional[User] = None,
+    db: Optional[AsyncSession] = None,
+) -> tuple[str, str | None]:
     """Call generate_text(), validate the result, and retry once with the
-    specific problem appended to the prompt if validation fails."""
-    result = await generate_text(prompt, max_tokens=max_tokens)
+    specific problem appended to the prompt if validation fails.
+
+    user/db are threaded straight through to generate_text() so a caller's
+    BYO/portable AI config (Settings -> AI Model) is honored here too —
+    every codegen adapter calls this instead of generate_text() directly.
+    """
+    result = await generate_text(prompt, max_tokens=max_tokens, user=user, db=db)
     content = strip_code_fences(result["text"])
     issue = validate_generated_content(language, content)
 
@@ -186,7 +199,7 @@ async def generate_text_validated(prompt: str, language: str, max_tokens: int) -
             f"Return the corrected, COMPLETE file only — no truncation, "
             f"no markdown fences, no explanation."
         )
-        result = await generate_text(retry_prompt, max_tokens=max_tokens)
+        result = await generate_text(retry_prompt, max_tokens=max_tokens, user=user, db=db)
         content = strip_code_fences(result["text"])
         issue = validate_generated_content(language, content)
 

@@ -37,7 +37,7 @@ Requirements:
 
 Return ONLY the raw TypeScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"backend/src/{_slug(table_name)}/{_slug(table_name)}.entity.ts",
         language="typescript",
@@ -83,7 +83,7 @@ Requirements:
 
 Return ONLY the raw TypeScript code for this one file (imports + the @Controller class). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return [(
         GeneratedFile(
             path="backend/src/api/api.controller.ts",
@@ -162,7 +162,7 @@ Requirements:
 Return ONLY the raw TypeScript code for this one file (imports + a service class with one
 @GrpcMethod per rpc). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return [
         (GeneratedFile(path="backend/src/api/api.proto", language="text", content=proto_skeleton, description="gRPC service contract (deterministic)"), None),
         (GeneratedFile(path="backend/src/api/api.grpc.service.ts", language="typescript", content=content, description="gRPC service implementation"), issue),

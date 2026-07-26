@@ -53,7 +53,7 @@ Requirements:
 
 Return ONLY the raw Go code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "go", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "go", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"backend/models/{_slug(table_name)}.go",
         language="go",
@@ -97,7 +97,7 @@ Requirements:
 Return ONLY the raw Go code for this one file (package decl + imports + each handler factory
 function). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "go", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "go", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return [(
         GeneratedFile(
             path="backend/handlers/api.go",

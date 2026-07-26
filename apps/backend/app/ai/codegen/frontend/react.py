@@ -54,7 +54,7 @@ Requirements:
 
 Return ONLY the raw JSX/JS code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"frontend/src/screens/{component_name}.jsx",
         language="javascript",

@@ -50,7 +50,7 @@ Return ONLY the raw Rust code for this one file (imports + `use actix_web::{{get
 delete, web, HttpResponse, Responder}};` + each `#[route_macro]` handler function). No markdown
 fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "rust", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "rust", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return [(
         GeneratedFile(
             path="backend/src/handlers.rs",

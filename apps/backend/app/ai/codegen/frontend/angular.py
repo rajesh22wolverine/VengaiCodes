@@ -71,7 +71,7 @@ Requirements:
 
 Return ONLY the raw TypeScript file content (imports + @Component decorator + class). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"frontend/src/app/screens/{kebab}.component.ts",
         language="typescript",

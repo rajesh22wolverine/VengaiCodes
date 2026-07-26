@@ -65,7 +65,7 @@ Requirements:
 Return ONLY the raw PHP code for this one file (including `<?php` and `namespace App\\Models;`).
 No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "php", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "php", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"backend/app/Models/{class_name}.php",
         language="php",
@@ -107,7 +107,7 @@ Requirements:
 Return ONLY the raw PHP code for this one file (including `<?php` and the namespace declaration).
 No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "php", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "php", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return [(
         GeneratedFile(
             path="backend/app/Http/Controllers/ApiController.php",

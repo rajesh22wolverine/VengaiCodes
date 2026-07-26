@@ -67,7 +67,7 @@ Requirements:
 Return ONLY the raw Swift code for this one file (imports + the Decodable model(s) it needs +
 the View struct). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "swift", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "swift", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"frontend/{struct_name}.swift",
         language="swift",

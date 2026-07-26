@@ -391,7 +391,7 @@ async def generate_tests(
         prompt = build_testing_prompt(
             project.name, architecture, codegen, backend_recipe, frontend_recipe
         )
-        ai_result = await generate_text(prompt)
+        ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
@@ -521,7 +521,7 @@ Rules:
 Respond with ONLY the JSON object, nothing else."""
 
     try:
-        ai_result = await generate_text(prompt)
+        ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
@@ -942,7 +942,7 @@ Rules:
 Respond with ONLY the JSON object, nothing else."""
 
     try:
-        ai_result = await generate_text(prompt)
+        ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))

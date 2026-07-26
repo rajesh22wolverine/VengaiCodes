@@ -30,7 +30,7 @@ Requirements:
 
 Return ONLY the raw JavaScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return GeneratedFile(
         path=f"backend/models/{_slug(table_name)}.js",
         language="javascript",
@@ -69,7 +69,7 @@ Requirements:
 
 Return ONLY the raw JavaScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS)
+    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
     return [(
         GeneratedFile(
             path="backend/routes/api.js",
