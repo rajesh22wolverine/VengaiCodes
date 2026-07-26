@@ -122,11 +122,12 @@ class Settings(BaseSettings):
     GROQ_TIMEOUT: int = 60
     GROQ_DEFAULT_MODEL: str = "llama3-70b-8192"
     GROQ_CODE_MODEL: str = "llama3-70b-8192"
-    # Open-weight (Meta Llama) vision model served by Groq — used for
-    # design-image-to-code. Verify the exact model id in Groq's docs;
-    # vision model names on Groq have changed before (e.g. "-preview"
-    # suffixes get renamed/retired).
-    GROQ_VISION_MODEL: str = "llama-3.2-90b-vision-preview"
+    # Vision-capable model served by Groq — used for design-image-to-code.
+    # Groq has retired vision models before (the old Llama 3.2 vision
+    # preview models were decommissioned); verify the exact model id in
+    # Groq's docs (console.groq.com/docs/vision) if uploads start
+    # failing with a "model_decommissioned" error again.
+    GROQ_VISION_MODEL: str = "qwen/qwen3.6-27b"
     # Open-weight (OpenAI Whisper) speech-to-text model served by Groq —
     # used to transcribe voice notes attached to uploaded designs.
     GROQ_WHISPER_MODEL: str = "whisper-large-v3"
