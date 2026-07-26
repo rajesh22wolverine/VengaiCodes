@@ -6,7 +6,7 @@ import {
   Smartphone, DollarSign, BookOpen, Code2, Loader2, ThumbsUp
 } from "lucide-react";
 import toast from "react-hot-toast";
-import apiClient from "@/lib/api";
+import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
 
@@ -53,7 +53,7 @@ export default function RequirementsScreen() {
     try {
       const { data } = await apiClient.post("/requirements/generate", {
         project_id: projectId,
-      });
+      }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setRequirements(data.requirements);
       toast.success("Your requirements document is ready! 🐯");
     } catch (error: any) {

@@ -54,7 +54,7 @@ async def _call_openai_compatible(
     model: str,
     prompt: str,
     max_tokens: int | None = None,
-    timeout: float = 60.0,
+    timeout: float = 180.0,
 ) -> tuple[str, float]:
     """
     Call any OpenAI-compatible /chat/completions endpoint. Shared by Groq,
@@ -129,7 +129,7 @@ async def _call_anthropic(
     model: str,
     prompt: str,
     max_tokens: int | None = None,
-    timeout: float = 60.0,
+    timeout: float = 180.0,
 ) -> tuple[str, float]:
     """
     Call Anthropic's Messages API — a different shape from the OpenAI-

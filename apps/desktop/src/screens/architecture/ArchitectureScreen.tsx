@@ -6,7 +6,7 @@ import {
   Loader2, ThumbsUp, BookOpen
 } from "lucide-react";
 import toast from "react-hot-toast";
-import apiClient from "@/lib/api";
+import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
 
@@ -75,7 +75,7 @@ export default function ArchitectureScreen() {
     try {
       const { data } = await apiClient.post("/architecture/generate", {
         project_id: projectId,
-      });
+      }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setArchitecture(data.architecture);
       toast.success("Your architecture is ready! 🏗️🐯");
     } catch (error: any) {

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, ArrowLeft, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
-import apiClient from "@/lib/api";
+import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 
 interface Message {
@@ -87,7 +87,7 @@ export default function WizardScreen() {
         project_id: projectId,
         user_message: userMessage,
         current_layer: currentLayer,
-      });
+      }, { timeout: AI_REQUEST_TIMEOUT_MS });
 
       setMessages(prev => [...prev, { role: "ai", content: data.ai_response }]);
       setCurrentLayer(data.next_layer);

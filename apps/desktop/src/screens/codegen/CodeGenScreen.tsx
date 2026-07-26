@@ -5,7 +5,7 @@ import {
   ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree, Download, BookOpen, AlertTriangle
 } from "lucide-react";
 import toast from "react-hot-toast";
-import apiClient from "@/lib/api";
+import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
 
@@ -71,7 +71,7 @@ export default function CodeGenScreen() {
     try {
       const { data } = await apiClient.post("/codegen/generate", {
         project_id: projectId,
-      });
+      }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
       setSelectedFile(data.codegen.files?.[0] || null);

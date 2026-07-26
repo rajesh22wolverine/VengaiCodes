@@ -8,7 +8,7 @@ import {
   Mic, Square, FileAudio
 } from "lucide-react";
 import toast from "react-hot-toast";
-import apiClient from "@/lib/api";
+import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
 import { buildPreviewDocument, sendEditorCommand, type PreviewSelection } from "@/lib/designPreview";
@@ -174,7 +174,7 @@ export default function UIUXScreen() {
     try {
       const { data } = await apiClient.post("/uiux/generate", {
         project_id: projectId,
-      });
+      }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setDesign(data.design);
       toast.success("Your design system is ready! 🎨🐯");
     } catch (error: any) {

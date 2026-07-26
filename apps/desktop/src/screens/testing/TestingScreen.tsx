@@ -7,7 +7,7 @@ import {
   CheckCircle2, XCircle, RotateCcw, Wrench, FlaskConical,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import apiClient from "@/lib/api";
+import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
 
@@ -148,7 +148,7 @@ export default function TestingScreen() {
         project_id: projectId,
         backend_framework: backendFramework,
         frontend_framework: frontendFramework,
-      });
+      }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setTesting(data.testing);
       setSelectedFile(data.testing.test_files?.[0] || null);
       setSelectedFrameworks({ backend: backendFramework, frontend: frontendFramework });
@@ -180,7 +180,7 @@ export default function TestingScreen() {
       const { data } = await apiClient.post("/testing/custom-module", {
         project_id: projectId,
         description: moduleDescription,
-      });
+      }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setTesting(data.testing);
       if (data.added_files?.[0]) setSelectedFile(data.added_files[0]);
       if (data.warnings?.length) {
@@ -271,7 +271,11 @@ export default function TestingScreen() {
         setRunPhaseMessage(
           `Attempt ${autoFixAttemptsRef.current + 1}/${MAX_AUTO_FIX_ATTEMPTS}: Baby Tiger is fixing failing tests…`
         );
-        const { data: fixData } = await apiClient.post("/testing/auto-fix", { project_id: projectId });
+        const { data: fixData } = await apiClient.post(
+          "/testing/auto-fix",
+          { project_id: projectId },
+          { timeout: AI_REQUEST_TIMEOUT_MS }
+        );
         autoFixAttemptsRef.current = fixData.attempts;
         setAutoFixAttempts(fixData.attempts);
 

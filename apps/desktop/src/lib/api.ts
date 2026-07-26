@@ -19,6 +19,16 @@ export const IS_LOCAL_BACKEND = /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.
 
 const API_V1_PREFIX = "/api/v1";
 
+// apiClient's default timeout (below) is fine for ordinary CRUD calls, but
+// endpoints that trigger an AI generation call (wizard chat, requirements/
+// uiux/architecture/codegen/testing generate, custom-module, auto-fix) can
+// legitimately take minutes — especially with a BYO fallback chain of slow
+// local/portable models, where the backend itself may wait up to a few
+// minutes per config before falling through to the next one. Pass this as
+// the `timeout` in that call's axios config so it isn't cut off by the
+// much shorter default meant for normal requests.
+export const AI_REQUEST_TIMEOUT_MS = 600_000; // 10 minutes
+
 export const apiClient: AxiosInstance = axios.create({
   baseURL: `${API_BASE_URL}${API_V1_PREFIX}`,
   headers: {
