@@ -9,11 +9,13 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logoutUser } from "@/store/slices/authSlice";
 import { toggleTheme } from "@/store/slices/uiSlice";
 import {
+  AIConfigPriority,
   AIProviderType,
   createAIConfig,
   deleteAIConfig,
   fetchAIConfigs,
   setActiveAIConfig,
+  setConfigPriority,
   useDefaultAI,
 } from "@/store/slices/aiConfigSlice";
 import { useTheme } from "@/theme/useTheme";
@@ -23,6 +25,12 @@ const PROVIDERS: { value: AIProviderType; label: string }[] = [
   { value: "openai", label: "OpenAI (own key)" },
   { value: "anthropic", label: "Anthropic (own key)" },
   { value: "custom", label: "Custom endpoint" },
+];
+
+const PRIORITY_TIERS: { value: AIConfigPriority; label: string }[] = [
+  { value: "primary", label: "Primary" },
+  { value: "secondary", label: "Secondary" },
+  { value: "tertiary", label: "Tertiary" },
 ];
 
 export default function SettingsScreen() {
@@ -105,6 +113,14 @@ export default function SettingsScreen() {
     showToast("Removed.");
   };
 
+  const handleChangePriority = async (id: string, priority: AIConfigPriority | null, current: AIConfigPriority | null) => {
+    const next = current === priority ? null : priority;
+    const result = await dispatch(setConfigPriority({ id, priority: next }));
+    if (setConfigPriority.fulfilled.match(result)) {
+      showToast(next ? `Set as ${next.charAt(0).toUpperCase() + next.slice(1)}.` : "Removed from fallback order.");
+    }
+  };
+
   return (
     <ScreenContainer>
       <Text style={[styles.title, { color: colors.textPrimary }]}>Settings</Text>
@@ -161,35 +177,72 @@ export default function SettingsScreen() {
         </View>
 
         {/* Saved configs */}
+        {configs.length > 0 && (
+          <Text style={[styles.hint, { color: colors.textTertiary }]}>
+            Optionally rank your own models — if Primary fails, the app automatically tries
+            Secondary, then Tertiary.
+          </Text>
+        )}
         {configs.map((config) => (
           <View
             key={config.id}
-            style={[styles.configRow, { borderColor: colors.border }]}
+            style={[styles.configRow, { borderColor: colors.border, flexDirection: "column", alignItems: "stretch", gap: 8 }]}
           >
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={[styles.configLabel, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {config.label}
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={[styles.configLabel, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {config.label}
+                  </Text>
+                  {config.is_active && (
+                    <View style={[styles.activeBadge, { backgroundColor: colors.primaryLight }]}>
+                      <Check size={10} color={colors.primary} />
+                      <Text style={{ color: colors.primary, fontSize: 10, fontWeight: "700" }}>Active</Text>
+                    </View>
+                  )}
+                  {config.priority && (
+                    <View style={[styles.activeBadge, { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }]}>
+                      <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: "700" }}>
+                        {config.priority.charAt(0).toUpperCase() + config.priority.slice(1)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.configMeta, { color: colors.textTertiary }]} numberOfLines={1}>
+                  {config.provider_type} · {config.model_name}
                 </Text>
-                {config.is_active && (
-                  <View style={[styles.activeBadge, { backgroundColor: colors.primaryLight }]}>
-                    <Check size={10} color={colors.primary} />
-                    <Text style={{ color: colors.primary, fontSize: 10, fontWeight: "700" }}>Active</Text>
-                  </View>
-                )}
               </View>
-              <Text style={[styles.configMeta, { color: colors.textTertiary }]} numberOfLines={1}>
-                {config.provider_type} · {config.model_name}
-              </Text>
-            </View>
-            {!config.is_active && (
-              <Pressable onPress={() => handleSetActive(config.id)} style={{ marginRight: 12 }}>
-                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "600" }}>Use this</Text>
+              {!config.is_active && (
+                <Pressable onPress={() => handleSetActive(config.id)} style={{ marginRight: 12 }}>
+                  <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "600" }}>Use this</Text>
+                </Pressable>
+              )}
+              <Pressable onPress={() => handleDelete(config.id)} hitSlop={8}>
+                <Trash2 size={16} color={colors.textTertiary} />
               </Pressable>
-            )}
-            <Pressable onPress={() => handleDelete(config.id)} hitSlop={8}>
-              <Trash2 size={16} color={colors.textTertiary} />
-            </Pressable>
+            </View>
+            <View style={styles.chipRow}>
+              {PRIORITY_TIERS.map((tier) => {
+                const selected = config.priority === tier.value;
+                return (
+                  <Pressable
+                    key={tier.value}
+                    onPress={() => handleChangePriority(config.id, tier.value, config.priority)}
+                    style={[
+                      styles.chip,
+                      {
+                        borderColor: selected ? colors.primary : colors.border,
+                        backgroundColor: selected ? colors.primaryLight : colors.background,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: selected ? colors.primary : colors.textSecondary, fontSize: 11, fontWeight: "600" }}>
+                      {tier.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
         ))}
 

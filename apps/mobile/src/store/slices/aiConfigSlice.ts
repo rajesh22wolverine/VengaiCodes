@@ -3,6 +3,7 @@ import apiClient from "@/lib/api";
 
 // ─── BYO AI Model Config — mirrors backend UserAIConfig / AIConfigResponse ───
 export type AIProviderType = "groq" | "openai" | "anthropic" | "custom";
+export type AIConfigPriority = "primary" | "secondary" | "tertiary";
 
 export interface AIConfig {
   id: string;
@@ -12,6 +13,7 @@ export interface AIConfig {
   model_name: string;
   label: string;
   is_active: boolean;
+  priority: AIConfigPriority | null;
   created_at: string;
   updated_at: string;
 }
@@ -23,6 +25,7 @@ export interface CreateAIConfigInput {
   model_name: string;
   label: string;
   is_active?: boolean;
+  priority?: AIConfigPriority;
 }
 
 interface AIConfigState {
@@ -93,6 +96,23 @@ export const useDefaultAI = createAsyncThunk(
   }
 );
 
+/** PATCH /ai/configs/{id} — assign or clear a config's fallback-chain slot */
+export const setConfigPriority = createAsyncThunk(
+  "aiConfig/setPriority",
+  async (
+    { id, priority }: { id: string; priority: AIConfigPriority | null },
+    { rejectWithValue }
+  ) => {
+    try {
+      const body = priority ? { priority } : { clear_priority: true };
+      const { data } = await apiClient.patch(`/ai/configs/${id}`, body);
+      return data.config as AIConfig;
+    } catch (error: any) {
+      return rejectWithValue(error.message || "Failed to update fallback order");
+    }
+  }
+);
+
 /** DELETE /ai/configs/{id} */
 export const deleteAIConfig = createAsyncThunk(
   "aiConfig/delete",
@@ -130,9 +150,11 @@ const aiConfigSlice = createSlice({
       })
       .addCase(createAIConfig.fulfilled, (state, action: PayloadAction<AIConfig>) => {
         state.isSaving = false;
-        if (action.payload.is_active) {
-          state.configs = state.configs.map((c) => ({ ...c, is_active: false }));
-        }
+        state.configs = state.configs.map((c) => ({
+          ...c,
+          is_active: action.payload.is_active ? false : c.is_active,
+          priority: action.payload.priority && c.priority === action.payload.priority ? null : c.priority,
+        }));
         state.configs.unshift(action.payload);
       })
       .addCase(createAIConfig.rejected, (state, action) => {
@@ -144,6 +166,15 @@ const aiConfigSlice = createSlice({
           ...c,
           is_active: c.id === action.payload.id,
         }));
+      })
+      .addCase(setConfigPriority.fulfilled, (state, action: PayloadAction<AIConfig>) => {
+        state.configs = state.configs.map((c) => {
+          if (c.id === action.payload.id) return action.payload;
+          if (action.payload.priority && c.priority === action.payload.priority) {
+            return { ...c, priority: null };
+          }
+          return c;
+        });
       })
       .addCase(useDefaultAI.fulfilled, (state) => {
         state.configs = state.configs.map((c) => ({ ...c, is_active: false }));
