@@ -4,8 +4,18 @@ import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from "ax
 // Points to the FastAPI backend (apps/backend).
 // In Tauri production builds this should be overridden via VITE_API_URL
 // to point at the deployed Render backend.
-const API_BASE_URL =
+export const API_BASE_URL =
   (import.meta.env.VITE_API_URL as string | undefined) || "http://localhost:8000";
+
+// Local/portable AI models (Settings -> AI Model) are launched on this same
+// machine and saved with a 127.0.0.1 base_url. That's only reachable by a
+// backend running on this same machine too — a remote-hosted backend (e.g.
+// the deployed Render instance) can never reach it, since 127.0.0.1 from
+// its side means its own container, not this PC. Used to warn users on a
+// remote backend before they configure something that can never work.
+export const IS_LOCAL_BACKEND = /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(
+  API_BASE_URL
+);
 
 const API_V1_PREFIX = "/api/v1";
 

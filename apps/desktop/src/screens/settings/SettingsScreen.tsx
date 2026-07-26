@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { motion } from "framer-motion";
-import { Check, Cpu, HardDrive, Loader2, Plus, Radar, Sparkles, Trash2, Usb } from "lucide-react";
+import { AlertTriangle, Check, Cpu, HardDrive, Loader2, Plus, Radar, Sparkles, Trash2, Usb } from "lucide-react";
 import toast from "react-hot-toast";
 import { invoke } from "@tauri-apps/api/tauri";
 
 import { AppDispatch, RootState } from "@/store";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import { IS_LOCAL_BACKEND } from "@/lib/api";
 import {
   AIConfigPriority,
   AIProviderType,
@@ -323,6 +324,22 @@ export default function SettingsScreen() {
                 </button>
               </div>
             </div>
+
+            {/* Local/portable models are launched on this machine and saved
+                with a 127.0.0.1 base_url — only a backend also running on
+                this machine can ever reach that. Warn rather than let
+                someone on the hosted backend configure something that will
+                always fail with a confusing connection error later. */}
+            {!IS_LOCAL_BACKEND && (
+              <div className="flex items-start gap-2 rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-light)] px-3 py-2.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  You're connected to VengaiCode's hosted backend, which can't reach a local or
+                  portable AI model running on this machine. Local/portable models only work when
+                  you're also running the VengaiCode backend locally on this same PC.
+                </p>
+              </div>
+            )}
 
             {/* Portable model found on a USB drive — launch & save */}
             {foundModels.length > 0 && (
