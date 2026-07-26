@@ -35,6 +35,11 @@ out/
 src-tauri/target/
 **/src-tauri/target/
 
+# Vendored portable-AI-engine binary (llama.cpp release, ~43MB) — sourced
+# locally per apps/desktop/src-tauri/binaries/README.md, not committed.
+apps/desktop/src-tauri/binaries/*.exe
+apps/desktop/src-tauri/binaries/*.dll
+
 # OS
 .DS_Store
 Thumbs.db
