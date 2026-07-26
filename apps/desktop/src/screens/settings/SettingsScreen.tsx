@@ -36,6 +36,23 @@ const PRIORITY_LABELS: Record<AIConfigPriority, string> = {
 // per fallback-chain slot, so up to 3 portable models can be configured.
 const PORTABLE_ENGINE_PORTS = [11501, 11502, 11503];
 
+// Mirrors AIConfigCreate.label's max_length=100 in
+// apps/backend/app/schemas/ai_config.py. Real-world .gguf filenames
+// (org--repo--quant-details.gguf) routinely exceed this on their own,
+// so the label built from them must be clamped before it's sent —
+// otherwise the backend 422s and the save silently fails.
+const PORTABLE_LABEL_MAX_LENGTH = 100;
+const PORTABLE_LABEL_SUFFIX = " (USB)";
+
+function buildPortableLabel(displayName: string): string {
+  const maxNameLength = PORTABLE_LABEL_MAX_LENGTH - PORTABLE_LABEL_SUFFIX.length;
+  const name =
+    displayName.length > maxNameLength
+      ? `${displayName.slice(0, maxNameLength - 1)}…`
+      : displayName;
+  return `${name}${PORTABLE_LABEL_SUFFIX}`;
+}
+
 // Rust command return shapes — see apps/desktop/src-tauri/src/commands/{scan,ai}.rs.
 // Tauri serializes these with serde's default (snake_case) field names.
 interface DriveInfo {
@@ -229,7 +246,7 @@ export default function SettingsScreen() {
         provider_type: "portable",
         base_url: engine.base_url,
         model_name: model.display_name,
-        label: `${model.display_name} (USB)`,
+        label: buildPortableLabel(model.display_name),
         is_active: configs.length === 0,
         priority: priority ?? undefined,
       })

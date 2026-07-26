@@ -9,7 +9,8 @@ import logging
 import logging.config
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text, inspect
@@ -270,6 +271,30 @@ def create_app() -> FastAPI:
 
     # ── Request Logging ──
     app.add_middleware(LoggingMiddleware)
+
+    # ── Validation error normalization ──
+    # FastAPI's default 422 body is {"detail": [{"loc":..., "msg":...}, ...]}
+    # — an array under "detail", not a string. Frontend interceptors (e.g.
+    # apps/desktop/src/lib/api.ts) only special-case {"detail": "<string>"}
+    # (HTTPException) or {"success", "message", "errors"} (this handler);
+    # without this, real validation errors (e.g. a field over its max_length)
+    # fell through to a generic "something went wrong" toast that hid the
+    # actual problem from the user.
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        errors = [
+            {
+                "field": ".".join(str(p) for p in err["loc"] if p != "body"),
+                "message": err["msg"],
+            }
+            for err in exc.errors()
+        ]
+        first = errors[0] if errors else {"field": "", "message": "Invalid request."}
+        message = f"{first['field']}: {first['message']}" if first["field"] else first["message"]
+        return JSONResponse(
+            status_code=422,
+            content={"success": False, "message": message, "errors": errors},
+        )
 
     # ── Routers ──
     from app.api.v1.router import api_router
