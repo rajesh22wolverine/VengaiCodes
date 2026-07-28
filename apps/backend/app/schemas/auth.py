@@ -390,6 +390,7 @@ class UserResponse(BaseModel):
     mobile: Optional[str] = None
     avatar_url: Optional[str] = None
     tier: str
+    is_admin: bool = False
     is_vip: bool = False
     projects_used: int
     projects_limit: int
@@ -426,6 +427,7 @@ class UserResponse(BaseModel):
             mobile=user.mobile,
             avatar_url=user.avatar_url,
             tier=user.tier.value if hasattr(user.tier, 'value') else user.tier,
+            is_admin=user.is_admin,
             is_vip=user.is_vip,
             projects_used=user.projects_used,
             projects_limit=user.projects_limit,

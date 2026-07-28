@@ -103,6 +103,7 @@ class User(Base):
     # ── Authentication ──
     hashed_password: str = Column(String(255), nullable=False)
     is_active: bool = Column(Boolean, default=True, nullable=False)
+    is_admin: bool = Column(Boolean, default=False, nullable=False)
     last_login: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
     last_login_ip: Optional[str] = Column(String(45), nullable=True)
     failed_login_attempts: int = Column(Integer, default=0, nullable=False)

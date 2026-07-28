@@ -139,7 +139,8 @@ Respond with ONLY a JSON object, no markdown, no extra text:
 {{
   "html": "<the full HTML markup for this page's body content, as a string>",
   "css": "<the full CSS, as a string>",
-  "notes": "1 sentence on anything you weren't confident about"
+  "notes": "1 sentence on anything you weren't confident about",
+  "modules": ["3 to 6 short names for the distinct structural sections/components you see, e.g. 'Header nav', 'Hero banner', 'Pricing cards', 'Footer'"]
 }}"""
 
 
@@ -362,6 +363,7 @@ async def upload_design(
         "generated_html": None,
         "generated_css": None,
         "generation_notes": None,
+        "modules": [],
         "code_generated_at": None,
         "code_updated_at": None,
         "voice_note_url": None,
@@ -418,6 +420,8 @@ async def generate_design_code(
     design["generated_html"] = parsed.get("html", "")
     design["generated_css"] = parsed.get("css", "")
     design["generation_notes"] = parsed.get("notes")
+    modules = parsed.get("modules")
+    design["modules"] = modules if isinstance(modules, list) else []
     design["code_generated_at"] = datetime.now(timezone.utc).isoformat()
 
     project.uiux_data = uiux_data

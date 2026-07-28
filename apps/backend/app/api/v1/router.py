@@ -110,12 +110,12 @@ api_router.include_router(
 #     tags=["Community Templates"],
 # )
 
-# from app.api.v1 import admin
-# api_router.include_router(
-#     admin.router,
-#     prefix="/admin",
-#     tags=["Admin"],
-# )
+from app.api.v1 import admin
+api_router.include_router(
+    admin.router,
+    prefix="/admin",
+    tags=["Admin"],
+)
 
 # from app.api.v1 import webhooks
 # api_router.include_router(

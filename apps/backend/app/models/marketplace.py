@@ -17,7 +17,7 @@ from enum import Enum as PyEnum
 from typing import Optional
 
 from sqlalchemy import (
-    Column, DateTime, Enum, Float, ForeignKey,
+    Boolean, Column, DateTime, Enum, Float, ForeignKey,
     Integer, String, Text, JSON, Index
 )
 from sqlalchemy.orm import relationship
@@ -87,6 +87,7 @@ class MarketplaceApp(Base):
     status: ListingStatus = Column(
         Enum(ListingStatus), default=ListingStatus.DRAFT, nullable=False
     )
+    is_featured: bool = Column(Boolean, default=False, nullable=False)
     view_count: int = Column(Integer, default=0, nullable=False)
 
     created_at: datetime = Column(

@@ -44,11 +44,38 @@ interface UploadedDesign {
   generated_html: string | null;
   generated_css: string | null;
   generation_notes: string | null;
+  modules?: string[];
   code_generated_at: string | null;
   code_updated_at: string | null;
   voice_note_url: string | null;
   voice_note_transcript: string | null;
   voice_note_uploaded_at: string | null;
+}
+
+const MAX_VISIBLE_MODULE_TAGS = 5;
+
+function ModuleTags({ modules }: { modules: string[] | undefined }) {
+  const clean = (modules ?? []).filter((m): m is string => typeof m === "string");
+  if (clean.length === 0) return null;
+  const visible = clean.slice(0, MAX_VISIBLE_MODULE_TAGS);
+  const hiddenCount = clean.length - visible.length;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {visible.map((m, i) => (
+        <span
+          key={i}
+          className="px-2 py-1 rounded-md bg-[var(--color-surface)] text-[var(--color-text-tertiary)] text-xs border border-[var(--color-border)]"
+        >
+          {m}
+        </span>
+      ))}
+      {hiddenCount > 0 && (
+        <span className="px-2 py-1 rounded-md bg-[var(--color-surface)] text-[var(--color-text-tertiary)] text-xs border border-[var(--color-border)]">
+          +{hiddenCount} more
+        </span>
+      )}
+    </div>
+  );
 }
 
 export default function UIUXScreen() {
@@ -476,6 +503,40 @@ export default function UIUXScreen() {
             </p>
           </Section>
 
+          {/* Page Overview */}
+          <Section
+            icon={Layout}
+            title={`Page Overview (${design.screens.length + uploadedDesigns.length})`}
+          >
+            <p className="text-xs text-[var(--color-text-secondary)] mb-4">
+              {design.screens.length} AI-generated + {uploadedDesigns.length} of your own uploads
+            </p>
+            <div className="space-y-3">
+              {design.screens.map((screen, i) => (
+                <div key={`screen-${i}`} className="flex items-start gap-3">
+                  <span className="text-sm font-medium text-[var(--color-text-primary)] w-40 flex-shrink-0 truncate">
+                    {screen.name}
+                  </span>
+                  <ModuleTags modules={screen.key_elements} />
+                </div>
+              ))}
+              {uploadedDesigns.map((d) => (
+                <div key={`upload-${d.id}`} className="flex items-start gap-3">
+                  <span className="text-sm font-medium text-[var(--color-text-primary)] w-40 flex-shrink-0 truncate">
+                    {d.page_name}
+                  </span>
+                  {d.generated_html ? (
+                    <ModuleTags modules={d.modules} />
+                  ) : (
+                    <p className="text-xs text-[var(--color-text-tertiary)] italic">
+                      Not analyzed yet — generate code to see modules
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Section>
+
           {/* Color Palette */}
           <Section icon={Palette} title="Color Palette">
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -682,6 +743,15 @@ export default function UIUXScreen() {
                         <p className="text-xs text-[var(--color-text-tertiary)]">
                           {d.generated_html ? "Code generated" : "Not converted yet"}
                         </p>
+                        {d.generated_html ? (
+                          <div className="mt-1.5">
+                            <ModuleTags modules={d.modules} />
+                          </div>
+                        ) : (
+                          <p className="text-xs text-[var(--color-text-tertiary)] italic mt-0.5">
+                            Not analyzed yet — generate code to see modules
+                          </p>
+                        )}
                         {d.voice_note_url && (
                           <p className="text-xs text-[var(--color-primary)] flex items-center gap-1 mt-0.5">
                             <FileAudio className="w-3 h-3" />

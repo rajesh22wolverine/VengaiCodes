@@ -114,6 +114,21 @@ async def get_current_active_user(
     return user
 
 
+async def require_admin(
+    user: User = Depends(get_current_active_user),
+) -> User:
+    """
+    Require an admin account. This is the real security boundary for
+    every /admin/* route — re-checks the DB, not just the JWT claim.
+    """
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return user
+
+
 # ═══════════════════════════════════════════════════════════════
 #  POST /auth/token — Swagger UI OAuth2 compatibility endpoint
 #  Swagger's Authorize button sends username+password as form data.
@@ -172,6 +187,7 @@ async def get_token_for_swagger(
         username=user.username,
         email=user.email,
         tier=user.tier.value if hasattr(user.tier, "value") else user.tier,
+        is_admin=user.is_admin,
     )
 
     user.last_login = datetime.now(timezone.utc)
@@ -512,6 +528,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         username=user.username,
         email=user.email,
         tier=user.tier.value if hasattr(user.tier, "value") else user.tier,
+        is_admin=user.is_admin,
         remember_me=payload.remember_me,
     )
 
@@ -567,6 +584,7 @@ async def refresh_token(
         username=user.username,
         email=user.email,
         tier=user.tier.value if hasattr(user.tier, "value") else user.tier,
+        is_admin=user.is_admin,
     )
 
     return TokenRefreshResponse(access_token=access_token, expires_in=expires_in)
