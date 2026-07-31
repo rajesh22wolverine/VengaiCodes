@@ -30,7 +30,8 @@
           "photosPermission": "Allow VengaiCode to access your photos so you can upload a design mockup.",
           "cameraPermission": "Allow VengaiCode to use your camera to capture a design sketch or mockup."
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "extra": {
       "router": {},
