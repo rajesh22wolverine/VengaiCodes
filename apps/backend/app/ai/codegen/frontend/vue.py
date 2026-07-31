@@ -8,7 +8,13 @@
 
 from app.ai.codegen.manifests.package_json import build_package_json
 from app.ai.codegen.types import FileResult, FrontendAdapter, ScreenCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, generate_text_validated
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    build_reference_design_block,
+    generate_text_validated,
+)
 
 
 async def generate_screen(ctx: ScreenCtx) -> FileResult:
@@ -17,6 +23,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     endpoints_text = "\n".join(
         f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
     )
+    reference_block = build_reference_design_block(ctx.screen)
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Vue 3 Single File Component for the "{screen_name}" screen of this app.
 
@@ -26,14 +33,16 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-
+{reference_block}
 Requirements:
 - Use `<script setup>` composition API syntax.
 - Fetch real data from the relevant API endpoints above (use `fetch`), handle loading and
   error states, and implement the actual feature/user-story behavior for this screen — real
   form handling, real list rendering from the API response, real interactions.
 - Style exclusively with Tailwind CSS utility classes in the template. No inline styles,
-  no other CSS frameworks, no separate CSS file.
+  no other CSS frameworks, no separate CSS file. If a reference mockup was provided above,
+  translate its colors/spacing/typography into equivalent Tailwind utilities rather than
+  copying its raw CSS verbatim.
 - Structure as a proper .vue Single File Component: `<template>`, `<script setup>`, no
   `<style>` block needed since Tailwind handles styling.
 - No placeholders or TODOs — this screen must be fully implemented, not static mockup content.

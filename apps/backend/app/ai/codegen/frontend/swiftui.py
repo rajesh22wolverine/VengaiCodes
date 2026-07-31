@@ -21,6 +21,7 @@ from app.ai.codegen_shared import (
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _pascal,
+    build_design_guidance_block,
     generate_text_validated,
 )
 
@@ -41,6 +42,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         if capabilities_text
         else ""
     )
+    design_guidance = build_design_guidance_block(
+        ctx.design_style, ctx.color_palette, ctx.typography, ctx.screen.get("modules")
+    )
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real SwiftUI View struct implementing the "{screen_name}" screen of this app.
 
@@ -50,7 +54,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}
+{native_section}{design_guidance}
 Requirements:
 - Struct name: {struct_name}, conforming to `View`, with a `var body: some View`.
 - Real state via `@State` properties. Fetch data with EXACTLY this async pattern inside
@@ -63,6 +67,8 @@ Requirements:
 - Use only real, existing SwiftUI view/modifier names (VStack, List, TextField, Button,
   ProgressView, etc.) — do not invent modifiers that don't exist in SwiftUI.
 - No placeholder text or TODO comments, this must be fully implemented.
+- If a visual style/color palette/typography is specified above, reflect it in your layout —
+  approximate palette hex codes with `Color(red:green:blue:)` computed from the hex value.
 
 Return ONLY the raw Swift code for this one file (imports + the Decodable model(s) it needs +
 the View struct). No markdown fences, no explanation, no JSON."""

@@ -22,12 +22,21 @@ export interface PreviewSelection {
   isField: boolean;
   text: string | null;
   placeholder: string | null;
+  // Name of the nearest enclosing `[data-veng-module]` structural section
+  // (see the "Wrap each ... in data-veng-module" rule in uiux.py's design-
+  // to-code prompts), or null if this element isn't inside a tagged
+  // section — e.g. mockups saved before that rule existed. Move Module
+  // controls only render when this is non-null.
+  module: string | null;
   styles: {
     color: string | null;
     backgroundColor: string | null;
     fontSize: number;
     fontWeight: string;
     textAlign: string;
+    width: string | null;
+    height: string | null;
+    borderRadius: string | null;
   };
 }
 
@@ -66,6 +75,9 @@ const EDITOR_SCRIPT = `
       fontSize: parseInt(cs.fontSize, 10) || 16,
       fontWeight: cs.fontWeight,
       textAlign: cs.textAlign,
+      width: cs.width || null,
+      height: cs.height || null,
+      borderRadius: cs.borderRadius || null,
     };
   }
 
@@ -75,6 +87,20 @@ const EDITOR_SCRIPT = `
     var id = 'v' + Math.random().toString(36).slice(2, 10);
     el.setAttribute('data-veng-id', id);
     return id;
+  }
+
+  function moduleRootOf(el) {
+    var node = el;
+    while (node && node !== document.body) {
+      if (node.hasAttribute && node.hasAttribute('data-veng-module')) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function moduleOf(el) {
+    var root = moduleRootOf(el);
+    return root ? root.getAttribute('data-veng-module') : null;
   }
 
   function notifyContentChanged() {
@@ -104,6 +130,7 @@ const EDITOR_SCRIPT = `
       isField: isField,
       text: isField ? null : el.innerText,
       placeholder: isField ? (el.getAttribute('placeholder') || '') : null,
+      module: moduleOf(el),
       styles: serializeStyles(el),
     });
     if (!isField && el.tagName !== 'IMG') {
@@ -142,6 +169,30 @@ const EDITOR_SCRIPT = `
     } else if (cmd.type === 'set-placeholder') {
       selectedEl.setAttribute('placeholder', cmd.value);
       notifyContentChanged();
+    } else if (cmd.type === 'move-element') {
+      // Swap the selected element with its adjacent sibling — a no-op at
+      // a boundary (no previous/next sibling to swap with).
+      var parent = selectedEl.parentElement;
+      if (!parent) return;
+      if (cmd.direction === 'up' && selectedEl.previousElementSibling) {
+        parent.insertBefore(selectedEl, selectedEl.previousElementSibling);
+        notifyContentChanged();
+      } else if (cmd.direction === 'down' && selectedEl.nextElementSibling) {
+        parent.insertBefore(selectedEl.nextElementSibling, selectedEl);
+        notifyContentChanged();
+      }
+    } else if (cmd.type === 'move-module') {
+      // Swap the selected element's enclosing [data-veng-module] block
+      // with its adjacent [data-veng-module] sibling.
+      var root = moduleRootOf(selectedEl);
+      if (!root || !root.parentElement) return;
+      if (cmd.direction === 'up' && root.previousElementSibling) {
+        root.parentElement.insertBefore(root, root.previousElementSibling);
+        notifyContentChanged();
+      } else if (cmd.direction === 'down' && root.nextElementSibling) {
+        root.parentElement.insertBefore(root.nextElementSibling, root);
+        notifyContentChanged();
+      }
     } else if (cmd.type === 'deselect') {
       clearSelection();
     }

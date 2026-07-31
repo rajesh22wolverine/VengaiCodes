@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.codegen_shared import get_ordered_pages
 from app.ai.orchestrator import AIError, generate_text
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
@@ -95,11 +96,11 @@ def build_stack_directive(selected_stack: dict | None) -> str:
 
 
 def build_architecture_prompt(
-    project_name: str, requirements: dict, uiux: dict, selected_stack: dict | None = None
+    project_name: str, requirements: dict, pages: list[dict], selected_stack: dict | None = None
 ) -> str:
     features = ", ".join(requirements.get("key_features", []))
     platforms = ", ".join(requirements.get("platforms", []))
-    screen_names = ", ".join(s.get("name", "") for s in uiux.get("screens", []))
+    screen_names = ", ".join(p.get("name", "") for p in pages)
     tech_hint = requirements.get("tech_recommendations", "")
     stack_directive = build_stack_directive(selected_stack)
 
@@ -181,10 +182,10 @@ async def generate_architecture(
         )
 
     frd = (project.requirements_data or {}).get("frd", {})
-    uiux = (project.uiux_data or {}).get("design", {})
+    pages = get_ordered_pages(project.uiux_data)
 
     try:
-        prompt = build_architecture_prompt(project.name, frd, uiux, project.selected_stack)
+        prompt = build_architecture_prompt(project.name, frd, pages, project.selected_stack)
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:

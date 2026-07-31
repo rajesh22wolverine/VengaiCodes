@@ -19,6 +19,7 @@ from app.ai.codegen_shared import (
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _pascal,
+    build_design_guidance_block,
     generate_text_validated,
 )
 
@@ -68,6 +69,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         if capabilities_text
         else ""
     )
+    design_guidance = build_design_guidance_block(
+        ctx.design_style, ctx.color_palette, ctx.typography, ctx.screen.get("modules")
+    )
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Flutter widget file implementing the "{screen_name}" screen of this app.
 
@@ -77,7 +81,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}
+{native_section}{design_guidance}
 Requirements:
 - Class name: {class_name}, a StatefulWidget (use StatelessWidget only if this screen truly has
   no dynamic state) with a `const {class_name}({{super.key}})` constructor.
@@ -88,6 +92,8 @@ Requirements:
   real form handling, real list rendering, real interactions via `setState`.
 - Use Flutter's Material widgets (Scaffold, ListView, TextField, ElevatedButton, etc.) for a real,
   usable UI — no placeholder text or TODO comments, this must be fully implemented.
+- If a visual style/color palette/typography is specified above, reflect it via `Color(0xFF......)`
+  computed from each hex code (e.g. a themed AppBar/button color) rather than defaults.
 - Return ONLY this one widget — do not define MaterialApp or main() here.
 
 Return ONLY the raw Dart code for this one file. No markdown fences, no explanation, no JSON."""

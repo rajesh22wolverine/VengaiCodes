@@ -49,6 +49,7 @@ from app.ai.codegen_shared import (
     GeneratedFile,
     _pascal,
     android_package_segment,
+    build_design_guidance_block,
     generate_text_validated,
 )
 
@@ -77,6 +78,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         if capabilities_text
         else ""
     )
+    design_guidance = build_design_guidance_block(
+        ctx.design_style, ctx.color_palette, ctx.typography, ctx.screen.get("modules")
+    )
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Godot 4 GDScript file implementing the "{screen_name}" scene of this game.
 
@@ -86,7 +90,7 @@ Scene purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this scene can call:
 {endpoints_text}
-{native_section}
+{native_section}{design_guidance}
 Requirements:
 - First two lines MUST be exactly:
   extends Control
@@ -108,6 +112,9 @@ Requirements:
   script file. Represent any parsed JSON as plain `Dictionary`/`Array` values, and build any
   repeated/list UI (e.g. an inventory, a leaderboard) by instantiating controls in a loop
   directly inside this file — no separate item-scene dependency.
+- If a visual style/color palette is specified above, reflect it by setting relevant nodes'
+  `.modulate` or `theme_override_colors/...` properties from `Color(r, g, b)` (0.0-1.0 floats)
+  computed from each hex code.
 
 Return ONLY the raw GDScript code for this one file. No markdown fences, no explanation, no JSON."""
 

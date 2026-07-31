@@ -16,6 +16,7 @@ from app.ai.codegen_shared import (
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _slug,
+    build_reference_design_block,
     generate_text_validated,
 )
 
@@ -37,6 +38,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         if capabilities_text
         else ""
     )
+    reference_block = build_reference_design_block(ctx.screen)
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real vanilla JavaScript ES module implementing the "{screen_name}" screen of this app — no framework, plain DOM APIs.
 
@@ -46,7 +48,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}
+{native_section}{reference_block}
 Requirements:
 - Do NOT use React, Vue, Svelte, or any other framework API — no `useState`, `useEffect`, JSX,
   or imports from 'react'/'vue'/etc. This is PLAIN vanilla JavaScript: only standard DOM APIs
@@ -65,7 +67,9 @@ Requirements:
   inline `onclick="..."` attributes in the HTML string can NOT reach module-scoped functions
   and must not be used.
 - Style exclusively with Tailwind CSS utility classes in the HTML. No inline `style=` attributes,
-  no other CSS frameworks, no separate CSS file for this screen.
+  no other CSS frameworks, no separate CSS file for this screen. If a reference mockup was
+  provided above, translate its colors/spacing/typography into equivalent Tailwind utilities
+  rather than copying its raw CSS verbatim.
 - No placeholders or TODOs — this screen must be fully implemented, not static mockup content.
 
 Return ONLY the raw JavaScript module content. No markdown fences, no explanation, no JSON."""

@@ -26,6 +26,7 @@ from app.ai.codegen_shared import (
     GeneratedFile,
     apply_package_json_name,
     detect_native_capabilities,
+    get_ordered_pages,
 )
 from app.ai.orchestrator import AIError
 from app.ai.stack_matrix import get_project_stack
@@ -138,7 +139,10 @@ async def generate_code(
 
     tables = architecture.get("database_tables", [])
     endpoints = architecture.get("api_endpoints", [])
-    screens = uiux.get("screens", []) or [{"name": "Home", "purpose": "Landing screen"}]
+    screens = get_ordered_pages(project.uiux_data) or [{"name": "Home", "purpose": "Landing screen"}]
+    design_style = uiux.get("design_style")
+    color_palette = uiux.get("color_palette")
+    typography = uiux.get("typography")
 
     stack_info = get_project_stack(project)
     is_o3de = stack_info["frontend_framework"] == "o3de"
@@ -174,6 +178,9 @@ async def generate_code(
                     language="lua",
                     user=user,
                     db=db,
+                    design_style=design_style,
+                    color_palette=color_palette,
+                    typography=typography,
                 )))
                 for screen in screens
             ]
@@ -206,6 +213,9 @@ async def generate_code(
                     language="gdscript",
                     user=user,
                     db=db,
+                    design_style=design_style,
+                    color_palette=color_palette,
+                    typography=typography,
                 )))
                 for screen in screens
             ]
@@ -257,6 +267,9 @@ async def generate_code(
                     language=stack_info["frontend_language"],
                     user=user,
                     db=db,
+                    design_style=design_style,
+                    color_palette=color_palette,
+                    typography=typography,
                 )))
                 for screen in screens
             ]

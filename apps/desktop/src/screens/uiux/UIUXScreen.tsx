@@ -1,22 +1,32 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Palette, Type, Layout, Puzzle,
   Navigation, Loader2, ThumbsUp, BookOpen, Upload,
   Wand2, Save, Trash2, ImageIcon, Code2, Camera, X,
-  Mic, Square, FileAudio
+  Mic, Square, FileAudio, GripVertical,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
 import { buildPreviewDocument, sendEditorCommand, type PreviewSelection } from "@/lib/designPreview";
 
 interface ScreenDefinition {
+  id: string;
   name: string;
   purpose: string;
   key_elements: string[];
+  generated_html: string | null;
+  generated_css: string | null;
+  modules?: string[];
 }
 
 interface ColorPalette {
@@ -34,6 +44,7 @@ interface UIUXDesign {
   screens: ScreenDefinition[];
   components: string[];
   navigation_pattern: string;
+  page_order?: string[];
 }
 
 interface UploadedDesign {
@@ -50,6 +61,36 @@ interface UploadedDesign {
   voice_note_url: string | null;
   voice_note_transcript: string | null;
   voice_note_uploaded_at: string | null;
+}
+
+// Unified shape both wizard-generated screens and user-uploaded mockups get
+// rendered/reordered/edited as — combining them into one list is what makes
+// a single drag-and-drop order and a single visual editor possible.
+interface Page {
+  id: string;
+  kind: "screen" | "upload";
+  name: string;
+  purpose?: string;
+  key_elements?: string[];
+  image_url?: string;
+  generated_html: string | null;
+  generated_css: string | null;
+  modules?: string[];
+  generation_notes?: string | null;
+  voice_note_url?: string | null;
+  voice_note_transcript?: string | null;
+}
+
+// Saved page_order only ever lists ids that existed when it was written —
+// merge it with whatever ids actually exist now so a freshly uploaded (or
+// not-yet-ordered) page still shows up, appended at the end. Mirrors the
+// backend's get_ordered_pages() fallback shape.
+function computePageOrder(design: UIUXDesign, uploads: UploadedDesign[]): string[] {
+  const allIds = [...design.screens.map((s) => s.id), ...uploads.map((d) => d.id)];
+  const saved = design.page_order || [];
+  const known = saved.filter((id) => allIds.includes(id));
+  const missing = allIds.filter((id) => !known.includes(id));
+  return [...known, ...missing];
 }
 
 const MAX_VISIBLE_MODULE_TAGS = 5;
@@ -92,11 +133,15 @@ export default function UIUXScreen() {
   const [uploadPageName, setUploadPageName] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [generatingCodeFor, setGeneratingCodeFor] = useState<string | null>(null);
-  const [expandedDesignId, setExpandedDesignId] = useState<string | null>(null);
+  const [expandedPageId, setExpandedPageId] = useState<string | null>(null);
   const [editedHtml, setEditedHtml] = useState("");
   const [editedCss, setEditedCss] = useState("");
-  const [isSavingCode, setIsSavingCode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Authoritative page order (wizard screens + uploads, mixed together).
+  // Drag-and-drop only ever updates this — nothing is persisted until Save.
+  const [pageOrder, setPageOrder] = useState<string[]>([]);
+  const [isSavingPages, setIsSavingPages] = useState(false);
 
   const [previewDoc, setPreviewDoc] = useState("");
   const [selection, setSelection] = useState<PreviewSelection | null>(null);
@@ -113,6 +158,8 @@ export default function UIUXScreen() {
   const [transcribingDesignId, setTranscribingDesignId] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   useEffect(() => {
     loadOrGenerate();
@@ -132,7 +179,7 @@ export default function UIUXScreen() {
   // rebuild in that case so we don't reload the frame the user is
   // actively editing in.
   useEffect(() => {
-    if (!expandedDesignId) return;
+    if (!expandedPageId) return;
     if (skipNextRebuildRef.current) {
       skipNextRebuildRef.current = false;
       return;
@@ -141,7 +188,33 @@ export default function UIUXScreen() {
       setPreviewDoc(buildPreviewDocument(editedHtml, editedCss));
     }, 350);
     return () => clearTimeout(t);
-  }, [editedHtml, editedCss, expandedDesignId]);
+  }, [editedHtml, editedCss, expandedPageId]);
+
+  // Keep whichever page is currently expanded in sync with its live-edited
+  // HTML/CSS, so switching to another page (or hitting the global Save
+  // button) never loses in-progress edits — there's no more per-page save.
+  useEffect(() => {
+    if (!expandedPageId) return;
+    setDesign((prev) => {
+      if (!prev) return prev;
+      const idx = prev.screens.findIndex((s) => s.id === expandedPageId);
+      const current = idx === -1 ? undefined : prev.screens[idx];
+      if (!current) return prev;
+      if (current.generated_html === editedHtml && current.generated_css === editedCss) return prev;
+      const screens = [...prev.screens];
+      screens[idx] = { ...current, generated_html: editedHtml, generated_css: editedCss };
+      return { ...prev, screens };
+    });
+    setUploadedDesigns((prev) => {
+      const idx = prev.findIndex((d) => d.id === expandedPageId);
+      const current = idx === -1 ? undefined : prev[idx];
+      if (!current) return prev;
+      if (current.generated_html === editedHtml && current.generated_css === editedCss) return prev;
+      const next = [...prev];
+      next[idx] = { ...current, generated_html: editedHtml, generated_css: editedCss };
+      return next;
+    });
+  }, [editedHtml, editedCss, expandedPageId]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
@@ -184,11 +257,21 @@ export default function UIUXScreen() {
     setSelection(null);
   };
 
+  const moveElement = (direction: "up" | "down") => {
+    sendEditorCommand(previewFrameRef.current?.contentWindow, { type: "move-element", direction });
+  };
+
+  const moveModule = (direction: "up" | "down") => {
+    sendEditorCommand(previewFrameRef.current?.contentWindow, { type: "move-module", direction });
+  };
+
   const loadOrGenerate = async () => {
     try {
       const { data } = await apiClient.get(`/uiux/${projectId}`);
+      const uploads: UploadedDesign[] = data.uploaded_designs || [];
       setDesign(data.design);
-      setUploadedDesigns(data.uploaded_designs || []);
+      setUploadedDesigns(uploads);
+      setPageOrder(computePageOrder(data.design, uploads));
       setIsLoading(false);
     } catch {
       await generate();
@@ -203,6 +286,7 @@ export default function UIUXScreen() {
         project_id: projectId,
       }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setDesign(data.design);
+      setPageOrder(computePageOrder(data.design, []));
       toast.success("Your design system is ready! 🎨🐯");
     } catch (error: any) {
       toast.error(error.message || "Failed to generate design.");
@@ -253,6 +337,75 @@ export default function UIUXScreen() {
     }
   };
 
+  // ── Save every pending edit + the current page order in one action ──
+
+  const pagesById = useMemo(() => {
+    const map = new Map<string, Page>();
+    (design?.screens || []).forEach((s) => {
+      map.set(s.id, {
+        id: s.id,
+        kind: "screen",
+        name: s.name,
+        purpose: s.purpose,
+        key_elements: s.key_elements,
+        generated_html: s.generated_html,
+        generated_css: s.generated_css,
+        modules: s.modules,
+      });
+    });
+    uploadedDesigns.forEach((d) => {
+      map.set(d.id, {
+        id: d.id,
+        kind: "upload",
+        name: d.page_name,
+        image_url: d.image_url,
+        generated_html: d.generated_html,
+        generated_css: d.generated_css,
+        modules: d.modules,
+        generation_notes: d.generation_notes,
+        voice_note_url: d.voice_note_url,
+        voice_note_transcript: d.voice_note_transcript,
+      });
+    });
+    return map;
+  }, [design, uploadedDesigns]);
+
+  const pages: Page[] = pageOrder.map((id) => pagesById.get(id)).filter((p): p is Page => !!p);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setPageOrder((prev) => {
+      const oldIndex = prev.indexOf(String(active.id));
+      const newIndex = prev.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
+  };
+
+  const handleSaveAll = async () => {
+    if (!design) return;
+    setIsSavingPages(true);
+    try {
+      const payloadPages = pages.map((p) => ({
+        id: p.id,
+        generated_html: p.generated_html,
+        generated_css: p.generated_css,
+        modules: p.modules || [],
+      }));
+      await apiClient.put(`/uiux/${projectId}/save`, {
+        project_id: projectId,
+        pages: payloadPages,
+        page_order: pageOrder,
+      });
+      toast.success("Design saved 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save design.");
+    } finally {
+      setIsSavingPages(false);
+    }
+  };
+
   // ── Upload your own design → code ──
 
   const uploadDesignFile = async (file: File, fallbackName: string) => {
@@ -267,6 +420,7 @@ export default function UIUXScreen() {
         headers: { "Content-Type": undefined },
       });
       setUploadedDesigns((prev) => [...prev, data.design]);
+      setPageOrder((prev) => [...prev, data.design.id]);
       setUploadPageName("");
       toast.success("Design uploaded! 🖼️");
     } catch (error: any) {
@@ -403,7 +557,7 @@ export default function UIUXScreen() {
       setEditedCss(data.design.generated_css || "");
       setSelection(null);
       setPreviewDoc(buildPreviewDocument(data.design.generated_html || "", data.design.generated_css || ""));
-      setExpandedDesignId(designId);
+      setExpandedPageId(designId);
       toast.success("Code generated from your design! 🐯✨");
     } catch (error: any) {
       toast.error(error.message || "Failed to generate code from design.");
@@ -412,42 +566,25 @@ export default function UIUXScreen() {
     }
   };
 
-  const handleExpandDesign = (design: UploadedDesign) => {
-    if (expandedDesignId === design.id) {
-      setExpandedDesignId(null);
+  const handleExpandPage = (page: Page) => {
+    if (expandedPageId === page.id) {
+      setExpandedPageId(null);
       setSelection(null);
       return;
     }
-    setEditedHtml(design.generated_html || "");
-    setEditedCss(design.generated_css || "");
+    setEditedHtml(page.generated_html || "");
+    setEditedCss(page.generated_css || "");
     setSelection(null);
-    setPreviewDoc(buildPreviewDocument(design.generated_html || "", design.generated_css || ""));
-    setExpandedDesignId(design.id);
-  };
-
-  const handleSaveCode = async (designId: string) => {
-    setIsSavingCode(true);
-    try {
-      const { data } = await apiClient.put(`/uiux/${projectId}/design/${designId}/code`, {
-        html: editedHtml,
-        css: editedCss,
-      });
-      setUploadedDesigns((prev) =>
-        prev.map((d) => (d.id === designId ? data.design : d))
-      );
-      toast.success("Changes saved 🐯");
-    } catch (error: any) {
-      toast.error(error.message || "Failed to save changes.");
-    } finally {
-      setIsSavingCode(false);
-    }
+    setPreviewDoc(buildPreviewDocument(page.generated_html || "", page.generated_css || ""));
+    setExpandedPageId(page.id);
   };
 
   const handleDeleteDesign = async (designId: string) => {
     try {
       await apiClient.delete(`/uiux/${projectId}/design/${designId}`);
       setUploadedDesigns((prev) => prev.filter((d) => d.id !== designId));
-      if (expandedDesignId === designId) setExpandedDesignId(null);
+      setPageOrder((prev) => prev.filter((id) => id !== designId));
+      if (expandedPageId === designId) setExpandedPageId(null);
       toast.success("Design removed");
     } catch (error: any) {
       toast.error(error.message || "Failed to delete design.");
@@ -503,40 +640,6 @@ export default function UIUXScreen() {
             </p>
           </Section>
 
-          {/* Page Overview */}
-          <Section
-            icon={Layout}
-            title={`Page Overview (${design.screens.length + uploadedDesigns.length})`}
-          >
-            <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-              {design.screens.length} AI-generated + {uploadedDesigns.length} of your own uploads
-            </p>
-            <div className="space-y-3">
-              {design.screens.map((screen, i) => (
-                <div key={`screen-${i}`} className="flex items-start gap-3">
-                  <span className="text-sm font-medium text-[var(--color-text-primary)] w-40 flex-shrink-0 truncate">
-                    {screen.name}
-                  </span>
-                  <ModuleTags modules={screen.key_elements} />
-                </div>
-              ))}
-              {uploadedDesigns.map((d) => (
-                <div key={`upload-${d.id}`} className="flex items-start gap-3">
-                  <span className="text-sm font-medium text-[var(--color-text-primary)] w-40 flex-shrink-0 truncate">
-                    {d.page_name}
-                  </span>
-                  {d.generated_html ? (
-                    <ModuleTags modules={d.modules} />
-                  ) : (
-                    <p className="text-xs text-[var(--color-text-tertiary)] italic">
-                      Not analyzed yet — generate code to see modules
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </Section>
-
           {/* Color Palette */}
           <Section icon={Palette} title="Color Palette">
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -566,44 +669,6 @@ export default function UIUXScreen() {
             </p>
           </Section>
 
-          {/* Screens */}
-          <Section icon={Layout} title={`Screens (${design.screens.length})`}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {design.screens.map((screen, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4"
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    <div
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: design.color_palette.primary }}
-                    />
-                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
-                      {screen.name}
-                    </h4>
-                  </div>
-                  <p className="text-xs text-[var(--color-text-secondary)] mb-3 leading-relaxed">
-                    {screen.purpose}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {screen.key_elements.map((el, j) => (
-                      <span
-                        key={j}
-                        className="px-2 py-1 rounded-md bg-[var(--color-surface)] text-[var(--color-text-tertiary)] text-xs border border-[var(--color-border)]"
-                      >
-                        {el}
-                      </span>
-                    ))}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </Section>
-
           {/* Components */}
           <Section icon={Puzzle} title="Reusable Components">
             <div className="flex flex-wrap gap-2">
@@ -625,12 +690,14 @@ export default function UIUXScreen() {
             </p>
           </Section>
 
-          {/* Upload your own design → code */}
-          <Section icon={Upload} title="Upload Your Own Page Design">
+          {/* Pages — every wizard-generated screen and every uploaded mockup,
+              one reorderable, previewable, editable list. */}
+          <Section icon={Layout} title={`Pages (${pages.length})`}>
             <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
-              Have a mockup or screenshot for a page? Upload it and Baby Tiger will
-              read the image and generate matching HTML/CSS you can edit before it
-              feeds into code generation.
+              Drag pages to reorder them — this order is what codegen follows
+              later. Upload your own mockup or screenshot for any page and
+              Baby Tiger will read the image and generate matching HTML/CSS
+              you can edit right here.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-2 mb-4">
@@ -719,288 +786,45 @@ export default function UIUXScreen() {
               )}
             </AnimatePresence>
 
-            {uploadedDesigns.length === 0 ? (
+            {pages.length === 0 ? (
               <p className="text-xs text-[var(--color-text-tertiary)]">
-                No designs uploaded yet.
+                No pages yet.
               </p>
             ) : (
-              <div className="space-y-3">
-                {uploadedDesigns.map((d) => (
-                  <div
-                    key={d.id}
-                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] overflow-hidden"
-                  >
-                    <div className="flex items-center gap-3 p-3">
-                      <img
-                        src={d.image_url}
-                        alt={d.page_name}
-                        className="w-14 h-14 rounded-lg object-cover border border-[var(--color-border)] flex-shrink-0"
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={pages.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-3">
+                    {pages.map((page) => (
+                      <PageCard
+                        key={page.id}
+                        page={page}
+                        isExpanded={expandedPageId === page.id}
+                        onToggleExpand={handleExpandPage}
+                        onGenerateCode={handleGenerateCode}
+                        generatingCode={generatingCodeFor === page.id}
+                        onDelete={handleDeleteDesign}
+                        recording={recordingDesignId === page.id}
+                        transcribing={transcribingDesignId === page.id}
+                        recordingActive={recordingDesignId !== null}
+                        onStartRecording={startRecording}
+                        onStopRecording={stopRecording}
+                        editedHtml={editedHtml}
+                        editedCss={editedCss}
+                        onEditHtml={setEditedHtml}
+                        onEditCss={setEditedCss}
+                        previewDoc={previewDoc}
+                        previewFrameRef={previewFrameRef}
+                        selection={selection}
+                        onUpdateStyle={updateStyle}
+                        onUpdatePlaceholder={updatePlaceholder}
+                        onClearSelection={clearPreviewSelection}
+                        onMoveElement={moveElement}
+                        onMoveModule={moveModule}
                       />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">
-                          {d.page_name}
-                        </p>
-                        <p className="text-xs text-[var(--color-text-tertiary)]">
-                          {d.generated_html ? "Code generated" : "Not converted yet"}
-                        </p>
-                        {d.generated_html ? (
-                          <div className="mt-1.5">
-                            <ModuleTags modules={d.modules} />
-                          </div>
-                        ) : (
-                          <p className="text-xs text-[var(--color-text-tertiary)] italic mt-0.5">
-                            Not analyzed yet — generate code to see modules
-                          </p>
-                        )}
-                        {d.voice_note_url && (
-                          <p className="text-xs text-[var(--color-primary)] flex items-center gap-1 mt-0.5">
-                            <FileAudio className="w-3 h-3" />
-                            {d.voice_note_transcript
-                              ? "Voice note attached"
-                              : "Voice note attached (transcription failed)"}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {recordingDesignId === d.id ? (
-                          <button
-                            onClick={() => stopRecording(d.id)}
-                            className="px-3 py-1.5 rounded-lg bg-[var(--color-error)] text-white text-xs font-semibold flex items-center gap-1.5 animate-pulse"
-                          >
-                            <Square className="w-3.5 h-3.5" />
-                            Stop
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => startRecording(d.id)}
-                            disabled={transcribingDesignId === d.id || recordingDesignId !== null}
-                            title="Record a voice note with extra instructions"
-                            className="p-2 rounded-lg border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] transition-colors disabled:opacity-60"
-                          >
-                            {transcribingDesignId === d.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Mic className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        )}
-                        {d.generated_html ? (
-                          <button
-                            onClick={() => handleExpandDesign(d)}
-                            className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] text-xs font-semibold hover:bg-[var(--color-surface)] transition-colors flex items-center gap-1.5"
-                          >
-                            <Code2 className="w-3.5 h-3.5" />
-                            {expandedDesignId === d.id ? "Hide code" : "View/edit code"}
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleGenerateCode(d.id)}
-                            disabled={generatingCodeFor === d.id}
-                            className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-1.5"
-                          >
-                            {generatingCodeFor === d.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Wand2 className="w-3.5 h-3.5" />
-                            )}
-                            Generate Code
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDeleteDesign(d.id)}
-                          className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-error)] hover:bg-[var(--color-surface)] transition-colors"
-                          title="Delete design"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <AnimatePresence>
-                      {expandedDesignId === d.id && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="border-t border-[var(--color-border)] p-3"
-                        >
-                          {d.generation_notes && (
-                            <p className="text-xs text-[var(--color-text-tertiary)] mb-3 italic flex items-start gap-1.5">
-                              <ImageIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                              {d.generation_notes}
-                            </p>
-                          )}
-                          {d.voice_note_url && (
-                            <div className="mb-3 p-2.5 rounded-lg bg-[var(--color-background)] border border-[var(--color-border)]">
-                              <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1.5 flex items-center gap-1.5">
-                                <FileAudio className="w-3.5 h-3.5" />
-                                Voice note
-                              </p>
-                              <audio src={d.voice_note_url} controls className="w-full h-8 mb-1.5" />
-                              {d.voice_note_transcript && (
-                                <p className="text-xs text-[var(--color-text-tertiary)] italic">
-                                  "{d.voice_note_transcript}"
-                                </p>
-                              )}
-                            </div>
-                          )}
-                          <div className="grid gap-3 lg:grid-cols-2">
-                            <div className="space-y-3">
-                              <div>
-                                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-                                  HTML
-                                </label>
-                                <textarea
-                                  value={editedHtml}
-                                  onChange={(e) => setEditedHtml(e.target.value)}
-                                  spellCheck={false}
-                                  className="w-full h-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-                                  CSS
-                                </label>
-                                <textarea
-                                  value={editedCss}
-                                  onChange={(e) => setEditedCss(e.target.value)}
-                                  spellCheck={false}
-                                  className="w-full h-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
-                                />
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-                                Live Preview — click any element to edit it directly
-                              </label>
-                              <div className="relative rounded-lg border border-[var(--color-border)] overflow-hidden" style={{ height: 336 }}>
-                                <iframe
-                                  ref={previewFrameRef}
-                                  srcDoc={previewDoc}
-                                  sandbox="allow-scripts"
-                                  title="Design preview"
-                                  className="w-full h-full bg-white"
-                                />
-
-                                {selection && (
-                                  <div className="absolute top-2 right-2 w-52 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg space-y-2.5 text-xs">
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-raised)] text-[var(--color-text-tertiary)]">
-                                        {selection.tag}
-                                      </span>
-                                      <button
-                                        onClick={clearPreviewSelection}
-                                        className="p-0.5 rounded hover:bg-[var(--color-surface-raised)]"
-                                        title="Deselect"
-                                      >
-                                        <X className="w-3.5 h-3.5 text-[var(--color-text-tertiary)]" />
-                                      </button>
-                                    </div>
-
-                                    {selection.isField ? (
-                                      <div>
-                                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Placeholder</label>
-                                        <input
-                                          value={selection.placeholder ?? ""}
-                                          onChange={(e) => updatePlaceholder(e.target.value)}
-                                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
-                                        />
-                                      </div>
-                                    ) : (
-                                      <p className="text-[10px] text-[var(--color-text-tertiary)] italic">
-                                        Click the text in the preview to edit it directly.
-                                      </p>
-                                    )}
-
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1">
-                                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Text</label>
-                                        <input
-                                          type="color"
-                                          value={selection.styles.color || "#000000"}
-                                          onChange={(e) => updateStyle("color", e.target.value)}
-                                          className="w-full h-7 rounded-md border border-[var(--color-border)] cursor-pointer"
-                                        />
-                                      </div>
-                                      <div className="flex-1">
-                                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Background</label>
-                                        <input
-                                          type="color"
-                                          value={selection.styles.backgroundColor || "#ffffff"}
-                                          onChange={(e) => updateStyle("backgroundColor", e.target.value)}
-                                          className="w-full h-7 rounded-md border border-[var(--color-border)] cursor-pointer"
-                                        />
-                                      </div>
-                                    </div>
-
-                                    <div>
-                                      <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Font size</label>
-                                      <input
-                                        type="number"
-                                        min={8}
-                                        max={96}
-                                        value={selection.styles.fontSize}
-                                        onChange={(e) => updateStyle("fontSize", `${e.target.value}px`)}
-                                        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
-                                      />
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5">
-                                      <button
-                                        onClick={() =>
-                                          updateStyle(
-                                            "fontWeight",
-                                            selection.styles.fontWeight === "bold" || parseInt(selection.styles.fontWeight) >= 700
-                                              ? "400"
-                                              : "700"
-                                          )
-                                        }
-                                        className={`flex-1 py-1.5 rounded-md border text-xs font-bold ${
-                                          selection.styles.fontWeight === "bold" || parseInt(selection.styles.fontWeight) >= 700
-                                            ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-light)]"
-                                            : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
-                                        }`}
-                                      >
-                                        B
-                                      </button>
-                                      {(["left", "center", "right"] as const).map((align) => (
-                                        <button
-                                          key={align}
-                                          onClick={() => updateStyle("textAlign", align)}
-                                          className={`flex-1 py-1.5 rounded-md border text-[10px] capitalize ${
-                                            selection.styles.textAlign === align
-                                              ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-light)]"
-                                              : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
-                                          }`}
-                                        >
-                                          {align}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleSaveCode(d.id)}
-                            disabled={isSavingCode}
-                            className="mt-3 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-1.5"
-                          >
-                            {isSavingCode ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Save className="w-3.5 h-3.5" />
-                            )}
-                            Save Changes
-                          </button>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </SortableContext>
+              </DndContext>
             )}
           </Section>
         </div>
@@ -1013,6 +837,18 @@ export default function UIUXScreen() {
             Review the design above. Once approved, Baby Tiger moves to Architecture 🏗️
           </p>
           <div className="flex items-center gap-3 flex-shrink-0">
+            <button
+              onClick={handleSaveAll}
+              disabled={isSavingPages}
+              className="px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 flex items-center gap-2"
+            >
+              {isSavingPages ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              Save
+            </button>
             <button
               onClick={handleDownloadDocs}
               disabled={isDownloadingDocs}
@@ -1068,5 +904,410 @@ function Section({
       </div>
       {children}
     </motion.div>
+  );
+}
+
+interface PageCardProps {
+  page: Page;
+  isExpanded: boolean;
+  onToggleExpand: (page: Page) => void;
+  onGenerateCode: (id: string) => void;
+  generatingCode: boolean;
+  onDelete: (id: string) => void;
+  recording: boolean;
+  transcribing: boolean;
+  recordingActive: boolean;
+  onStartRecording: (id: string) => void;
+  onStopRecording: (id: string) => void;
+  editedHtml: string;
+  editedCss: string;
+  onEditHtml: (v: string) => void;
+  onEditCss: (v: string) => void;
+  previewDoc: string;
+  previewFrameRef: React.RefObject<HTMLIFrameElement>;
+  selection: PreviewSelection | null;
+  onUpdateStyle: (prop: string, value: string) => void;
+  onUpdatePlaceholder: (value: string) => void;
+  onClearSelection: () => void;
+  onMoveElement: (direction: "up" | "down") => void;
+  onMoveModule: (direction: "up" | "down") => void;
+}
+
+function PageCard({
+  page, isExpanded, onToggleExpand, onGenerateCode, generatingCode, onDelete,
+  recording, transcribing, recordingActive, onStartRecording, onStopRecording,
+  editedHtml, editedCss, onEditHtml, onEditCss, previewDoc, previewFrameRef,
+  selection, onUpdateStyle, onUpdatePlaceholder, onClearSelection, onMoveElement, onMoveModule,
+}: PageCardProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: page.id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] overflow-hidden"
+    >
+      <div className="flex items-center gap-3 p-3">
+        <button
+          {...attributes}
+          {...listeners}
+          className="p-1.5 rounded-lg text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface)] transition-colors cursor-grab active:cursor-grabbing flex-shrink-0"
+          title="Drag to reorder"
+        >
+          <GripVertical className="w-4 h-4" />
+        </button>
+
+        {page.kind === "upload" && page.image_url ? (
+          <img
+            src={page.image_url}
+            alt={page.name}
+            className="w-14 h-14 rounded-lg object-cover border border-[var(--color-border)] flex-shrink-0"
+          />
+        ) : (
+          <div className="w-14 h-14 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-center flex-shrink-0">
+            <Layout className="w-5 h-5 text-[var(--color-text-tertiary)]" />
+          </div>
+        )}
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{page.name}</p>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border border-[var(--color-border)] flex-shrink-0">
+              {page.kind === "screen" ? "AI" : "Your upload"}
+            </span>
+          </div>
+          {page.purpose && (
+            <p className="text-xs text-[var(--color-text-secondary)] truncate">{page.purpose}</p>
+          )}
+          {page.generated_html ? (
+            <div className="mt-1.5">
+              <ModuleTags modules={page.modules} />
+            </div>
+          ) : page.kind === "screen" ? (
+            <div className="mt-1.5">
+              <ModuleTags modules={page.key_elements} />
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--color-text-tertiary)] italic mt-0.5">
+              Not analyzed yet — generate code to see a preview
+            </p>
+          )}
+          {page.voice_note_url && (
+            <p className="text-xs text-[var(--color-primary)] flex items-center gap-1 mt-0.5">
+              <FileAudio className="w-3 h-3" />
+              {page.voice_note_transcript ? "Voice note attached" : "Voice note attached (transcription failed)"}
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {page.kind === "upload" && (
+            recording ? (
+              <button
+                onClick={() => onStopRecording(page.id)}
+                className="px-3 py-1.5 rounded-lg bg-[var(--color-error)] text-white text-xs font-semibold flex items-center gap-1.5 animate-pulse"
+              >
+                <Square className="w-3.5 h-3.5" />
+                Stop
+              </button>
+            ) : (
+              <button
+                onClick={() => onStartRecording(page.id)}
+                disabled={transcribing || recordingActive}
+                title="Record a voice note with extra instructions"
+                className="p-2 rounded-lg border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] transition-colors disabled:opacity-60"
+              >
+                {transcribing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Mic className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )
+          )}
+          {page.generated_html ? (
+            <button
+              onClick={() => onToggleExpand(page)}
+              className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] text-xs font-semibold hover:bg-[var(--color-surface)] transition-colors flex items-center gap-1.5"
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              {isExpanded ? "Hide code" : "View/edit code"}
+            </button>
+          ) : page.kind === "upload" ? (
+            <button
+              onClick={() => onGenerateCode(page.id)}
+              disabled={generatingCode}
+              className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-1.5"
+            >
+              {generatingCode ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Wand2 className="w-3.5 h-3.5" />
+              )}
+              Generate Code
+            </button>
+          ) : null}
+          {page.kind === "upload" && (
+            <button
+              onClick={() => onDelete(page.id)}
+              className="p-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-error)] hover:bg-[var(--color-surface)] transition-colors"
+              title="Delete design"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="border-t border-[var(--color-border)] p-3"
+          >
+            {page.generation_notes && (
+              <p className="text-xs text-[var(--color-text-tertiary)] mb-3 italic flex items-start gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                {page.generation_notes}
+              </p>
+            )}
+            {page.voice_note_url && (
+              <div className="mb-3 p-2.5 rounded-lg bg-[var(--color-background)] border border-[var(--color-border)]">
+                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1.5 flex items-center gap-1.5">
+                  <FileAudio className="w-3.5 h-3.5" />
+                  Voice note
+                </p>
+                <audio src={page.voice_note_url} controls className="w-full h-8 mb-1.5" />
+                {page.voice_note_transcript && (
+                  <p className="text-xs text-[var(--color-text-tertiary)] italic">
+                    "{page.voice_note_transcript}"
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                    HTML
+                  </label>
+                  <textarea
+                    value={editedHtml}
+                    onChange={(e) => onEditHtml(e.target.value)}
+                    spellCheck={false}
+                    className="w-full h-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                    CSS
+                  </label>
+                  <textarea
+                    value={editedCss}
+                    onChange={(e) => onEditCss(e.target.value)}
+                    spellCheck={false}
+                    className="w-full h-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                  Live Preview — click any element to edit it directly
+                </label>
+                <div className="relative rounded-lg border border-[var(--color-border)] overflow-hidden" style={{ height: 336 }}>
+                  <iframe
+                    ref={previewFrameRef}
+                    srcDoc={previewDoc}
+                    sandbox="allow-scripts"
+                    title="Design preview"
+                    className="w-full h-full bg-white"
+                  />
+
+                  {selection && (
+                    <div className="absolute top-2 right-2 w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg space-y-2.5 text-xs max-h-[320px] overflow-y-auto">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-raised)] text-[var(--color-text-tertiary)]">
+                          {selection.tag}
+                        </span>
+                        <button
+                          onClick={onClearSelection}
+                          className="p-0.5 rounded hover:bg-[var(--color-surface-raised)]"
+                          title="Deselect"
+                        >
+                          <X className="w-3.5 h-3.5 text-[var(--color-text-tertiary)]" />
+                        </button>
+                      </div>
+
+                      {selection.isField ? (
+                        <div>
+                          <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Placeholder</label>
+                          <input
+                            value={selection.placeholder ?? ""}
+                            onChange={(e) => onUpdatePlaceholder(e.target.value)}
+                            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                          />
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-[var(--color-text-tertiary)] italic">
+                          Click the text in the preview to edit it directly.
+                        </p>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Text</label>
+                          <input
+                            type="color"
+                            value={selection.styles.color || "#000000"}
+                            onChange={(e) => onUpdateStyle("color", e.target.value)}
+                            className="w-full h-7 rounded-md border border-[var(--color-border)] cursor-pointer"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Background</label>
+                          <input
+                            type="color"
+                            value={selection.styles.backgroundColor || "#ffffff"}
+                            onChange={(e) => onUpdateStyle("backgroundColor", e.target.value)}
+                            className="w-full h-7 rounded-md border border-[var(--color-border)] cursor-pointer"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Font size</label>
+                        <input
+                          type="number"
+                          min={8}
+                          max={96}
+                          value={selection.styles.fontSize}
+                          onChange={(e) => onUpdateStyle("fontSize", `${e.target.value}px`)}
+                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Width</label>
+                          <input
+                            type="text"
+                            value={selection.styles.width ?? ""}
+                            onChange={(e) => onUpdateStyle("width", e.target.value)}
+                            placeholder="e.g. 200px"
+                            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Height</label>
+                          <input
+                            type="text"
+                            value={selection.styles.height ?? ""}
+                            onChange={(e) => onUpdateStyle("height", e.target.value)}
+                            placeholder="e.g. 48px"
+                            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Corner radius</label>
+                        <input
+                          type="text"
+                          value={selection.styles.borderRadius ?? ""}
+                          onChange={(e) => onUpdateStyle("borderRadius", e.target.value)}
+                          placeholder="e.g. 8px, 9999px"
+                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() =>
+                            onUpdateStyle(
+                              "fontWeight",
+                              selection.styles.fontWeight === "bold" || parseInt(selection.styles.fontWeight) >= 700
+                                ? "400"
+                                : "700"
+                            )
+                          }
+                          className={`flex-1 py-1.5 rounded-md border text-xs font-bold ${
+                            selection.styles.fontWeight === "bold" || parseInt(selection.styles.fontWeight) >= 700
+                              ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                              : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                          }`}
+                        >
+                          B
+                        </button>
+                        {(["left", "center", "right"] as const).map((align) => (
+                          <button
+                            key={align}
+                            onClick={() => onUpdateStyle("textAlign", align)}
+                            className={`flex-1 py-1.5 rounded-md border text-[10px] capitalize ${
+                              selection.styles.textAlign === align
+                                ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                                : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                            }`}
+                          >
+                            {align}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">Placement</label>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => onMoveElement("up")}
+                            className="flex-1 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[10px]"
+                          >
+                            ↑ Element
+                          </button>
+                          <button
+                            onClick={() => onMoveElement("down")}
+                            className="flex-1 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[10px]"
+                          >
+                            ↓ Element
+                          </button>
+                        </div>
+                      </div>
+
+                      {selection.module && (
+                        <div>
+                          <label className="block text-[10px] text-[var(--color-text-tertiary)] mb-1">
+                            Module: {selection.module}
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => onMoveModule("up")}
+                              className="flex-1 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[10px]"
+                            >
+                              ↑ Module
+                            </button>
+                            <button
+                              onClick={() => onMoveModule("down")}
+                              className="flex-1 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[10px]"
+                            >
+                              ↓ Module
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

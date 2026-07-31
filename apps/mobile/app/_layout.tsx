@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Provider } from "react-redux";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { Slot } from "expo-router";
@@ -36,14 +37,16 @@ function Bootstrap({ children }: { children: React.ReactNode }) {
 
 export default function RootLayout() {
   return (
-    <Provider store={store}>
-      <SafeAreaProvider>
-        <ToastProvider>
-          <Bootstrap>
-            <Slot />
-          </Bootstrap>
-        </ToastProvider>
-      </SafeAreaProvider>
-    </Provider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <Provider store={store}>
+        <SafeAreaProvider>
+          <ToastProvider>
+            <Bootstrap>
+              <Slot />
+            </Bootstrap>
+          </ToastProvider>
+        </SafeAreaProvider>
+      </Provider>
+    </GestureHandlerRootView>
   );
 }

@@ -12,6 +12,7 @@ from app.ai.codegen_shared import (
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _pascal,
+    build_reference_design_block,
     generate_text_validated,
 )
 
@@ -33,6 +34,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         if capabilities_text
         else ""
     )
+    reference_block = build_reference_design_block(ctx.screen)
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Svelte component (classic Svelte 4 syntax, NOT Svelte 5 runes) for the "{screen_name}" screen of this app.
 
@@ -42,14 +44,16 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}
+{native_section}{reference_block}
 Requirements:
 - Use a `<script>` block with classic reactive `let` variables — no runes ($state, $derived, etc).
 - Fetch real data from the relevant API endpoints above (use `fetch`), handle loading and
   error states, and implement the actual feature/user-story behavior for this screen — real
   form handling, real list rendering from the API response, real interactions.
 - Style exclusively with Tailwind CSS utility classes in the markup. No inline styles,
-  no other CSS frameworks, no `<style>` block.
+  no other CSS frameworks, no `<style>` block. If a reference mockup was provided above,
+  translate its colors/spacing/typography into equivalent Tailwind utilities rather than
+  copying its raw CSS verbatim.
 - No placeholders or TODOs — this screen must be fully implemented, not static mockup content.
 
 Return ONLY the raw .svelte file content. No markdown fences, no explanation, no JSON."""

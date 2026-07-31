@@ -247,3 +247,124 @@ def detect_native_capabilities(text: str) -> list[str]:
         for capability, keywords in NATIVE_CAPABILITY_KEYWORDS.items()
         if any(keyword in lowered for keyword in keywords)
     ]
+
+
+# ─── Unified, ordered page list (wizard screens + uploaded designs) ───
+#
+# api/v1/uiux.py stores two historically separate things on Project.uiux_data:
+# design.screens[] (AI-generated from the wizard) and uploaded_designs[] (the
+# user's own mockups). Both can now carry a real generated_html/generated_css/
+# modules mockup. architecture.py and codegen.py both need the SAME merged,
+# ordered view of "every page this app has" — this is that single source of
+# truth, so the two phases can never disagree on the page set or its order.
+def get_ordered_pages(uiux_data: Optional[dict]) -> list[dict]:
+    """
+    Merge design.screens and uploaded_designs into one list of page dicts
+    shaped like a codegen `screen` (name, purpose, key_elements), plus
+    reference_html/reference_css/modules populated from whichever saved
+    mockup that page has. Ordered by design.page_order (set by the UI/UX
+    editor's bulk /save endpoint) when present; otherwise screens-then-
+    uploads in their stored order, i.e. exactly what every project already
+    did before this field existed.
+    """
+    if not uiux_data:
+        return []
+    design = uiux_data.get("design", {}) or {}
+    screens = design.get("screens", []) or []
+    uploads = uiux_data.get("uploaded_designs", []) or []
+
+    pages_by_id: dict[str, dict] = {}
+    natural_order: list[str] = []
+
+    for i, screen in enumerate(screens):
+        page_id = screen.get("id") or f"screen-{i}"
+        pages_by_id[page_id] = {
+            "name": screen.get("name", ""),
+            "purpose": screen.get("purpose", ""),
+            "key_elements": screen.get("key_elements", []),
+            "reference_html": screen.get("generated_html"),
+            "reference_css": screen.get("generated_css"),
+            "modules": screen.get("modules", []),
+        }
+        natural_order.append(page_id)
+
+    for i, upload in enumerate(uploads):
+        page_id = upload.get("id") or f"upload-{i}"
+        pages_by_id[page_id] = {
+            "name": upload.get("page_name", ""),
+            "purpose": "",
+            "key_elements": [],
+            "reference_html": upload.get("generated_html"),
+            "reference_css": upload.get("generated_css"),
+            "modules": upload.get("modules", []),
+        }
+        natural_order.append(page_id)
+
+    page_order = design.get("page_order") or []
+    ordered_ids = [pid for pid in page_order if pid in pages_by_id]
+    ordered_ids += [pid for pid in natural_order if pid not in ordered_ids]
+
+    return [pages_by_id[pid] for pid in ordered_ids]
+
+
+def build_reference_design_block(screen: dict) -> str:
+    """
+    If this page has a saved HTML/CSS mockup (auto-generated for a wizard
+    screen, vision-converted from a user upload, or hand-edited afterward in
+    the UI/UX visual editor), return a prompt block asking a markup-based
+    frontend adapter (React/Vue/Angular/Svelte/plain HTML-JS) to recreate it
+    faithfully instead of inventing a layout from scratch. Returns "" when
+    there's nothing saved yet, so every adapter can unconditionally append
+    this to its prompt without its own presence check.
+    """
+    html = (screen.get("reference_html") or "").strip()
+    if not html:
+        return ""
+    css = (screen.get("reference_css") or "").strip()
+    return f"""
+
+The user has already designed and approved this exact page mockup — recreate
+its structure, layout order, colors, and copy AS FAITHFULLY AS POSSIBLE using
+this framework's idioms. Do not invent a different layout. Only add real
+interactivity (state, event handlers, API wiring) on top of this structure.
+
+Reference HTML:
+```html
+{html}
+```
+
+Reference CSS:
+```css
+{css}
+```
+"""
+
+
+def build_design_guidance_block(
+    design_style: Optional[str],
+    color_palette: Optional[dict],
+    typography: Optional[str],
+    modules: Optional[list],
+) -> str:
+    """
+    For native UI toolkits and game engines (SwiftUI, Flutter, Jetpack
+    Compose, Godot, O3DE) a saved page's raw HTML/CSS can't be reused
+    directly the way it can for a markup-based web frontend — but the
+    app's design system (style/palette/typography) and, when this specific
+    page has a saved mockup, its structural section list, both still carry
+    real signal. Returns "" when there's nothing to say, so every adapter
+    can unconditionally append this to its prompt.
+    """
+    lines = []
+    if design_style:
+        lines.append(f"- Visual style: {design_style}")
+    if color_palette:
+        palette_text = ", ".join(f"{k}: {v}" for k, v in color_palette.items())
+        lines.append(f"- Color palette: {palette_text}")
+    if typography:
+        lines.append(f"- Typography: {typography}")
+    if modules:
+        lines.append(f"- This screen's structural sections, top to bottom: {', '.join(modules)}")
+    if not lines:
+        return ""
+    return "\nMatch the app's design system:\n" + "\n".join(lines) + "\n"

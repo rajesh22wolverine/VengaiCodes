@@ -20,6 +20,7 @@ from app.ai.codegen_shared import (
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _pascal,
+    build_reference_design_block,
     generate_text_validated,
 )
 
@@ -47,6 +48,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         if capabilities_text
         else ""
     )
+    reference_block = build_reference_design_block(ctx.screen)
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Angular STANDALONE component (Angular 17+ style — `standalone: true`, inline `template` and `styles`, NO separate .html/.css files, NO NgModule) for the "{screen_name}" screen of this app.
 
@@ -56,7 +58,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}
+{native_section}{reference_block}
 Requirements:
 - Class name: {class_name} (exported), selector: 'app-{kebab}'.
 - @Component({{ selector: 'app-{kebab}', standalone: true, imports: [CommonModule] (add FormsModule too if
@@ -67,6 +69,8 @@ Requirements:
   the template for conditional/list rendering (classic Angular control flow, not the newer @if/@for
   syntax, for broader version compatibility).
 - Style exclusively with Tailwind CSS utility classes in the inline template. No separate CSS file.
+  If a reference mockup was provided above, translate its colors/spacing/typography into
+  equivalent Tailwind utilities rather than copying its raw CSS verbatim.
 - No placeholders or TODOs — this screen must be fully implemented, not static mockup content.
 
 Return ONLY the raw TypeScript file content (imports + @Component decorator + class). No markdown fences, no explanation, no JSON."""

@@ -62,6 +62,14 @@ class ScreenCtx:
     language: str
     user: Optional[User] = None
     db: Optional[AsyncSession] = None
+    # The app's design system (design_style/typography as free text,
+    # color_palette as {primary/secondary/accent/background/text: hex}),
+    # from Project.uiux_data["design"]. Optional because callers/tests that
+    # predate this field, or projects generated before it existed, simply
+    # omit it — adapters that use it must fall back gracefully when absent.
+    design_style: Optional[str] = None
+    color_palette: Optional[dict] = None
+    typography: Optional[str] = None
 
 
 @dataclass

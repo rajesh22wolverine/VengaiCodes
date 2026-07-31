@@ -26,6 +26,7 @@ from app.ai.codegen_shared import (
     GeneratedFile,
     _pascal,
     android_package_segment,
+    build_design_guidance_block,
     generate_text_validated,
 )
 
@@ -70,6 +71,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         if capabilities_text
         else ""
     )
+    design_guidance = build_design_guidance_block(
+        ctx.design_style, ctx.color_palette, ctx.typography, ctx.screen.get("modules")
+    )
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Jetpack Compose composable function implementing the "{screen_name}" screen of this app.
 
@@ -79,7 +83,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}
+{native_section}{design_guidance}
 Requirements:
 - Package declaration: `package {package_name}.screens`
 - Function signature: `@Composable\\nfun {class_name}() {{ ... }}` — a single composable, no Activity/nav code here.
@@ -93,6 +97,8 @@ Requirements:
   defined in another file (no separate model classes, no helper composables like a "TaskItem" you
   haven't defined here). Represent parsed JSON as plain `Map`/`List` values or a data class you
   define in THIS file, and inline any row/item rendering directly inside this composable.
+- If a visual style/color palette/typography is specified above, reflect it via
+  `Color(0xFF......)` computed from each hex code (e.g. a themed TopAppBar/button color).
 
 Return ONLY the raw Kotlin code for this one file (package line + imports + the composable
 function). No markdown fences, no explanation, no JSON."""

@@ -3,6 +3,7 @@
 #  api/v1/uiux.py — Generate design system from approved requirements
 # ═══════════════════════════════════════════════════════════════
 
+import asyncio
 import base64
 import json
 import logging
@@ -39,9 +40,13 @@ class GenerateUIUXRequest(BaseModel):
 
 
 class ScreenDefinition(BaseModel):
+    id: str = ""
     name: str
     purpose: str
     key_elements: list[str]
+    generated_html: Optional[str] = None
+    generated_css: Optional[str] = None
+    modules: list[str] = []
 
 
 class ColorPalette(BaseModel):
@@ -74,6 +79,19 @@ class ApproveUIUXRequest(BaseModel):
 class SaveDesignCodeRequest(BaseModel):
     html: str
     css: str
+
+
+class SavedPage(BaseModel):
+    id: str
+    generated_html: Optional[str] = None
+    generated_css: Optional[str] = None
+    modules: list[str] = []
+
+
+class SavePagesRequest(BaseModel):
+    project_id: str
+    pages: list[SavedPage]
+    page_order: list[str]
 
 
 # ─── Prompt builder ───
@@ -134,6 +152,12 @@ Rules:
   closely as you can infer from the image.
 - Use placeholder text/images only where the design shows content you can't
   read clearly.
+- Wrap each distinct structural section you identify in its own top-level
+  container element carrying a `data-veng-module="<name>"` attribute, where
+  `<name>` exactly matches one entry of the "modules" array you return below
+  (e.g. `<header data-veng-module="Header nav">...</header>`). This is what
+  lets the editor move/reorder whole sections later — every module you
+  report must correspond to exactly one real, addressable element.
 
 Respond with ONLY a JSON object, no markdown, no extra text:
 {{
@@ -141,6 +165,47 @@ Respond with ONLY a JSON object, no markdown, no extra text:
   "css": "<the full CSS, as a string>",
   "notes": "1 sentence on anything you weren't confident about",
   "modules": ["3 to 6 short names for the distinct structural sections/components you see, e.g. 'Header nav', 'Hero banner', 'Pricing cards', 'Footer'"]
+}}"""
+
+
+def build_screen_to_code_prompt(
+    screen: dict, design_style: str, color_palette: dict, typography: str
+) -> str:
+    key_elements = ", ".join(screen.get("key_elements", []))
+    palette_text = ", ".join(f"{k}: {v}" for k, v in color_palette.items())
+
+    return f"""You are Baby Tiger 🐯, VengaiCode's AI design assistant. Design a single \
+page mockup, as HTML + CSS, for the "{screen.get('name', 'Screen')}" screen of this app.
+
+Screen purpose: {screen.get('purpose', '')}
+Key elements this screen needs: {key_elements}
+
+Match the app's design system:
+- Style: {design_style}
+- Color palette: {palette_text}
+- Typography: {typography}
+
+Rules:
+- Use plain semantic HTML5 (no framework, no Tailwind classes) with a single \
+  matching CSS stylesheet — this needs to be readable and directly editable
+  by the user afterward, not a build pipeline.
+- Use real hex colors from the palette above, and reflect the stated style
+  and typography choice.
+- Use realistic placeholder text/labels appropriate to the screen's purpose
+  and key elements — no lorem ipsum.
+- Wrap each distinct structural section you create in its own top-level
+  container element carrying a `data-veng-module="<name>"` attribute, where
+  `<name>` exactly matches one entry of the "modules" array you return below
+  (e.g. `<header data-veng-module="Header nav">...</header>`). This is what
+  lets the editor move/reorder whole sections later — every module you
+  report must correspond to exactly one real, addressable element.
+
+Respond with ONLY a JSON object, no markdown, no extra text:
+{{
+  "html": "<the full HTML markup for this page's body content, as a string>",
+  "css": "<the full CSS, as a string>",
+  "notes": "1 sentence on anything you weren't confident about",
+  "modules": ["3 to 6 short names for the distinct structural sections you created, e.g. 'Header nav', 'Hero banner', 'Pricing cards', 'Footer'"]
 }}"""
 
 
@@ -202,6 +267,30 @@ async def generate_uiux(
 
     design = UIUXDesign(**parsed)
 
+    for screen in design.screens:
+        screen.id = uuid.uuid4().hex
+
+    palette_dict = design.color_palette.model_dump()
+
+    async def _mockup_for(screen: ScreenDefinition) -> None:
+        try:
+            screen_prompt = build_screen_to_code_prompt(
+                screen.model_dump(), design.design_style, palette_dict, design.typography
+            )
+            screen_result = await generate_text(screen_prompt, user=user, db=db)
+            screen_parsed = parse_ai_json(screen_result["text"])
+            screen.generated_html = screen_parsed.get("html")
+            screen.generated_css = screen_parsed.get("css")
+            modules = screen_parsed.get("modules")
+            screen.modules = modules if isinstance(modules, list) else []
+        except (AIError, json.JSONDecodeError, KeyError, IndexError) as e:
+            # Non-fatal — the design system itself already succeeded. The
+            # screen just falls back to a text-only card until the user
+            # regenerates or uploads their own mockup for it.
+            logger.warning(f"Auto mockup generation failed for screen '{screen.name}': {e}")
+
+    await asyncio.gather(*(_mockup_for(screen) for screen in design.screens))
+
     project.uiux_data = {
         "design": design.model_dump(),
         "user_approved": False,
@@ -245,6 +334,62 @@ async def get_uiux(
         "user_approved": project.uiux_data.get("user_approved", False),
         "generated_at": project.uiux_data.get("generated_at"),
         "uploaded_designs": project.uiux_data.get("uploaded_designs", []),
+    }
+
+
+@router.put(
+    "/{project_id}/save",
+    summary="Bulk-save all pending page edits and the page order in one action",
+)
+async def save_pages(
+    project_id: str,
+    payload: SavePagesRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Backs the single "Save" button in the editor: the user can edit several
+    pages' HTML/CSS/modules and reorder the combined page list, then persist
+    everything at once. This saved state (including page_order) is what
+    architecture/codegen read once the design is approved — see
+    app.ai.codegen_shared.get_ordered_pages().
+    """
+    project = await _get_owned_project(db, project_id, user)
+    if not project.uiux_data or not project.uiux_data.get("design"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No UI/UX design to save.")
+
+    uiux_data = dict(project.uiux_data)
+    design = dict(uiux_data["design"])
+    screens = [dict(s) for s in design.get("screens", [])]
+    uploaded_designs = [dict(d) for d in uiux_data.get("uploaded_designs", [])]
+
+    pages_by_id = {p.id: p for p in payload.pages}
+    for screen in screens:
+        page = pages_by_id.get(screen.get("id"))
+        if page is not None:
+            screen["generated_html"] = page.generated_html
+            screen["generated_css"] = page.generated_css
+            screen["modules"] = page.modules
+    for design_entry in uploaded_designs:
+        page = pages_by_id.get(design_entry.get("id"))
+        if page is not None:
+            design_entry["generated_html"] = page.generated_html
+            design_entry["generated_css"] = page.generated_css
+            design_entry["modules"] = page.modules
+            design_entry["code_updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    design["screens"] = screens
+    design["page_order"] = payload.page_order
+    design["last_saved_at"] = datetime.now(timezone.utc).isoformat()
+    uiux_data["design"] = design
+    uiux_data["uploaded_designs"] = uploaded_designs
+    project.uiux_data = uiux_data
+    await db.commit()
+
+    return {
+        "success": True,
+        "design": design,
+        "uploaded_designs": uploaded_designs,
     }
 
 
