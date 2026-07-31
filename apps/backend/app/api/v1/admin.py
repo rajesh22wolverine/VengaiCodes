@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.auth import require_admin
 from app.core.database import get_db
 from app.models.marketplace import ListingCategory, ListingStatus, MarketplaceApp
+from app.models.project import Project
 from app.models.settings import PlatformSetting
 from app.models.user import (
     AdminAction,
@@ -57,6 +58,22 @@ def _user_snapshot(user: User) -> dict:
         "is_vip": user.is_vip,
         "is_free_extended": user.is_free_extended,
         "free_extended_until": _jsonable(user.free_extended_until),
+    }
+
+
+def _serialize_project(project: Project) -> dict:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "status": _jsonable(project.status),
+        "current_phase": _jsonable(project.current_phase),
+        "progress_percent": project.progress_percent,
+        "category": _jsonable(project.category),
+        "platforms": project.platforms,
+        "is_published": project.is_published,
+        "created_at": _jsonable(project.created_at),
+        "updated_at": _jsonable(project.updated_at),
+        "completed_at": _jsonable(project.completed_at),
     }
 
 
@@ -142,9 +159,22 @@ async def list_users(
     result = await db.execute(query)
     users = result.scalars().all()
 
+    project_counts: dict[str, int] = {}
+    if users:
+        user_ids = [u.id for u in users]
+        counts_result = await db.execute(
+            select(Project.user_id, func.count())
+            .where(Project.user_id.in_(user_ids), Project.deleted_at.is_(None))
+            .group_by(Project.user_id)
+        )
+        project_counts = dict(counts_result.all())
+
     return {
         "success": True,
-        "users": [UserResponse.from_db(u).model_dump() for u in users],
+        "users": [
+            {**UserResponse.from_db(u).model_dump(), "projects_count": project_counts.get(u.id, 0)}
+            for u in users
+        ],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -179,10 +209,18 @@ async def get_user(
         for a in actions_result.scalars().all()
     ]
 
+    projects_result = await db.execute(
+        select(Project)
+        .where(Project.user_id == user_id, Project.deleted_at.is_(None))
+        .order_by(Project.created_at.desc())
+    )
+    projects = [_serialize_project(p) for p in projects_result.scalars().all()]
+
     return {
         "success": True,
         "user": UserResponse.from_db(user).model_dump(),
         "recent_actions": recent_actions,
+        "projects": projects,
     }
 
 

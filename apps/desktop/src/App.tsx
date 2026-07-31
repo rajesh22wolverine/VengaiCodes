@@ -23,6 +23,8 @@ import OnboardingScreen from "@/screens/onboarding/OnboardingScreen";
 import MarketplaceScreen from "@/screens/marketplace/MarketplaceScreen";
 import MarketplaceListingDetailScreen from "@/screens/marketplace/MarketplaceListingDetailScreen";
 import MarketplaceCreateListingScreen from "@/screens/marketplace/MarketplaceCreateListingScreen";
+import AdminScreen from "@/screens/admin/AdminScreen";
+import AdminUserDetailScreen from "@/screens/admin/AdminUserDetailScreen";
 import MainLayout from "@/components/layout/MainLayout";
 
 // Protected route wrapper
@@ -36,6 +38,15 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AuthRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useSelector((state: RootState) => state.auth);
   if (isAuthenticated) return <Navigate to="/home" replace />;
+  return <>{children}</>;
+}
+
+// Admin route wrapper — the backend enforces this too (require_admin on
+// every /admin/* call), but redirect non-admins away from the screens
+// entirely rather than letting them load a page full of 403 errors.
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { user } = useSelector((state: RootState) => state.auth);
+  if (!user?.is_admin) return <Navigate to="/home" replace />;
   return <>{children}</>;
 }
 
@@ -107,6 +118,8 @@ export default function App() {
           <Route path="marketplace/new" element={<MarketplaceCreateListingScreen />} />
           <Route path="marketplace/apps/:listingId" element={<MarketplaceListingDetailScreen />} />
           <Route path="settings" element={<SettingsScreen />} />
+          <Route path="admin" element={<AdminRoute><AdminScreen /></AdminRoute>} />
+          <Route path="admin/users/:userId" element={<AdminRoute><AdminUserDetailScreen /></AdminRoute>} />
         </Route>
 
         {/* Catch all */}

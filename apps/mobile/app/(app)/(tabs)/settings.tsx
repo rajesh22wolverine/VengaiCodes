@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
-import { Check, Cpu, LogOut, Moon, Plus, Sun, Trash2 } from "lucide-react-native";
+import { Check, Cpu, LogOut, Moon, Plus, ShieldCheck, Sun, Trash2 } from "lucide-react-native";
 
 import ScreenContainer from "@/components/ui/ScreenContainer";
 import { useToast } from "@/components/ui/Toast";
@@ -344,6 +344,16 @@ export default function SettingsScreen() {
           </Pressable>
         )}
       </View>
+
+      {user?.is_admin && (
+        <Pressable
+          onPress={() => router.push("/(app)/admin" as any)}
+          style={[styles.row, { borderColor: colors.border, backgroundColor: colors.surface }]}
+        >
+          <ShieldCheck size={18} color={colors.primary} />
+          <Text style={{ color: colors.textPrimary, fontSize: 14, flex: 1, fontWeight: "600" }}>Admin</Text>
+        </Pressable>
+      )}
 
       <Pressable onPress={handleLogout} style={[styles.row, { borderColor: colors.error, backgroundColor: colors.surface }]}>
         <LogOut size={18} color={colors.error} />

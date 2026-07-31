@@ -12,6 +12,7 @@ export interface User {
   mobile?: string | null;
   avatar_url?: string | null;
   tier: "free" | "creator" | "professional" | "studio" | "wl_basic" | "wl_pro" | "wl_full";
+  is_admin: boolean;
   is_vip: boolean;
   projects_used: number;
   projects_limit: number;

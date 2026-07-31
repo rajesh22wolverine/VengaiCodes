@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  ShieldCheck,
 } from "lucide-react";
 
 import { AppDispatch, RootState } from "@/store";
@@ -46,6 +47,7 @@ export default function Sidebar() {
   const otherItems: NavItem[] = [
     { id: "marketplace", label: "Marketplace", icon: Store, path: "/marketplace" },
     { id: "api-builder", label: "API Builder", icon: Code2, path: "/api-builder" },
+    ...(user?.is_admin ? [{ id: "admin", label: "Admin", icon: ShieldCheck, path: "/admin" }] : []),
   ];
 
   const handleHomeItemClick = (item: NavItem) => {
