@@ -1,0 +1,72 @@
+/*
+ * Retheme GrapesJS's default chrome to match VengaiCode's own look instead
+ * of its stock gray skin. GrapesJS doesn't expose CSS custom properties of
+ * its own — it composes panel/canvas colors from a handful of utility
+ * classes (.gjs-one-bg, .gjs-two-color, .gjs-three-bg, .gjs-four-color) plus
+ * a few element-specific selectors, so this maps those onto this app's
+ * --color-* variables instead of hand-styling every internal element.
+ */
+.veng-studio-root {
+  --gjs-bg: var(--color-surface);
+  --gjs-bg-raised: var(--color-surface-raised);
+  --gjs-text: var(--color-text-secondary);
+  --gjs-border: var(--color-border);
+  --gjs-accent: var(--color-primary);
+}
+
+.veng-studio-root .gjs-one-bg {
+  background-color: var(--gjs-bg) !important;
+}
+
+.veng-studio-root .gjs-two-color {
+  color: var(--gjs-text) !important;
+}
+
+.veng-studio-root .gjs-three-bg {
+  background-color: var(--gjs-bg-raised) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.veng-studio-root .gjs-four-color,
+.veng-studio-root .gjs-four-color-h:hover {
+  color: var(--gjs-accent) !important;
+}
+
+.veng-studio-root .gjs-pn-panel {
+  border-color: var(--gjs-border) !important;
+}
+
+.veng-studio-root .gjs-pn-btn.gjs-pn-active {
+  background-color: var(--gjs-accent) !important;
+  color: #fff !important;
+}
+
+.veng-studio-root .gjs-cv-canvas {
+  background-color: var(--color-background) !important;
+}
+
+.veng-studio-root .gjs-block {
+  border-color: var(--gjs-border) !important;
+  background-color: var(--gjs-bg) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.veng-studio-root .gjs-block:hover {
+  border-color: var(--gjs-accent) !important;
+}
+
+.veng-studio-root .gjs-layer {
+  border-color: var(--gjs-border) !important;
+}
+
+.veng-studio-root .gjs-sm-sector .gjs-sm-title {
+  background-color: var(--gjs-bg-raised) !important;
+}
+
+.veng-studio-root .veng-studio-empty {
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}

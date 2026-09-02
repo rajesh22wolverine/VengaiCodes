@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { motion } from "framer-motion";
-import { AlertTriangle, Check, Cpu, HardDrive, Loader2, Plus, Radar, Sparkles, Trash2, Usb } from "lucide-react";
+import { AlertTriangle, Check, Cpu, Figma, HardDrive, Loader2, Plus, Radar, Sparkles, Trash2, Usb } from "lucide-react";
 import toast from "react-hot-toast";
 import { invoke } from "@tauri-apps/api/tauri";
 
@@ -18,6 +18,7 @@ import {
   setConfigPriority,
   useDefaultAI,
 } from "@/store/slices/aiConfigSlice";
+import { connectFigma, disconnectFigma, fetchFigmaStatus } from "@/store/slices/figmaSlice";
 
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   groq: "Groq (your own key)",
@@ -81,8 +82,16 @@ const LOCAL_STUDIO_URL = "http://127.0.0.1:10086";
 export default function SettingsScreen() {
   const dispatch = useDispatch<AppDispatch>();
   const { configs, isLoading, isSaving } = useSelector((state: RootState) => state.aiConfig);
+  const {
+    connected: figmaConnected,
+    figmaHandle,
+    isLoading: isFigmaLoading,
+    isSaving: isFigmaSaving,
+  } = useSelector((state: RootState) => state.figma);
 
   const [showForm, setShowForm] = useState(false);
+  const [showFigmaForm, setShowFigmaForm] = useState(false);
+  const [figmaToken, setFigmaToken] = useState("");
   const [isDetecting, setIsDetecting] = useState(false);
   const [providerType, setProviderType] = useState<AIProviderType>("groq");
   const [baseUrl, setBaseUrl] = useState("");
@@ -100,6 +109,7 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     dispatch(fetchAIConfigs());
+    dispatch(fetchFigmaStatus());
   }, [dispatch]);
 
   const activeConfig = configs.find((c) => c.is_active);
@@ -266,6 +276,28 @@ export default function SettingsScreen() {
     if (setConfigPriority.fulfilled.match(result)) {
       toast.success(priority ? `Set as ${PRIORITY_LABELS[priority]}.` : "Removed from fallback order.");
     }
+  };
+
+  // ── Figma connection ──
+
+  const handleConnectFigma = async () => {
+    if (!figmaToken.trim()) {
+      toast.error("Paste your Figma personal access token first.");
+      return;
+    }
+    const result = await dispatch(connectFigma(figmaToken.trim()));
+    if (connectFigma.fulfilled.match(result)) {
+      toast.success(`Connected to Figma as ${result.payload.figma_handle} 🐯`);
+      setFigmaToken("");
+      setShowFigmaForm(false);
+    } else {
+      toast.error((result.payload as string) || "Failed to connect Figma account.");
+    }
+  };
+
+  const handleDisconnectFigma = async () => {
+    await dispatch(disconnectFigma());
+    toast.success("Figma account disconnected.");
   };
 
   return (
@@ -591,6 +623,83 @@ export default function SettingsScreen() {
                 className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
               >
                 <Plus className="w-3.5 h-3.5" /> Add AI model configuration
+              </button>
+            )}
+          </div>
+
+          {/* ── Figma section ── */}
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
+                <Figma className="w-4 h-4" /> Figma
+              </h2>
+              <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                Connect your Figma account to import a frame straight into the UI/UX phase — Baby
+                Tiger converts it into editable HTML/CSS, same as an uploaded mockup. Uses a free
+                Figma personal access token, no paid plan needed.
+              </p>
+            </div>
+
+            {isFigmaLoading ? (
+              <div className="flex justify-center py-2">
+                <Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-tertiary)]" />
+              </div>
+            ) : figmaConnected ? (
+              <div className="flex items-center justify-between rounded-xl bg-[var(--color-background)] border border-[var(--color-border)] px-4 py-3">
+                <div>
+                  <p className="text-xs text-[var(--color-text-tertiary)]">Connected as</p>
+                  <p className="text-sm font-medium text-[var(--color-text-primary)]">{figmaHandle}</p>
+                </div>
+                <button
+                  onClick={handleDisconnectFigma}
+                  className="text-xs font-medium text-[var(--color-error)] hover:opacity-80"
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : showFigmaForm ? (
+              <div className="space-y-3 pt-2 border-t border-[var(--color-border)]">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                    Personal access token *
+                  </label>
+                  <input
+                    value={figmaToken}
+                    onChange={(e) => setFigmaToken(e.target.value)}
+                    type="password"
+                    placeholder="figd_..."
+                    className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                  />
+                  <p className="text-xs text-[var(--color-text-tertiary)] mt-1.5">
+                    Generate one free in Figma: Settings → Personal access tokens.
+                  </p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={handleConnectFigma}
+                    disabled={isFigmaSaving}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-sm font-semibold transition-all disabled:opacity-60"
+                  >
+                    {isFigmaSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    Connect
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowFigmaForm(false);
+                      setFigmaToken("");
+                    }}
+                    className="px-4 py-2 rounded-xl border border-[var(--color-border)] text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowFigmaForm(true)}
+                className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
+              >
+                <Plus className="w-3.5 h-3.5" /> Connect Figma account
               </button>
             )}
           </div>

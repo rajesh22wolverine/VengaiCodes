@@ -7,6 +7,7 @@ import uiReducer from "./slices/uiSlice";
 import notificationReducer from "./slices/notificationSlice";
 import settingsReducer from "./slices/settingsSlice";
 import aiConfigReducer from "./slices/aiConfigSlice";
+import figmaReducer from "./slices/figmaSlice";
 
 export const store = configureStore({
   reducer: {
@@ -18,6 +19,7 @@ export const store = configureStore({
     notifications: notificationReducer,
     settings: settingsReducer,
     aiConfig: aiConfigReducer,
+    figma: figmaReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

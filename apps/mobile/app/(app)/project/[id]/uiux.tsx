@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from "expo-audio";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import DraggableFlatList, { type RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 import {
-  BookOpen, Camera, Code2, Eye, FileAudio, GripVertical, ImageIcon, Layout, Mic, Navigation, Palette,
-  Puzzle, Save, Square, ThumbsUp, Trash2, Type, Upload, Wand2, X,
+  BookOpen, Camera, Code2, Eye, FileAudio, Frame, GripVertical, ImageIcon, Layout, LayoutTemplate, Mic,
+  Navigation, Palette, Puzzle, Save, Square, ThumbsUp, Trash2, Type, Upload, Wand2, X,
 } from "lucide-react-native";
 
 import apiClient from "@/lib/api";
@@ -20,6 +20,7 @@ import PhaseFooter from "@/components/phase/PhaseFooter";
 import Section from "@/components/ui/Section";
 import TextField from "@/components/ui/TextField";
 import { buildPreviewDocument, type PreviewSelection } from "@/lib/designPreview";
+import DesignStudioModal from "@/components/design-studio/DesignStudioModal";
 
 interface ScreenDefinition {
   id: string;
@@ -151,10 +152,16 @@ export default function UIUXScreen() {
   const [pageOrder, setPageOrder] = useState<string[]>([]);
   const [isSavingPages, setIsSavingPages] = useState(false);
 
+  const [isFigmaModalOpen, setIsFigmaModalOpen] = useState(false);
+  const [figmaUrl, setFigmaUrl] = useState("");
+  const [isImportingFigma, setIsImportingFigma] = useState(false);
+
   const [recordingDesignId, setRecordingDesignId] = useState<string | null>(null);
   const [transcribingDesignId, setTranscribingDesignId] = useState<string | null>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recordingDesignIdRef = useRef<string | null>(null);
+
+  const [designStudioPageId, setDesignStudioPageId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<"code" | "preview">("preview");
   const [previewDoc, setPreviewDoc] = useState("");
@@ -238,31 +245,39 @@ export default function UIUXScreen() {
     return () => clearTimeout(t);
   }, [editedHtml, editedCss, expandedPageId]);
 
+  // Shared by every page-editing path (raw code editor, click-to-edit
+  // preview, and Design Studio) so there's one place that knows how to
+  // patch either a wizard-generated screen or an uploaded/imported design
+  // by id.
+  const applyPageEdit = useCallback((pageId: string, html: string, css: string) => {
+    setDesign((prev) => {
+      if (!prev) return prev;
+      const idx = prev.screens.findIndex((s) => s.id === pageId);
+      const current = idx === -1 ? undefined : prev.screens[idx];
+      if (!current) return prev;
+      if (current.generated_html === html && current.generated_css === css) return prev;
+      const screens = [...prev.screens];
+      screens[idx] = { ...current, generated_html: html, generated_css: css };
+      return { ...prev, screens };
+    });
+    setUploadedDesigns((prev) => {
+      const idx = prev.findIndex((d) => d.id === pageId);
+      const current = idx === -1 ? undefined : prev[idx];
+      if (!current) return prev;
+      if (current.generated_html === html && current.generated_css === css) return prev;
+      const next = [...prev];
+      next[idx] = { ...current, generated_html: html, generated_css: css };
+      return next;
+    });
+  }, []);
+
   // Keep whichever page is currently expanded in sync with its live-edited
   // HTML/CSS, so switching to another page (or hitting the global Save
   // button) never loses in-progress edits — there's no more per-page save.
   useEffect(() => {
     if (!expandedPageId) return;
-    setDesign((prev) => {
-      if (!prev) return prev;
-      const idx = prev.screens.findIndex((s) => s.id === expandedPageId);
-      const current = idx === -1 ? undefined : prev.screens[idx];
-      if (!current) return prev;
-      if (current.generated_html === editedHtml && current.generated_css === editedCss) return prev;
-      const screens = [...prev.screens];
-      screens[idx] = { ...current, generated_html: editedHtml, generated_css: editedCss };
-      return { ...prev, screens };
-    });
-    setUploadedDesigns((prev) => {
-      const idx = prev.findIndex((d) => d.id === expandedPageId);
-      const current = idx === -1 ? undefined : prev[idx];
-      if (!current) return prev;
-      if (current.generated_html === editedHtml && current.generated_css === editedCss) return prev;
-      const next = [...prev];
-      next[idx] = { ...current, generated_html: editedHtml, generated_css: editedCss };
-      return next;
-    });
-  }, [editedHtml, editedCss, expandedPageId]);
+    applyPageEdit(expandedPageId, editedHtml, editedCss);
+  }, [editedHtml, editedCss, expandedPageId, applyPageEdit]);
 
   const handlePreviewMessage = (event: WebViewMessageEvent) => {
     let data: any;
@@ -423,6 +438,33 @@ export default function UIUXScreen() {
     await uploadDesignAsset(result.assets[0], "Camera Capture");
   };
 
+  // ── Import from Figma ──
+
+  const importFromFigma = async () => {
+    if (!figmaUrl.trim()) {
+      showToast("Paste a Figma frame link first.", "error");
+      return;
+    }
+    const pageName = uploadPageName.trim() || "Figma Import";
+    setIsImportingFigma(true);
+    try {
+      const { data } = await apiClient.post(`/uiux/${projectId}/design/import-figma`, {
+        figma_url: figmaUrl.trim(),
+        page_name: pageName,
+      });
+      setUploadedDesigns((prev) => [...prev, data.design]);
+      setPageOrder((prev) => [...prev, data.design.id]);
+      setUploadPageName("");
+      setFigmaUrl("");
+      setIsFigmaModalOpen(false);
+      showToast("Imported from Figma! 🎨🐯");
+    } catch (error: any) {
+      showToast(error.message || "Failed to import from Figma.", "error");
+    } finally {
+      setIsImportingFigma(false);
+    }
+  };
+
   // ── Voice note (record + transcribe) ──
 
   const startRecording = async (designId: string) => {
@@ -570,6 +612,7 @@ export default function UIUXScreen() {
         onClearSelection={clearPreviewSelection}
         onMoveElement={moveElement}
         onMoveModule={moveModule}
+        onOpenDesignStudio={() => setDesignStudioPageId(item.id)}
       />
     </ScaleDecorator>
   );
@@ -657,6 +700,14 @@ export default function UIUXScreen() {
                   <Text style={[styles.uploadButtonText, { color: colors.primary }]}>Use Camera</Text>
                 </Pressable>
               </View>
+              <Pressable
+                onPress={() => setIsFigmaModalOpen(true)}
+                disabled={isUploading}
+                style={[styles.cameraButton, { borderColor: colors.primary, marginTop: 10 }, isUploading && { opacity: 0.6 }]}
+              >
+                <Frame size={15} color={colors.primary} />
+                <Text style={[styles.uploadButtonText, { color: colors.primary }]}>Import from Figma</Text>
+              </Pressable>
             </Section>
           </>
         }
@@ -676,6 +727,80 @@ export default function UIUXScreen() {
         onPrimaryPress={handleApprove}
         primaryLoading={isApproving}
       />
+
+      {designStudioPageId && (() => {
+        const studioPage = pages.find((p) => p.id === designStudioPageId);
+        if (!studioPage) return null;
+        return (
+          <DesignStudioModal
+            visible
+            html={studioPage.generated_html || ""}
+            css={studioPage.generated_css || ""}
+            onSave={(html, css) => {
+              applyPageEdit(studioPage.id, html, css);
+              // If this page's raw code editor is also open, keep its state
+              // in sync — otherwise the next keystroke there re-fires the
+              // editedHtml/editedCss sync effect with stale values and
+              // silently reverts this save.
+              if (expandedPageId === studioPage.id) {
+                setEditedHtml(html);
+                setEditedCss(css);
+              }
+              setDesignStudioPageId(null);
+            }}
+            onClose={() => setDesignStudioPageId(null)}
+          />
+        );
+      })()}
+
+      <Modal
+        visible={isFigmaModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsFigmaModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+            <View style={styles.modalHeader}>
+              <Text style={{ color: colors.textPrimary, fontSize: 14, fontWeight: "700" }}>
+                Import from Figma
+              </Text>
+              <Pressable onPress={() => setIsFigmaModalOpen(false)} hitSlop={8}>
+                <X size={18} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, marginBottom: 10 }}>
+              In Figma, right-click a frame → "Copy link to selection," then paste it below.
+              Haven't connected Figma yet? Do that first in Settings.
+            </Text>
+            <TextField
+              label="Figma frame link"
+              placeholder="https://www.figma.com/design/..."
+              value={figmaUrl}
+              onChangeText={setFigmaUrl}
+              autoCapitalize="none"
+            />
+            <TextField
+              label="Page name"
+              placeholder="e.g. Login Screen"
+              value={uploadPageName}
+              onChangeText={setUploadPageName}
+            />
+            <Pressable
+              onPress={importFromFigma}
+              disabled={isImportingFigma}
+              style={[styles.modalSubmit, { backgroundColor: colors.primary }, isImportingFigma && { opacity: 0.6 }]}
+            >
+              {isImportingFigma ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Frame size={15} color="#fff" />
+              )}
+              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Import</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -709,10 +834,12 @@ interface PageCardProps {
   onClearSelection: () => void;
   onMoveElement: (direction: "up" | "down") => void;
   onMoveModule: (direction: "up" | "down") => void;
+  onOpenDesignStudio: () => void;
 }
 
 function PageCard({
   page, drag, isActive, isExpanded, onToggleExpand, onGenerateCode, generatingCode, onDelete,
+  onOpenDesignStudio,
   recording, transcribing, recordingActive, onStartRecording, onStopRecording,
   activeTab, onChangeTab, editedHtml, editedCss, onEditHtml, onEditCss, previewDoc,
   webViewRef, onPreviewMessage, selection, onUpdateStyle, onUpdatePlaceholder, onClearSelection,
@@ -822,6 +949,14 @@ function PageCard({
             <Text style={styles.pillButtonText}>Generate</Text>
           </Pressable>
         ) : null}
+
+        <Pressable
+          onPress={onOpenDesignStudio}
+          style={[styles.pillButton, { borderColor: colors.primary, borderWidth: 1 }]}
+        >
+          <LayoutTemplate size={13} color={colors.primary} />
+          <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "600" }}>Design Studio</Text>
+        </Pressable>
 
         {page.kind === "upload" && (
           <Pressable onPress={() => onDelete(page.id)} style={[styles.iconButton, { borderColor: colors.border }]}>
@@ -1103,4 +1238,8 @@ const styles = StyleSheet.create({
   smallToggle: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 7, alignItems: "center", justifyContent: "center" },
   moveRow: { flexDirection: "row", gap: 8 },
   moveButton: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 7, alignItems: "center", justifyContent: "center" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", alignItems: "center", justifyContent: "center", padding: 24 },
+  modalCard: { width: "100%", maxWidth: 480, borderRadius: 16, padding: 16 },
+  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  modalSubmit: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 12, marginTop: 4 },
 });

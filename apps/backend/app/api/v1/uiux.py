@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.orchestrator import AIError, generate_text, generate_vision, transcribe_audio
 from app.api.v1.auth import get_current_active_user
+from app.api.v1.figma import get_figma_token
 from app.core.database import get_db
+from app.core.figma_client import FigmaError, export_frame_png, parse_figma_url
+from app.schemas.figma import ImportFigmaRequest
 from app.core.storage import (
     StorageError, fetch_bytes, upload_design_image, upload_voice_note,
 )
@@ -514,6 +517,79 @@ async def upload_design(
         "voice_note_url": None,
         "voice_note_transcript": None,
         "voice_note_uploaded_at": None,
+    }
+    designs.append(new_design)
+    uiux_data["uploaded_designs"] = designs
+    project.uiux_data = uiux_data
+    await db.commit()
+
+    return {"success": True, "design": new_design}
+
+
+@router.post(
+    "/{project_id}/design/import-figma",
+    summary="Import a Figma frame as a page design",
+)
+async def import_figma_design(
+    project_id: str,
+    payload: ImportFigmaRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _get_owned_project(db, project_id, user)
+
+    token = await get_figma_token(db, user)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Connect your Figma account in Settings first.",
+        )
+
+    try:
+        file_key, node_id = parse_figma_url(payload.figma_url)
+        if not node_id:
+            raise FigmaError(
+                "That link doesn't point at a specific frame. In Figma, "
+                "right-click the frame and choose 'Copy link to selection', "
+                "then paste that link here."
+            )
+        export_url = await export_frame_png(token, file_key, node_id)
+        content = await fetch_bytes(export_url)
+    except FigmaError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to fetch Figma-exported image: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not fetch the exported Figma frame.",
+        )
+
+    try:
+        image_url = await upload_design_image(
+            project_id, f"{payload.page_name}.png", content, "image/png"
+        )
+    except StorageError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+
+    uiux_data = dict(project.uiux_data or {})
+    designs = list(uiux_data.get("uploaded_designs", []))
+    new_design = {
+        "id": uuid.uuid4().hex,
+        "page_name": payload.page_name,
+        "image_url": image_url,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "generated_html": None,
+        "generated_css": None,
+        "generation_notes": None,
+        "modules": [],
+        "code_generated_at": None,
+        "code_updated_at": None,
+        "voice_note_url": None,
+        "voice_note_transcript": None,
+        "voice_note_uploaded_at": None,
+        "source": "figma",
+        "figma_file_key": file_key,
+        "figma_node_id": node_id,
     }
     designs.append(new_design)
     uiux_data["uploaded_designs"] = designs

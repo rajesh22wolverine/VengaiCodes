@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
-import { Check, Cpu, LogOut, Moon, Plus, ShieldCheck, Sun, Trash2 } from "lucide-react-native";
+import { Check, Cpu, Frame, LogOut, Moon, Plus, ShieldCheck, Sun, Trash2 } from "lucide-react-native";
 
 import ScreenContainer from "@/components/ui/ScreenContainer";
 import { useToast } from "@/components/ui/Toast";
@@ -18,6 +18,7 @@ import {
   setConfigPriority,
   useDefaultAI,
 } from "@/store/slices/aiConfigSlice";
+import { connectFigma, disconnectFigma, fetchFigmaStatus } from "@/store/slices/figmaSlice";
 import { useTheme } from "@/theme/useTheme";
 
 const PROVIDERS: { value: AIProviderType; label: string }[] = [
@@ -39,6 +40,9 @@ export default function SettingsScreen() {
   const { showToast } = useToast();
   const { user } = useAppSelector((state) => state.auth);
   const { configs, isSaving } = useAppSelector((state) => state.aiConfig);
+  const { connected: figmaConnected, figmaHandle, isSaving: isFigmaSaving } = useAppSelector(
+    (state) => state.figma
+  );
 
   const [showForm, setShowForm] = useState(false);
   const [providerType, setProviderType] = useState<AIProviderType>("groq");
@@ -47,8 +51,12 @@ export default function SettingsScreen() {
   const [modelName, setModelName] = useState("");
   const [label, setLabel] = useState("");
 
+  const [showFigmaForm, setShowFigmaForm] = useState(false);
+  const [figmaToken, setFigmaToken] = useState("");
+
   useEffect(() => {
     dispatch(fetchAIConfigs());
+    dispatch(fetchFigmaStatus());
   }, [dispatch]);
 
   const activeConfig = configs.find((c) => c.is_active);
@@ -119,6 +127,28 @@ export default function SettingsScreen() {
     if (setConfigPriority.fulfilled.match(result)) {
       showToast(next ? `Set as ${next.charAt(0).toUpperCase() + next.slice(1)}.` : "Removed from fallback order.");
     }
+  };
+
+  // ── Figma connection ──
+
+  const handleConnectFigma = async () => {
+    if (!figmaToken.trim()) {
+      showToast("Paste your Figma personal access token first.", "error");
+      return;
+    }
+    const result = await dispatch(connectFigma(figmaToken.trim()));
+    if (connectFigma.fulfilled.match(result)) {
+      showToast(`Connected to Figma as ${result.payload.figma_handle} 🐯`);
+      setFigmaToken("");
+      setShowFigmaForm(false);
+    } else {
+      showToast((result.payload as string) || "Failed to connect Figma account.", "error");
+    }
+  };
+
+  const handleDisconnectFigma = async () => {
+    await dispatch(disconnectFigma());
+    showToast("Figma account disconnected.");
   };
 
   return (
@@ -341,6 +371,71 @@ export default function SettingsScreen() {
           <Pressable onPress={() => setShowForm(true)} style={styles.addRow}>
             <Plus size={14} color={colors.primary} />
             <Text style={{ color: colors.primary, fontSize: 13, fontWeight: "600" }}>Add AI model configuration</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* ── Figma section ── */}
+      <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+        <View style={styles.sectionHeader}>
+          <Frame size={16} color={colors.textPrimary} />
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Figma</Text>
+        </View>
+        <Text style={[styles.sectionSubtitle, { color: colors.textTertiary }]}>
+          Connect your Figma account to import a frame straight into the UI/UX phase — Baby Tiger
+          converts it into editable HTML/CSS, same as an uploaded mockup. Uses a free Figma
+          personal access token, no paid plan needed.
+        </Text>
+
+        {figmaConnected ? (
+          <View style={[styles.statusRow, { borderColor: colors.border, backgroundColor: colors.background }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.statusLabel, { color: colors.textTertiary }]}>Connected as</Text>
+              <Text style={[styles.statusValue, { color: colors.textPrimary }]}>{figmaHandle}</Text>
+            </View>
+            <Pressable onPress={handleDisconnectFigma}>
+              <Text style={{ color: colors.error, fontSize: 12, fontWeight: "600" }}>Disconnect</Text>
+            </Pressable>
+          </View>
+        ) : showFigmaForm ? (
+          <View style={[styles.formArea, { borderColor: colors.border }]}>
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Personal access token *</Text>
+            <TextInput
+              value={figmaToken}
+              onChangeText={setFigmaToken}
+              placeholder="figd_..."
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry
+              autoCapitalize="none"
+              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            />
+            <Text style={[styles.hint, { color: colors.textTertiary }]}>
+              Generate one free in Figma: Settings → Personal access tokens.
+            </Text>
+
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+              <Pressable
+                onPress={handleConnectFigma}
+                disabled={isFigmaSaving}
+                style={[styles.saveButton, { backgroundColor: colors.primary, opacity: isFigmaSaving ? 0.6 : 1 }]}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Connect</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setShowFigmaForm(false);
+                  setFigmaToken("");
+                }}
+                style={[styles.cancelButton, { borderColor: colors.border }]}
+              >
+                <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <Pressable onPress={() => setShowFigmaForm(true)} style={styles.addRow}>
+            <Plus size={14} color={colors.primary} />
+            <Text style={{ color: colors.primary, fontSize: 13, fontWeight: "600" }}>Connect Figma account</Text>
           </Pressable>
         )}
       </View>

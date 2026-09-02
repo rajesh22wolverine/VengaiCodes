@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Palette, Type, Layout, Puzzle,
   Navigation, Loader2, ThumbsUp, BookOpen, Upload,
   Wand2, Save, Trash2, ImageIcon, Code2, Camera, X,
-  Mic, Square, FileAudio, GripVertical,
+  Mic, Square, FileAudio, GripVertical, Figma, LayoutTemplate,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
@@ -18,6 +18,7 @@ import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
 import { buildPreviewDocument, sendEditorCommand, type PreviewSelection } from "@/lib/designPreview";
+import DesignStudio from "@/components/design-studio/DesignStudio";
 
 interface ScreenDefinition {
   id: string;
@@ -154,6 +155,12 @@ export default function UIUXScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
+  const [isFigmaModalOpen, setIsFigmaModalOpen] = useState(false);
+  const [figmaUrl, setFigmaUrl] = useState("");
+  const [isImportingFigma, setIsImportingFigma] = useState(false);
+
+  const [designStudioPageId, setDesignStudioPageId] = useState<string | null>(null);
+
   const [recordingDesignId, setRecordingDesignId] = useState<string | null>(null);
   const [transcribingDesignId, setTranscribingDesignId] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -190,31 +197,38 @@ export default function UIUXScreen() {
     return () => clearTimeout(t);
   }, [editedHtml, editedCss, expandedPageId]);
 
+  // Shared by every page-editing path (raw code textareas, click-to-edit
+  // preview, and Design Studio) so there's one place that knows how to patch
+  // either a wizard-generated screen or an uploaded/imported design by id.
+  const applyPageEdit = useCallback((pageId: string, html: string, css: string) => {
+    setDesign((prev) => {
+      if (!prev) return prev;
+      const idx = prev.screens.findIndex((s) => s.id === pageId);
+      const current = idx === -1 ? undefined : prev.screens[idx];
+      if (!current) return prev;
+      if (current.generated_html === html && current.generated_css === css) return prev;
+      const screens = [...prev.screens];
+      screens[idx] = { ...current, generated_html: html, generated_css: css };
+      return { ...prev, screens };
+    });
+    setUploadedDesigns((prev) => {
+      const idx = prev.findIndex((d) => d.id === pageId);
+      const current = idx === -1 ? undefined : prev[idx];
+      if (!current) return prev;
+      if (current.generated_html === html && current.generated_css === css) return prev;
+      const next = [...prev];
+      next[idx] = { ...current, generated_html: html, generated_css: css };
+      return next;
+    });
+  }, []);
+
   // Keep whichever page is currently expanded in sync with its live-edited
   // HTML/CSS, so switching to another page (or hitting the global Save
   // button) never loses in-progress edits — there's no more per-page save.
   useEffect(() => {
     if (!expandedPageId) return;
-    setDesign((prev) => {
-      if (!prev) return prev;
-      const idx = prev.screens.findIndex((s) => s.id === expandedPageId);
-      const current = idx === -1 ? undefined : prev.screens[idx];
-      if (!current) return prev;
-      if (current.generated_html === editedHtml && current.generated_css === editedCss) return prev;
-      const screens = [...prev.screens];
-      screens[idx] = { ...current, generated_html: editedHtml, generated_css: editedCss };
-      return { ...prev, screens };
-    });
-    setUploadedDesigns((prev) => {
-      const idx = prev.findIndex((d) => d.id === expandedPageId);
-      const current = idx === -1 ? undefined : prev[idx];
-      if (!current) return prev;
-      if (current.generated_html === editedHtml && current.generated_css === editedCss) return prev;
-      const next = [...prev];
-      next[idx] = { ...current, generated_html: editedHtml, generated_css: editedCss };
-      return next;
-    });
-  }, [editedHtml, editedCss, expandedPageId]);
+    applyPageEdit(expandedPageId, editedHtml, editedCss);
+  }, [editedHtml, editedCss, expandedPageId, applyPageEdit]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
@@ -435,6 +449,33 @@ export default function UIUXScreen() {
     if (!file) return;
     await uploadDesignFile(file, file.name.replace(/\.[^.]+$/, ""));
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // ── Import from Figma ──
+
+  const importFromFigma = async () => {
+    if (!figmaUrl.trim()) {
+      toast.error("Paste a Figma frame link first.");
+      return;
+    }
+    const pageName = uploadPageName.trim() || "Figma Import";
+    setIsImportingFigma(true);
+    try {
+      const { data } = await apiClient.post(`/uiux/${projectId}/design/import-figma`, {
+        figma_url: figmaUrl.trim(),
+        page_name: pageName,
+      });
+      setUploadedDesigns((prev) => [...prev, data.design]);
+      setPageOrder((prev) => [...prev, data.design.id]);
+      setUploadPageName("");
+      setFigmaUrl("");
+      setIsFigmaModalOpen(false);
+      toast.success("Imported from Figma! 🎨🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to import from Figma.");
+    } finally {
+      setIsImportingFigma(false);
+    }
   };
 
   // ── Camera capture (sketch/whiteboard/physical mockup photo) ──
@@ -735,6 +776,14 @@ export default function UIUXScreen() {
                 <Camera className="w-4 h-4" />
                 Use Camera
               </button>
+              <button
+                onClick={() => setIsFigmaModalOpen(true)}
+                disabled={isUploading}
+                className="px-4 py-2.5 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                <Figma className="w-4 h-4" />
+                Import from Figma
+              </button>
             </div>
 
             <AnimatePresence>
@@ -786,6 +835,72 @@ export default function UIUXScreen() {
               )}
             </AnimatePresence>
 
+            <AnimatePresence>
+              {isFigmaModalOpen && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6"
+                >
+                  <div className="bg-[var(--color-surface)] rounded-2xl p-4 max-w-lg w-full">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                        Import from Figma
+                      </p>
+                      <button
+                        onClick={() => setIsFigmaModalOpen(false)}
+                        className="p-1.5 rounded-lg hover:bg-[var(--color-surface-raised)] transition-colors"
+                      >
+                        <X className="w-4 h-4 text-[var(--color-text-secondary)]" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                          Figma frame link
+                        </label>
+                        <input
+                          value={figmaUrl}
+                          onChange={(e) => setFigmaUrl(e.target.value)}
+                          placeholder="https://www.figma.com/design/..."
+                          className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                        />
+                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1.5">
+                          In Figma, right-click a frame → "Copy link to selection," then paste it
+                          here. Haven't connected Figma yet? Do that first in Settings.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                          Page name
+                        </label>
+                        <input
+                          value={uploadPageName}
+                          onChange={(e) => setUploadPageName(e.target.value)}
+                          placeholder="e.g. Login Screen"
+                          className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                        />
+                      </div>
+                      <button
+                        onClick={importFromFigma}
+                        disabled={isImportingFigma}
+                        className="w-full py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+                      >
+                        {isImportingFigma ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Figma className="w-4 h-4" />
+                        )}
+                        Import
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {pages.length === 0 ? (
               <p className="text-xs text-[var(--color-text-tertiary)]">
                 No pages yet.
@@ -820,6 +935,7 @@ export default function UIUXScreen() {
                         onClearSelection={clearPreviewSelection}
                         onMoveElement={moveElement}
                         onMoveModule={moveModule}
+                        onOpenDesignStudio={() => setDesignStudioPageId(page.id)}
                       />
                     ))}
                   </div>
@@ -877,6 +993,30 @@ export default function UIUXScreen() {
         </div>
       </div>
       <ChatPanel projectId={projectId} phase="uiux" />
+
+      {designStudioPageId && (() => {
+        const studioPage = pages.find((p) => p.id === designStudioPageId);
+        if (!studioPage) return null;
+        return (
+          <DesignStudio
+            html={studioPage.generated_html || ""}
+            css={studioPage.generated_css || ""}
+            onSave={(html, css) => {
+              applyPageEdit(studioPage.id, html, css);
+              // If this page's raw code editor is also open, keep its state
+              // in sync — otherwise the next keystroke there re-fires the
+              // editedHtml/editedCss sync effect with stale values and
+              // silently reverts this save.
+              if (expandedPageId === studioPage.id) {
+                setEditedHtml(html);
+                setEditedCss(css);
+              }
+              setDesignStudioPageId(null);
+            }}
+            onClose={() => setDesignStudioPageId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -931,6 +1071,7 @@ interface PageCardProps {
   onClearSelection: () => void;
   onMoveElement: (direction: "up" | "down") => void;
   onMoveModule: (direction: "up" | "down") => void;
+  onOpenDesignStudio: () => void;
 }
 
 function PageCard({
@@ -938,6 +1079,7 @@ function PageCard({
   recording, transcribing, recordingActive, onStartRecording, onStopRecording,
   editedHtml, editedCss, onEditHtml, onEditCss, previewDoc, previewFrameRef,
   selection, onUpdateStyle, onUpdatePlaceholder, onClearSelection, onMoveElement, onMoveModule,
+  onOpenDesignStudio,
 }: PageCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: page.id });
   const style: React.CSSProperties = {
@@ -1052,6 +1194,14 @@ function PageCard({
               Generate Code
             </button>
           ) : null}
+          <button
+            onClick={onOpenDesignStudio}
+            className="px-3 py-1.5 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-semibold hover:bg-[var(--color-primary-light)] transition-colors flex items-center gap-1.5"
+            title="Open a drag-and-drop visual canvas for this page"
+          >
+            <LayoutTemplate className="w-3.5 h-3.5" />
+            Design Studio
+          </button>
           {page.kind === "upload" && (
             <button
               onClick={() => onDelete(page.id)}

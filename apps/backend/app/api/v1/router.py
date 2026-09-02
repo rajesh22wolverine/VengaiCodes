@@ -63,6 +63,15 @@ api_router.include_router(
     tags=["AI Engine"],
 )
 
+# ── Figma — connect account + import designs (used by the UI/UX phase) ──
+# /api/v1/figma/connection
+from app.api.v1 import figma
+api_router.include_router(
+    figma.router,
+    prefix="/figma",
+    tags=["Figma"],
+)
+
 # ───────────────────────────────────────────────
 #  Future routers — uncomment as each module is built
 #  Each module follows the same pattern as auth/projects above
