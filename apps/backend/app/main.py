@@ -183,6 +183,102 @@ async def init_db():
 
     logger.info("✅ Database indexes created/verified")
 
+    # Step 5 — relax constraints on existing columns that changed shape.
+    # Unlike Step 3.5 (missing columns), create_all()/ALTER-ADD never
+    # touches a column that already exists — so a column whose model
+    # definition changed (e.g. user_ai_configs.user_id going NOT NULL ->
+    # nullable, to allow platform-default rows) needs its own explicit
+    # migration. A *fresh* SQLite create_all() already gets the nullable
+    # version for free, but a pre-existing local SQLite DB (any dev who
+    # already had this table before the column changed shape) still has
+    # the old NOT NULL constraint baked into its CREATE TABLE statement —
+    # SQLite has no ALTER COLUMN, so that case needs the standard
+    # rename-recreate-copy dance instead of a single ALTER.
+    def get_user_id_nullable(sync_conn):
+        inspector = inspect(sync_conn)
+        if "user_ai_configs" not in inspector.get_table_names():
+            return None
+        for col in inspector.get_columns("user_ai_configs"):
+            if col["name"] == "user_id":
+                return col["nullable"]
+        return None
+
+    if engine.dialect.name == "postgresql":
+        async with engine.begin() as conn:
+            nullable = await conn.run_sync(get_user_id_nullable)
+            if nullable is False:
+                try:
+                    await conn.execute(
+                        text("ALTER TABLE user_ai_configs ALTER COLUMN user_id DROP NOT NULL")
+                    )
+                    logger.info("✅ Relaxed user_ai_configs.user_id to nullable")
+                except Exception as e:
+                    logger.warning(f"Could not relax user_ai_configs.user_id: {e}")
+
+    elif engine.dialect.name == "sqlite":
+        async with engine.begin() as conn:
+            def get_state(sync_conn):
+                inspector = inspect(sync_conn)
+                tables = inspector.get_table_names()
+                nullable = None
+                if "user_ai_configs" in tables:
+                    for col in inspector.get_columns("user_ai_configs"):
+                        if col["name"] == "user_id":
+                            nullable = col["nullable"]
+                return nullable, "user_ai_configs__pre_nullable" in tables
+
+            nullable, has_interrupted_leftover = await conn.run_sync(get_state)
+            table = Base.metadata.tables["user_ai_configs"]
+            column_list = ", ".join(table.columns.keys())
+
+            # aiosqlite/SQLite don't roll back DDL on an exception the way
+            # Postgres would — a crash between the RENAME below and the
+            # final DROP TABLE can leave both user_ai_configs (new, already
+            # nullable) and user_ai_configs__pre_nullable (old, with any
+            # rows that hadn't been copied yet) sitting side by side. Finish
+            # that copy on the next startup instead of colliding with the
+            # already-renamed table by trying the migration again.
+            if has_interrupted_leftover and nullable is not False:
+                try:
+                    await conn.execute(
+                        text(
+                            f"INSERT INTO user_ai_configs ({column_list}) "
+                            f"SELECT {column_list} FROM user_ai_configs__pre_nullable"
+                        )
+                    )
+                    await conn.execute(text("DROP TABLE user_ai_configs__pre_nullable"))
+                    logger.info("✅ Recovered leftover rows from an interrupted user_ai_configs migration")
+                except Exception as e:
+                    logger.warning(f"Could not recover user_ai_configs__pre_nullable leftovers: {e}")
+
+            elif nullable is False:
+                try:
+                    # SQLite index names are unique per-database, not per-
+                    # table — renaming the table does NOT rename its
+                    # indexes, so they'd collide with the ones table.create()
+                    # is about to emit for the rebuilt table below. Drop
+                    # them first (idempotent either way).
+                    for index in all_indexes.get("user_ai_configs", []):
+                        await conn.execute(text(f"DROP INDEX IF EXISTS {index.name}"))
+
+                    await conn.execute(
+                        text("ALTER TABLE user_ai_configs RENAME TO user_ai_configs__pre_nullable")
+                    )
+                    await conn.run_sync(lambda sync_conn: table.create(sync_conn))
+                    await conn.execute(
+                        text(
+                            f"INSERT INTO user_ai_configs ({column_list}) "
+                            f"SELECT {column_list} FROM user_ai_configs__pre_nullable"
+                        )
+                    )
+                    await conn.execute(text("DROP TABLE user_ai_configs__pre_nullable"))
+                    logger.info("✅ Relaxed user_ai_configs.user_id to nullable (SQLite table rebuild)")
+                except Exception as e:
+                    logger.warning(
+                        f"Could not relax user_ai_configs.user_id: {e} — will retry on next startup "
+                        "(check for a leftover user_ai_configs__pre_nullable table if this recurs)."
+                    )
+
 
 # ─── Lifespan ────────────────────────────────────────────────
 @asynccontextmanager
@@ -202,6 +298,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         raise
+
+    # ── AI model bag — seed platform defaults, backfill legacy priorities ──
+    # Both are one-time, additive, and non-fatal: a failure here shouldn't
+    # crash startup, just leave the bag to be configured manually.
+    try:
+        from app.ai.orchestrator import seed_default_ai_configs, backfill_legacy_bag_orders
+        await seed_default_ai_configs()
+        await backfill_legacy_bag_orders()
+    except Exception as e:
+        logger.warning(f"⚠️  AI model bag seeding/backfill failed: {e}")
 
     # ── Redis (optional) ──
     try:

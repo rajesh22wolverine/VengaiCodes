@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
-import { Check, Cpu, Frame, LogOut, Moon, Plus, ShieldCheck, Sun, Trash2 } from "lucide-react-native";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Cpu,
+  Frame,
+  LogOut,
+  Moon,
+  Plus,
+  Server,
+  ShieldCheck,
+  Sun,
+  Trash2,
+} from "lucide-react-native";
 
 import ScreenContainer from "@/components/ui/ScreenContainer";
 import { useToast } from "@/components/ui/Toast";
@@ -9,13 +22,13 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logoutUser } from "@/store/slices/authSlice";
 import { toggleTheme } from "@/store/slices/uiSlice";
 import {
-  AIConfigPriority,
   AIProviderType,
   createAIConfig,
   deleteAIConfig,
+  fetchAIBag,
   fetchAIConfigs,
   setActiveAIConfig,
-  setConfigPriority,
+  setAIBagOrder,
   useDefaultAI,
 } from "@/store/slices/aiConfigSlice";
 import { connectFigma, disconnectFigma, fetchFigmaStatus } from "@/store/slices/figmaSlice";
@@ -28,18 +41,12 @@ const PROVIDERS: { value: AIProviderType; label: string }[] = [
   { value: "custom", label: "Custom endpoint" },
 ];
 
-const PRIORITY_TIERS: { value: AIConfigPriority; label: string }[] = [
-  { value: "primary", label: "Primary" },
-  { value: "secondary", label: "Secondary" },
-  { value: "tertiary", label: "Tertiary" },
-];
-
 export default function SettingsScreen() {
   const dispatch = useAppDispatch();
   const { colors, theme } = useTheme();
   const { showToast } = useToast();
   const { user } = useAppSelector((state) => state.auth);
-  const { configs, isSaving } = useAppSelector((state) => state.aiConfig);
+  const { configs, isSaving, bag, isBagSaving } = useAppSelector((state) => state.aiConfig);
   const { connected: figmaConnected, figmaHandle, isSaving: isFigmaSaving } = useAppSelector(
     (state) => state.figma
   );
@@ -56,10 +63,12 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     dispatch(fetchAIConfigs());
+    dispatch(fetchAIBag());
     dispatch(fetchFigmaStatus());
   }, [dispatch]);
 
   const activeConfig = configs.find((c) => c.is_active);
+  const refreshBag = () => dispatch(fetchAIBag());
 
   const handleLogout = async () => {
     await dispatch(logoutUser());
@@ -99,6 +108,7 @@ export default function SettingsScreen() {
     if (createAIConfig.fulfilled.match(result)) {
       showToast(`Now using "${result.payload.label}" 🐯`);
       resetForm();
+      refreshBag();
     } else {
       showToast((result.payload as string) || "Failed to save AI model.", "error");
     }
@@ -107,25 +117,32 @@ export default function SettingsScreen() {
   const handleUseDefault = async () => {
     await dispatch(useDefaultAI(activeConfig?.id));
     showToast("Switched back to VengaiCode's default AI.");
+    refreshBag();
   };
 
   const handleSetActive = async (id: string) => {
     const result = await dispatch(setActiveAIConfig(id));
     if (setActiveAIConfig.fulfilled.match(result)) {
       showToast(`Now using "${result.payload.label}" 🐯`);
+      refreshBag();
     }
   };
 
   const handleDelete = async (id: string) => {
     await dispatch(deleteAIConfig(id));
     showToast("Removed.");
+    refreshBag();
   };
 
-  const handleChangePriority = async (id: string, priority: AIConfigPriority | null, current: AIConfigPriority | null) => {
-    const next = current === priority ? null : priority;
-    const result = await dispatch(setConfigPriority({ id, priority: next }));
-    if (setConfigPriority.fulfilled.match(result)) {
-      showToast(next ? `Set as ${next.charAt(0).toUpperCase() + next.slice(1)}.` : "Removed from fallback order.");
+  // ── AI model order (up/down reorder of the bag) ──
+  const handleMoveBagItem = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= bag.length) return;
+    const next = [...bag];
+    [next[index], next[target]] = [next[target], next[index]];
+    const result = await dispatch(setAIBagOrder(next.map((c) => c.id)));
+    if (!setAIBagOrder.fulfilled.match(result)) {
+      showToast((result.payload as string) || "Failed to save the new order.", "error");
     }
   };
 
@@ -207,74 +224,86 @@ export default function SettingsScreen() {
         </View>
 
         {/* Saved configs */}
-        {configs.length > 0 && (
-          <Text style={[styles.hint, { color: colors.textTertiary }]}>
-            Optionally rank your own models — if Primary fails, the app automatically tries
-            Secondary, then Tertiary.
-          </Text>
-        )}
         {configs.map((config) => (
           <View
             key={config.id}
-            style={[styles.configRow, { borderColor: colors.border, flexDirection: "column", alignItems: "stretch", gap: 8 }]}
+            style={[styles.configRow, { borderColor: colors.border }]}
           >
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={[styles.configLabel, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {config.label}
-                  </Text>
-                  {config.is_active && (
-                    <View style={[styles.activeBadge, { backgroundColor: colors.primaryLight }]}>
-                      <Check size={10} color={colors.primary} />
-                      <Text style={{ color: colors.primary, fontSize: 10, fontWeight: "700" }}>Active</Text>
-                    </View>
-                  )}
-                  {config.priority && (
-                    <View style={[styles.activeBadge, { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }]}>
-                      <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: "700" }}>
-                        {config.priority.charAt(0).toUpperCase() + config.priority.slice(1)}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[styles.configMeta, { color: colors.textTertiary }]} numberOfLines={1}>
-                  {config.provider_type} · {config.model_name}
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={[styles.configLabel, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {config.label}
                 </Text>
+                {config.is_active && (
+                  <View style={[styles.activeBadge, { backgroundColor: colors.primaryLight }]}>
+                    <Check size={10} color={colors.primary} />
+                    <Text style={{ color: colors.primary, fontSize: 10, fontWeight: "700" }}>Active</Text>
+                  </View>
+                )}
               </View>
-              {!config.is_active && (
-                <Pressable onPress={() => handleSetActive(config.id)} style={{ marginRight: 12 }}>
-                  <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "600" }}>Use this</Text>
-                </Pressable>
-              )}
-              <Pressable onPress={() => handleDelete(config.id)} hitSlop={8}>
-                <Trash2 size={16} color={colors.textTertiary} />
+              <Text style={[styles.configMeta, { color: colors.textTertiary }]} numberOfLines={1}>
+                {config.provider_type} · {config.model_name}
+              </Text>
+            </View>
+            {!config.is_active && (
+              <Pressable onPress={() => handleSetActive(config.id)} style={{ marginRight: 12 }}>
+                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: "600" }}>Use this</Text>
               </Pressable>
-            </View>
-            <View style={styles.chipRow}>
-              {PRIORITY_TIERS.map((tier) => {
-                const selected = config.priority === tier.value;
-                return (
-                  <Pressable
-                    key={tier.value}
-                    onPress={() => handleChangePriority(config.id, tier.value, config.priority)}
-                    style={[
-                      styles.chip,
-                      {
-                        borderColor: selected ? colors.primary : colors.border,
-                        backgroundColor: selected ? colors.primaryLight : colors.background,
-                      },
-                    ]}
-                  >
-                    <Text style={{ color: selected ? colors.primary : colors.textSecondary, fontSize: 11, fontWeight: "600" }}>
-                      {tier.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            )}
+            <Pressable onPress={() => handleDelete(config.id)} hitSlop={8}>
+              <Trash2 size={16} color={colors.textTertiary} />
+            </Pressable>
           </View>
         ))}
+
+        {/* AI model order — the effective fallback chain: own configs plus
+            VengaiCode's platform defaults (Ollama, Groq), all in one list.
+            Whatever's on top is tried first. */}
+        {bag.length > 0 && (
+          <View style={{ gap: 6, marginTop: 4 }}>
+            <Text style={[styles.hint, { color: colors.textTertiary }]}>
+              AI model order — what's tried first is on top.
+            </Text>
+            {bag.map((entry, index) => (
+              <View key={entry.id} style={[styles.bagRow, { borderColor: colors.border, backgroundColor: colors.background }]}>
+                <Text style={{ color: colors.textTertiary, fontSize: 10, fontFamily: "monospace", width: 16 }}>
+                  {index + 1}
+                </Text>
+                {entry.is_platform_default ? (
+                  <Server size={13} color={colors.textTertiary} />
+                ) : (
+                  <Cpu size={13} color={colors.primary} />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.configLabel, { color: colors.textPrimary, fontSize: 12 }]} numberOfLines={1}>
+                    {entry.label}
+                  </Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 10 }}>
+                    {entry.is_platform_default ? "VengaiCode default" : "Your config"}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", gap: 2 }}>
+                  <Pressable
+                    onPress={() => handleMoveBagItem(index, -1)}
+                    disabled={index === 0 || isBagSaving}
+                    hitSlop={8}
+                    style={{ opacity: index === 0 ? 0.3 : 1, padding: 4 }}
+                  >
+                    <ChevronUp size={16} color={colors.textSecondary} />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleMoveBagItem(index, 1)}
+                    disabled={index === bag.length - 1 || isBagSaving}
+                    hitSlop={8}
+                    style={{ opacity: index === bag.length - 1 ? 0.3 : 1, padding: 4 }}
+                  >
+                    <ChevronDown size={16} color={colors.textSecondary} />
+                  </Pressable>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Add form */}
         {showForm ? (
@@ -450,6 +479,16 @@ export default function SettingsScreen() {
         </Pressable>
       )}
 
+      {user?.is_admin && (
+        <Pressable
+          onPress={() => router.push("/(app)/admin/ai-models" as any)}
+          style={[styles.row, { borderColor: colors.border, backgroundColor: colors.surface }]}
+        >
+          <Server size={18} color={colors.primary} />
+          <Text style={{ color: colors.textPrimary, fontSize: 14, flex: 1, fontWeight: "600" }}>AI Models</Text>
+        </Pressable>
+      )}
+
       <Pressable onPress={handleLogout} style={[styles.row, { borderColor: colors.error, backgroundColor: colors.surface }]}>
         <LogOut size={18} color={colors.error} />
         <Text style={{ color: colors.error, fontSize: 14, fontWeight: "600" }}>Logout</Text>
@@ -476,6 +515,7 @@ const styles = StyleSheet.create({
   configLabel: { fontSize: 13, fontWeight: "600", flexShrink: 1 },
   configMeta: { fontSize: 11, marginTop: 2 },
   activeBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999 },
+  bagRow: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 10, padding: 10 },
   formArea: { borderTopWidth: 1, paddingTop: 12, gap: 6 },
   fieldLabel: { fontSize: 12, fontWeight: "600", marginTop: 6 },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },

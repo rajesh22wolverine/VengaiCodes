@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.orchestrator import get_effective_bag
 from app.api.v1.auth import get_current_active_user
 from app.core.crypto import encrypt_secret
 from app.core.database import get_db
@@ -23,6 +24,9 @@ from app.schemas.ai_config import (
     AIConfigListResponse,
     AIConfigResponse,
     AIConfigUpdate,
+    BagConfigResponse,
+    BagOrderUpdate,
+    BagResponse,
     DeleteAIConfigResponse,
 )
 from app.schemas.auth import ErrorResponse
@@ -199,3 +203,43 @@ async def delete_ai_config(
     await db.delete(config)
     await db.commit()
     return DeleteAIConfigResponse()
+
+
+# ═══════════════════════════════════════════════════════════════
+#  GET /ai/configs/bag — preview the current user's effective AI model
+#  bag: platform defaults (admin-managed) merged with their own configs,
+#  in the order generate_text() tries them — see
+#  app/ai/orchestrator.get_effective_bag()
+# ═══════════════════════════════════════════════════════════════
+@router.get(
+    "/bag",
+    response_model=BagResponse,
+    summary="Preview the current user's effective AI model bag, in try order",
+)
+async def get_bag(
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    bag, _ = await get_effective_bag(user, db)
+    return BagResponse(bag=[BagConfigResponse.from_db(c) for c in bag])
+
+
+# ═══════════════════════════════════════════════════════════════
+#  PUT /ai/configs/bag-order — save a personal reorder of the bag
+# ═══════════════════════════════════════════════════════════════
+@router.put(
+    "/bag-order",
+    response_model=BagResponse,
+    summary="Reorder the current user's AI model bag",
+)
+async def set_bag_order(
+    payload: BagOrderUpdate,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user.ai_bag_order = payload.order
+    await db.commit()
+    await db.refresh(user)
+
+    bag, _ = await get_effective_bag(user, db)
+    return BagResponse(bag=[BagConfigResponse.from_db(c) for c in bag])

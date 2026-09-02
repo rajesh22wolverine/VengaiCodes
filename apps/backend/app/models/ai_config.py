@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -18,10 +18,13 @@ from app.core.database import Base
 
 class UserAIConfig(Base):
     """
-    A single saved AI provider configuration owned by a user.
-    A user may have several (e.g. one for their Groq key, one for a
-    local server); at most one is `is_active` at a time — that's the
-    one the orchestrator uses instead of the platform default.
+    A single AI provider configuration — either owned by a user (their own
+    BYO key/endpoint) or, when `user_id IS NULL`, a platform-wide default
+    that VengaiCode itself manages (via the admin AI Models screen). Both
+    kinds live in the same "bag" that `app.ai.orchestrator.get_effective_bag()`
+    assembles per user: platform defaults plus that user's own configs,
+    orderable together — see User.ai_bag_order for the per-user ordering
+    override.
     """
     __tablename__ = "user_ai_configs"
     __table_args__ = (
@@ -39,10 +42,16 @@ class UserAIConfig(Base):
     # the explicit Index() in __table_args__ above. Keeping both causes
     # "index already exists" crashes on SQLite (see User model for the
     # same fix / explanation).
-    user_id: str = Column(
+    #
+    # NULL means "platform-wide default" — admin-managed, visible to every
+    # user's bag. A regular user's own queries filter to `user_id ==
+    # user.id`, which already naturally excludes these rows; admin routes
+    # filter to `user_id IS NULL`. On Postgres this column was originally
+    # NOT NULL — app.main.init_db() relaxes it at startup (see there).
+    user_id: Optional[str] = Column(
         String(36),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
 
     # "groq" | "openai" | "anthropic" | "custom" | "portable" — all but
@@ -65,16 +74,21 @@ class UserAIConfig(Base):
     label: str = Column(String(100), nullable=False)
     # User-facing name, e.g. "My local Qwen (USB)"
 
-    is_active: bool = Column(Boolean, default=False, nullable=False)
-    # Only one True per user_id — enforced in the API layer, not the DB.
+    is_active: bool = Column(Boolean, default=True, nullable=False)
+    # Despite the name (kept as-is to avoid a column rename/migration),
+    # this now means "included in the bag" — many rows may be True at
+    # once. Toggling it off pauses a config without deleting it.
+
+    order_index: Optional[int] = Column(Integer, nullable=True)
+    # Admin-controlled baseline order among platform defaults
+    # (user_id IS NULL) only — a user's own rows ignore this and fall
+    # back to created_at for their natural (pre-customization) order.
+    # See app.ai.orchestrator.get_effective_bag().
 
     priority: Optional[str] = Column(String(10), nullable=True)
-    # "primary" | "secondary" | "tertiary" | None — an optional fallback
-    # order across a user's own configs. At most one config per slot per
-    # user_id, enforced in the API layer. When any config has a priority
-    # set, orchestrator.generate_text() tries them in order instead of
-    # just the single is_active one; when none do, is_active alone still
-    # decides which config is used (unchanged legacy behavior).
+    # Deprecated — superseded by User.ai_bag_order. Left in place
+    # (unread/unwritten by new code) rather than dropped, since this
+    # codebase has no migration path for dropping columns.
 
     created_at: datetime = Column(
         DateTime(timezone=True),
@@ -89,7 +103,8 @@ class UserAIConfig(Base):
     )
 
     def __repr__(self) -> str:
+        user = f"{self.user_id[:8]}..." if self.user_id else "platform-default"
         return (
-            f"<UserAIConfig id={self.id[:8]}... user={self.user_id[:8]}... "
+            f"<UserAIConfig id={self.id[:8]}... user={user} "
             f"provider={self.provider_type} active={self.is_active}>"
         )

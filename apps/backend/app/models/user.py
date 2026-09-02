@@ -215,6 +215,14 @@ class User(Base):
     #   "audio": { "language": "ta", "accent": "indian", "voice": "female" }
     # }
 
+    # ── AI model "bag" order override ──
+    ai_bag_order: Optional[list] = Column(JSON, nullable=True, default=None)
+    # A flat list of UserAIConfig.id strings, this user's personal full
+    # reorder of the merged bag (platform defaults + their own configs).
+    # None (not []) means "never customized" — distinguishing that from
+    # an explicit empty order matters for app.ai.orchestrator's natural-
+    # order fallback. See app.ai.orchestrator.get_effective_bag().
+
     # ── Metadata ──
     created_at: datetime = Column(
         DateTime(timezone=True),

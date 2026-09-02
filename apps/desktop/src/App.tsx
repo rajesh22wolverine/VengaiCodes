@@ -25,6 +25,7 @@ import MarketplaceListingDetailScreen from "@/screens/marketplace/MarketplaceLis
 import MarketplaceCreateListingScreen from "@/screens/marketplace/MarketplaceCreateListingScreen";
 import AdminScreen from "@/screens/admin/AdminScreen";
 import AdminUserDetailScreen from "@/screens/admin/AdminUserDetailScreen";
+import AIModelsScreen from "@/screens/admin/AIModelsScreen";
 import MainLayout from "@/components/layout/MainLayout";
 
 // Protected route wrapper
@@ -120,6 +121,7 @@ export default function App() {
           <Route path="settings" element={<SettingsScreen />} />
           <Route path="admin" element={<AdminRoute><AdminScreen /></AdminRoute>} />
           <Route path="admin/users/:userId" element={<AdminRoute><AdminUserDetailScreen /></AdminRoute>} />
+          <Route path="admin/ai-models" element={<AdminRoute><AIModelsScreen /></AdminRoute>} />
         </Route>
 
         {/* Catch all */}

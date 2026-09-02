@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Store,
   Code2,
+  Cpu,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -48,6 +49,7 @@ export default function Sidebar() {
     { id: "marketplace", label: "Marketplace", icon: Store, path: "/marketplace" },
     { id: "api-builder", label: "API Builder", icon: Code2, path: "/api-builder" },
     ...(user?.is_admin ? [{ id: "admin", label: "Admin", icon: ShieldCheck, path: "/admin" }] : []),
+    ...(user?.is_admin ? [{ id: "admin-ai-models", label: "AI Models", icon: Cpu, path: "/admin/ai-models" }] : []),
   ];
 
   const handleHomeItemClick = (item: NavItem) => {

@@ -16,11 +16,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, nullslast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth import require_admin
+from app.config import settings
+from app.core.crypto import encrypt_secret
 from app.core.database import get_db
+from app.models.ai_config import UserAIConfig
 from app.models.marketplace import ListingCategory, ListingStatus, MarketplaceApp
 from app.models.project import Project
 from app.models.settings import PlatformSetting
@@ -31,7 +34,16 @@ from app.models.user import (
     UserStatus,
     UserTier,
 )
-from app.schemas.auth import UserResponse
+from app.schemas.ai_config import (
+    DEFAULT_BASE_URLS,
+    PROVIDERS_REQUIRING_KEY,
+    AdminAIConfigCreate,
+    AdminAIConfigDetailResponse,
+    AdminAIConfigListResponse,
+    AdminAIConfigResponse,
+    AdminAIConfigUpdate,
+)
+from app.schemas.auth import ErrorResponse, UserResponse
 
 logger = logging.getLogger("vengaicode.admin")
 router = APIRouter()
@@ -539,3 +551,198 @@ async def update_setting(
             "updated_at": setting.updated_at.isoformat() if setting.updated_at else None,
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  AI Models — platform-default AI configs (user_id IS NULL). These sit
+#  in every user's "bag" alongside their own BYO configs — see
+#  app/ai/orchestrator.get_effective_bag() and app/models/ai_config.py.
+# ═══════════════════════════════════════════════════════════════
+async def _get_platform_config(db: AsyncSession, config_id: str) -> UserAIConfig:
+    result = await db.execute(
+        select(UserAIConfig).where(
+            UserAIConfig.id == config_id, UserAIConfig.user_id.is_(None)
+        )
+    )
+    config = result.scalar_one_or_none()
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Platform AI model configuration not found.",
+        )
+    return config
+
+
+@router.get(
+    "/ai-configs",
+    response_model=AdminAIConfigListResponse,
+    summary="List platform-default AI model configs",
+)
+async def admin_list_ai_configs(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(UserAIConfig)
+        .where(UserAIConfig.user_id.is_(None))
+        .order_by(nullslast(UserAIConfig.order_index), UserAIConfig.created_at)
+    )
+    configs = result.scalars().all()
+    return AdminAIConfigListResponse(
+        configs=[AdminAIConfigResponse.from_db(c) for c in configs],
+        total=len(configs),
+    )
+
+
+@router.post(
+    "/ai-configs",
+    response_model=AdminAIConfigDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={400: {"model": ErrorResponse}},
+    summary="Add a platform-default AI model config",
+)
+async def admin_create_ai_config(
+    payload: AdminAIConfigCreate,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    base_url = payload.base_url or DEFAULT_BASE_URLS.get(payload.provider_type)
+    if payload.provider_type == "ollama":
+        base_url = base_url or settings.OLLAMA_HOST
+    if not base_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="base_url is required for a custom provider.",
+        )
+    if payload.provider_type in PROVIDERS_REQUIRING_KEY and not payload.api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"An API key is required for {payload.provider_type}.",
+        )
+
+    config = UserAIConfig(
+        user_id=None,
+        provider_type=payload.provider_type,
+        base_url=base_url,
+        api_key_encrypted=encrypt_secret(payload.api_key) if payload.api_key else None,
+        model_name=payload.model_name,
+        label=payload.label,
+        is_active=payload.is_active,
+        order_index=payload.order_index,
+    )
+    db.add(config)
+    await db.flush()
+
+    await _log_action(
+        db=db,
+        admin=admin,
+        request=request,
+        target_user_id=admin.id,
+        action_type="ai_config_create",
+        action_details={
+            "config_id": config.id,
+            "provider_type": config.provider_type,
+            "label": config.label,
+        },
+        reason="Added a platform-default AI model config.",
+        previous_state={},
+        new_state={"id": config.id, "label": config.label, "provider_type": config.provider_type},
+    )
+
+    await db.commit()
+    await db.refresh(config)
+
+    return AdminAIConfigDetailResponse(config=AdminAIConfigResponse.from_db(config))
+
+
+@router.patch(
+    "/ai-configs/{config_id}",
+    response_model=AdminAIConfigDetailResponse,
+    responses={404: {"model": ErrorResponse}},
+    summary="Update a platform-default AI model config",
+)
+async def admin_update_ai_config(
+    config_id: str,
+    payload: AdminAIConfigUpdate,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    config = await _get_platform_config(db, config_id)
+    previous_state = {
+        "label": config.label,
+        "is_active": config.is_active,
+        "order_index": config.order_index,
+        "model_name": config.model_name,
+        "base_url": config.base_url,
+    }
+
+    if payload.base_url is not None:
+        config.base_url = payload.base_url
+    if payload.api_key is not None:
+        config.api_key_encrypted = encrypt_secret(payload.api_key) if payload.api_key else None
+    if payload.model_name is not None:
+        config.model_name = payload.model_name
+    if payload.label is not None:
+        config.label = payload.label
+    if payload.is_active is not None:
+        config.is_active = payload.is_active
+    if payload.order_index is not None:
+        config.order_index = payload.order_index
+    elif payload.clear_order_index:
+        config.order_index = None
+
+    await _log_action(
+        db=db,
+        admin=admin,
+        request=request,
+        target_user_id=admin.id,
+        action_type="ai_config_update",
+        action_details=payload.model_dump(exclude_unset=True, exclude={"api_key"}),
+        reason="Updated a platform-default AI model config.",
+        previous_state=previous_state,
+        new_state={
+            "label": config.label,
+            "is_active": config.is_active,
+            "order_index": config.order_index,
+            "model_name": config.model_name,
+            "base_url": config.base_url,
+        },
+    )
+
+    await db.commit()
+    await db.refresh(config)
+
+    return AdminAIConfigDetailResponse(config=AdminAIConfigResponse.from_db(config))
+
+
+@router.delete(
+    "/ai-configs/{config_id}",
+    responses={404: {"model": ErrorResponse}},
+    summary="Remove a platform-default AI model config",
+)
+async def admin_delete_ai_config(
+    config_id: str,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    config = await _get_platform_config(db, config_id)
+
+    await _log_action(
+        db=db,
+        admin=admin,
+        request=request,
+        target_user_id=admin.id,
+        action_type="ai_config_delete",
+        action_details={"config_id": config.id, "label": config.label},
+        reason="Removed a platform-default AI model config.",
+        previous_state={"label": config.label, "provider_type": config.provider_type},
+        new_state={},
+    )
+
+    await db.delete(config)
+    await db.commit()
+
+    return {"success": True, "message": "Platform AI model configuration deleted successfully."}

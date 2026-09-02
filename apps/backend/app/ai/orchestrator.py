@@ -13,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core.crypto import decrypt_secret
+from app.core.crypto import decrypt_secret, encrypt_secret
+from app.core.database import AsyncSessionLocal
 from app.models.ai_config import UserAIConfig
 from app.models.user import User
 
@@ -25,14 +26,17 @@ class AIError(Exception):
     pass
 
 
-async def _call_ollama(prompt: str, model: str | None = None) -> tuple[str, float]:
-    """Call local Ollama instance."""
+async def _call_ollama(prompt: str, model: str | None = None, base_url: str | None = None) -> tuple[str, float]:
+    """Call an Ollama instance — settings.OLLAMA_HOST by default, or a bag
+    entry's own base_url (e.g. a platform default pointed at a different
+    host)."""
     model = model or settings.OLLAMA_CHAT_MODEL
+    host = base_url or settings.OLLAMA_HOST
     start = time.perf_counter()
 
     async with httpx.AsyncClient(timeout=settings.OLLAMA_TIMEOUT) as client:
         response = await client.post(
-            f"{settings.OLLAMA_HOST}/api/generate",
+            f"{host}/api/generate",
             json={
                 "model": model,
                 "prompt": prompt,
@@ -164,7 +168,11 @@ async def _call_anthropic(
 
 
 async def _call_user_ai_config(config: UserAIConfig, prompt: str, max_tokens: int | None = None) -> tuple[str, float]:
-    """Call a user's own saved BYO AI config (their key, or their custom endpoint)."""
+    """Call one bag entry — a platform default (config.user_id is None) or
+    a user's own saved BYO config (their key, or their custom endpoint)."""
+    if config.provider_type == "ollama":
+        return await _call_ollama(prompt, config.model_name, base_url=config.base_url)
+
     api_key = decrypt_secret(config.api_key_encrypted) if config.api_key_encrypted else None
 
     if config.provider_type == "anthropic":
@@ -175,6 +183,184 @@ async def _call_user_ai_config(config: UserAIConfig, prompt: str, max_tokens: in
     return await _call_openai_compatible(config.base_url, api_key, config.model_name, prompt, max_tokens)
 
 
+def _leading_own_count(bag: list[UserAIConfig]) -> int:
+    """How many entries at the start of `bag` are the user's own configs
+    (user_id is not None), before the first platform default. Used as the
+    "stop and raise here, don't silently spill into platform defaults"
+    boundary — derived from the bag's actual shape rather than from
+    whether User.ai_bag_order happens to be set, so a backfilled bag
+    order (see backfill_legacy_bag_orders()) still protects a BYO chain
+    exactly like the un-backfilled natural order does."""
+    count = 0
+    for config in bag:
+        if config.user_id is None:
+            break
+        count += 1
+    return count
+
+
+async def get_effective_bag(user: User, db: AsyncSession) -> tuple[list[UserAIConfig], int]:
+    """
+    Assemble a user's effective AI model "bag" — platform-wide defaults
+    (user_id IS NULL, admin-managed via /admin/ai-configs) plus that
+    user's own BYO configs, merged into one ordered list generate_text()
+    tries in turn. Returns (bag, own_boundary) — own_boundary is the
+    length of the leading run of the user's own configs before the first
+    platform default (see _leading_own_count()); generate_text() uses it
+    to stop and raise once that run is exhausted instead of silently
+    spilling into the platform defaults that follow.
+
+    Natural order (no explicit User.ai_bag_order override):
+      1. The user's own configs, in their *legacy* effective order — a
+         priority chain (primary/secondary/tertiary) if they set one,
+         evaluated across ALL their rows regardless of is_active (exactly
+         as before the bag existed — is_active never gated the priority
+         chain); else their single is_active config; else nothing. Kept
+         bit-for-bit the same as the pre-bag lookup so the existing
+         priority dropdown in Settings keeps working unmodified.
+      2. Platform defaults (is_active True only), sorted by order_index
+         (nulls last) then created_at.
+
+    A user's own configs are tried first — deliberately: a user who set
+    up their own key/endpoint chose to route away from the platform
+    default, so it shouldn't be demoted behind it.
+
+    If User.ai_bag_order is set (a full personal reorder — not built into
+    the UI yet, but usable via PUT /ai/configs/bag-order), it wins
+    instead. Any bag member missing from that list (e.g. a platform
+    default the admin added after the user last reordered) is appended
+    after, in the natural order above, rather than hidden.
+    """
+    own_result = await db.execute(select(UserAIConfig).where(UserAIConfig.user_id == user.id))
+    own = own_result.scalars().all()
+
+    priority_rank = {"primary": 0, "secondary": 1, "tertiary": 2}
+    chain = sorted((c for c in own if c.priority), key=lambda c: priority_rank[c.priority])
+    own_ordered = chain if chain else [c for c in own if c.is_active][:1]
+
+    platform_result = await db.execute(
+        select(UserAIConfig).where(
+            UserAIConfig.user_id.is_(None), UserAIConfig.is_active.is_(True)
+        )
+    )
+    platform_defaults = sorted(
+        platform_result.scalars().all(),
+        key=lambda c: (c.order_index is None, c.order_index or 0, c.created_at),
+    )
+
+    natural_order = [*own_ordered, *platform_defaults]
+
+    if not user.ai_bag_order:
+        return natural_order, _leading_own_count(natural_order)
+
+    by_id = {c.id: c for c in natural_order}
+    ordered = [by_id[cid] for cid in user.ai_bag_order if cid in by_id]
+    already_placed = {c.id for c in ordered}
+    ordered.extend(c for c in natural_order if c.id not in already_placed)
+    return ordered, _leading_own_count(ordered)
+
+
+async def seed_default_ai_configs() -> None:
+    """
+    One-time, idempotent seed of the platform-default AI bag from env
+    config — so the merged bag (see get_effective_bag()) reproduces today's
+    hardcoded Ollama-then-Groq fallback out of the box, and both become
+    admin-manageable/reorderable via /admin/ai-configs instead of only
+    living in settings.py. Additive only: skipped entirely once a
+    platform-default row of that provider_type already exists, so it
+    never overwrites anything an admin has since edited or removed.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(UserAIConfig.provider_type).where(UserAIConfig.user_id.is_(None))
+        )
+        existing_types = {row[0] for row in result.all()}
+
+        if "ollama" not in existing_types:
+            db.add(
+                UserAIConfig(
+                    user_id=None,
+                    provider_type="ollama",
+                    base_url=settings.OLLAMA_HOST,
+                    model_name=settings.OLLAMA_CHAT_MODEL,
+                    label="Platform default (Ollama, local)",
+                    is_active=True,
+                    order_index=0,
+                )
+            )
+            logger.info("✅ Seeded platform-default Ollama AI config into the bag")
+
+        if "groq" not in existing_types and settings.GROQ_API_KEY:
+            db.add(
+                UserAIConfig(
+                    user_id=None,
+                    provider_type="groq",
+                    base_url=settings.GROQ_BASE_URL,
+                    api_key_encrypted=encrypt_secret(settings.GROQ_API_KEY),
+                    model_name=settings.GROQ_DEFAULT_MODEL,
+                    label="Platform default (Groq)",
+                    is_active=True,
+                    order_index=1,
+                )
+            )
+            logger.info("✅ Seeded platform-default Groq AI config into the bag")
+
+        await db.commit()
+
+
+async def backfill_legacy_bag_orders() -> None:
+    """
+    One-time convenience migration for users who already had their own
+    UserAIConfig row(s) — priority chain or single is_active — before the
+    bag existed. get_effective_bag()'s *natural* order already reproduces
+    their old effective order bit-for-bit on every call without this (it
+    recomputes the chain/single-active lookup fresh each time), so this
+    isn't required for correctness. What it does buy: once a future
+    drag-to-reorder UI reads/writes ai_bag_order, an existing user's first
+    visit starts from their historical order instead of an unset field
+    that UI would otherwise have to special-case.
+
+    Only touches users who (a) own at least one UserAIConfig row and (b)
+    have never set ai_bag_order — never overwrites a real customization.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(UserAIConfig).where(UserAIConfig.user_id.is_not(None))
+        )
+        own_by_user: dict[str, list[UserAIConfig]] = {}
+        for config in result.scalars().all():
+            own_by_user.setdefault(config.user_id, []).append(config)
+
+        if not own_by_user:
+            return
+
+        users_result = await db.execute(
+            select(User).where(User.id.in_(own_by_user.keys()), User.ai_bag_order.is_(None))
+        )
+        users = users_result.scalars().all()
+        if not users:
+            return
+
+        priority_rank = {"primary": 0, "secondary": 1, "tertiary": 2}
+        backfilled = 0
+        for user in users:
+            configs = own_by_user[user.id]
+            chain = sorted((c for c in configs if c.priority), key=lambda c: priority_rank[c.priority])
+            if chain:
+                ordered_ids = [c.id for c in chain]
+            else:
+                active = [c for c in configs if c.is_active][:1]
+                ordered_ids = [c.id for c in active] if active else None
+
+            if ordered_ids:
+                user.ai_bag_order = ordered_ids
+                backfilled += 1
+
+        if backfilled:
+            await db.commit()
+            logger.info(f"✅ Backfilled ai_bag_order for {backfilled} user(s) with a pre-bag AI config")
+
+
 async def generate_text(
     prompt: str,
     model: str | None = None,
@@ -183,79 +369,65 @@ async def generate_text(
     db: Optional[AsyncSession] = None,
 ) -> dict:
     """
-    Generate text using local Ollama first, falling back to Groq cloud —
-    unless `user` has their own AI config(s), in which case those are
-    used exclusively instead of the platform default.
+    Generate text by walking the caller's effective AI model "bag" — see
+    get_effective_bag(). In natural (uncustomized) order that's the user's
+    own config(s) first — a priority chain if they set one, else their
+    single is_active config (legacy behavior, unchanged) — then the
+    platform defaults (Ollama, then Groq: seeded at startup by
+    seed_default_ai_configs(), admin-manageable via /admin/ai-configs).
 
-    If the user has assigned a priority (primary/secondary/tertiary) to
-    any of their configs, they're tried in that order, falling through
-    to the next on failure. If none have a priority set, the single
-    `is_active` config is used instead (legacy behavior, unchanged).
+    A user's own config(s) failing does NOT fall through into the
+    platform defaults unless the user has explicitly customized their bag
+    order (User.ai_bag_order) to interleave them — by default it raises
+    AIError once their own chain is exhausted, same as before the bag
+    existed. Silently falling back would spend VengaiCode's own Groq
+    quota on a request the user deliberately routed elsewhere, and would
+    hide the real problem with their config.
 
-    Either way, a BYO config never falls back to the platform Ollama/Groq
-    path on failure — it raises AIError directly once the chain (or the
-    single active config) is exhausted. Silently falling back would spend
-    VengaiCode's own Groq quota on a request the user deliberately routed
-    elsewhere, and would hide the real problem with their config.
+    If the bag is entirely empty (e.g. seeding hasn't run yet), falls
+    back to a hardcoded Ollama-then-Groq call as a last-resort safety net.
 
-    `max_tokens` only applies to the Groq fallback — Ollama's local models
-    are bounded by their own context window, not a per-request token cap.
+    `max_tokens` only applies to Groq-shaped calls — Ollama's local
+    models are bounded by their own context window, not a per-request
+    token cap.
     """
-    # ── Use the user's own AI config(s), if they have any ──
+    # ── Walk the effective bag (own config(s), then platform defaults) ──
     if user is not None and db is not None:
-        result = await db.execute(
-            select(UserAIConfig).where(
-                UserAIConfig.user_id == user.id, UserAIConfig.priority.is_not(None)
-            )
-        )
-        priority_rank = {"primary": 0, "secondary": 1, "tertiary": 2}
-        chain = sorted(result.scalars().all(), key=lambda c: priority_rank[c.priority])
+        bag, own_boundary = await get_effective_bag(user, db)
 
-        if chain:
+        if bag:
             errors: list[str] = []
-            for byo_config in chain:
+            for i, bag_config in enumerate(bag):
                 try:
-                    text, duration_ms = await _call_user_ai_config(byo_config, prompt, max_tokens)
+                    text, duration_ms = await _call_user_ai_config(bag_config, prompt, max_tokens)
+                    source = "byo" if bag_config.user_id is not None else "platform"
                     return {
                         "text": text,
-                        "source": f"byo:{byo_config.provider_type}",
+                        "source": f"{source}:{bag_config.provider_type}",
                         "duration_ms": duration_ms,
-                        "model": byo_config.model_name,
+                        "model": bag_config.model_name,
                     }
                 except Exception as e:
                     logger.warning(
-                        f"BYO AI config '{byo_config.label}' ({byo_config.priority}) failed: {e} "
-                        "— trying next in the fallback chain"
+                        f"AI config '{bag_config.label}' failed: {e} — trying next in the bag"
                     )
-                    errors.append(f"{byo_config.label}: {e}")
-            raise AIError(
-                "None of your configured AI models responded (tried in order: "
-                f"{', '.join(errors)}). Check they're running and reachable, or switch "
-                "back to VengaiCode's default AI in Settings."
-            )
+                    errors.append(f"{bag_config.label}: {e}")
 
-        # No fallback chain set up — fall back to the legacy single-active lookup.
-        result = await db.execute(
-            select(UserAIConfig).where(
-                UserAIConfig.user_id == user.id, UserAIConfig.is_active.is_(True)
+                if i + 1 == own_boundary:
+                    # Exhausted the user's own chain without a customized
+                    # bag order — stop here rather than silently spending
+                    # platform quota (see docstring).
+                    raise AIError(
+                        "None of your configured AI models responded (tried in order: "
+                        f"{', '.join(errors)}). Check they're running and reachable, or switch "
+                        "back to VengaiCode's default AI in Settings."
+                    )
+
+            raise AIError(
+                "Both local AI (Ollama) and cloud AI (Groq) are unavailable. "
+                "Baby Tiger can't think right now! 🐯💭 Please check your "
+                "Ollama installation or Groq API key configuration."
             )
-        )
-        byo_config = result.scalar_one_or_none()
-        if byo_config is not None:
-            try:
-                text, duration_ms = await _call_user_ai_config(byo_config, prompt, max_tokens)
-                return {
-                    "text": text,
-                    "source": f"byo:{byo_config.provider_type}",
-                    "duration_ms": duration_ms,
-                    "model": byo_config.model_name,
-                }
-            except Exception as e:
-                logger.error(f"BYO AI config '{byo_config.label}' failed: {e}")
-                raise AIError(
-                    f"Your configured AI model ('{byo_config.label}') didn't respond: {e}. "
-                    "Check it's running and reachable, or switch back to VengaiCode's default AI in Settings."
-                )
 
     # ── Try Ollama first ──
     try:

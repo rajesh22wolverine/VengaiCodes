@@ -20,6 +20,7 @@ export default function AppLayout() {
       <Stack.Screen name="project/[id]/export" options={{ headerShown: true, title: "Export" }} />
       <Stack.Screen name="admin/index" options={{ headerShown: true, title: "Admin" }} />
       <Stack.Screen name="admin/users/[id]" options={{ headerShown: true, title: "User Detail" }} />
+      <Stack.Screen name="admin/ai-models" options={{ headerShown: true, title: "AI Models" }} />
     </Stack>
   );
 }

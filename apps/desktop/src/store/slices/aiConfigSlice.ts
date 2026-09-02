@@ -28,11 +28,22 @@ export interface CreateAIConfigInput {
   priority?: AIConfigPriority;
 }
 
+// ─── Bag — the merged, ordered view of platform defaults + this user's
+// own configs that app.ai.orchestrator.get_effective_bag() assembles and
+// generate_text() walks through. Supersedes `priority` above. ───
+export interface BagConfig extends AIConfig {
+  is_platform_default: boolean;
+  order_index: number | null;
+}
+
 interface AIConfigState {
   configs: AIConfig[];
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
+  bag: BagConfig[];
+  isBagLoading: boolean;
+  isBagSaving: boolean;
 }
 
 const initialState: AIConfigState = {
@@ -40,6 +51,9 @@ const initialState: AIConfigState = {
   isLoading: false,
   isSaving: false,
   error: null,
+  bag: [],
+  isBagLoading: false,
+  isBagSaving: false,
 };
 
 /** GET /ai/configs */
@@ -96,19 +110,28 @@ export const useDefaultAI = createAsyncThunk(
   }
 );
 
-/** PATCH /ai/configs/{id} — assign or clear a config's fallback-chain slot */
-export const setConfigPriority = createAsyncThunk(
-  "aiConfig/setPriority",
-  async (
-    { id, priority }: { id: string; priority: AIConfigPriority | null },
-    { rejectWithValue }
-  ) => {
+/** GET /ai/configs/bag — the merged, ordered bag (platform defaults + own configs) */
+export const fetchAIBag = createAsyncThunk(
+  "aiConfig/fetchBag",
+  async (_: void, { rejectWithValue }) => {
     try {
-      const body = priority ? { priority } : { clear_priority: true };
-      const { data } = await apiClient.patch(`/ai/configs/${id}`, body);
-      return data.config as AIConfig;
+      const { data } = await apiClient.get("/ai/configs/bag");
+      return data.bag as BagConfig[];
     } catch (error: any) {
-      return rejectWithValue(error.message || "Failed to update fallback order");
+      return rejectWithValue(error.message || "Failed to load AI model order");
+    }
+  }
+);
+
+/** PUT /ai/configs/bag-order — save a personal reorder of the bag */
+export const setAIBagOrder = createAsyncThunk(
+  "aiConfig/setBagOrder",
+  async (order: string[], { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.put("/ai/configs/bag-order", { order });
+      return data.bag as BagConfig[];
+    } catch (error: any) {
+      return rejectWithValue(error.message || "Failed to save the new order");
     }
   }
 );
@@ -153,7 +176,6 @@ const aiConfigSlice = createSlice({
         state.configs = state.configs.map((c) => ({
           ...c,
           is_active: action.payload.is_active ? false : c.is_active,
-          priority: action.payload.priority && c.priority === action.payload.priority ? null : c.priority,
         }));
         state.configs.unshift(action.payload);
       })
@@ -167,20 +189,34 @@ const aiConfigSlice = createSlice({
           is_active: c.id === action.payload.id,
         }));
       })
-      .addCase(setConfigPriority.fulfilled, (state, action: PayloadAction<AIConfig>) => {
-        state.configs = state.configs.map((c) => {
-          if (c.id === action.payload.id) return action.payload;
-          if (action.payload.priority && c.priority === action.payload.priority) {
-            return { ...c, priority: null };
-          }
-          return c;
-        });
-      })
       .addCase(useDefaultAI.fulfilled, (state) => {
         state.configs = state.configs.map((c) => ({ ...c, is_active: false }));
       })
       .addCase(deleteAIConfig.fulfilled, (state, action: PayloadAction<string>) => {
         state.configs = state.configs.filter((c) => c.id !== action.payload);
+        state.bag = state.bag.filter((c) => c.id !== action.payload);
+      })
+      .addCase(fetchAIBag.pending, (state) => {
+        state.isBagLoading = true;
+      })
+      .addCase(fetchAIBag.fulfilled, (state, action: PayloadAction<BagConfig[]>) => {
+        state.isBagLoading = false;
+        state.bag = action.payload;
+      })
+      .addCase(fetchAIBag.rejected, (state, action) => {
+        state.isBagLoading = false;
+        state.error = action.payload as string;
+      })
+      .addCase(setAIBagOrder.pending, (state) => {
+        state.isBagSaving = true;
+      })
+      .addCase(setAIBagOrder.fulfilled, (state, action: PayloadAction<BagConfig[]>) => {
+        state.isBagSaving = false;
+        state.bag = action.payload;
+      })
+      .addCase(setAIBagOrder.rejected, (state, action) => {
+        state.isBagSaving = false;
+        state.error = action.payload as string;
       });
   },
 });

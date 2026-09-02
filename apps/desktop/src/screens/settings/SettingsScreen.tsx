@@ -1,7 +1,21 @@
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { motion } from "framer-motion";
-import { AlertTriangle, Check, Cpu, Figma, HardDrive, Loader2, Plus, Radar, Sparkles, Trash2, Usb } from "lucide-react";
+import { motion, Reorder } from "framer-motion";
+import {
+  AlertTriangle,
+  Check,
+  Cpu,
+  Figma,
+  GripVertical,
+  HardDrive,
+  Loader2,
+  Plus,
+  Radar,
+  Server,
+  Sparkles,
+  Trash2,
+  Usb,
+} from "lucide-react";
 import toast from "react-hot-toast";
 import { invoke } from "@tauri-apps/api/tauri";
 
@@ -9,13 +23,14 @@ import { AppDispatch, RootState } from "@/store";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import { IS_LOCAL_BACKEND } from "@/lib/api";
 import {
-  AIConfigPriority,
   AIProviderType,
+  BagConfig,
   createAIConfig,
   deleteAIConfig,
+  fetchAIBag,
   fetchAIConfigs,
   setActiveAIConfig,
-  setConfigPriority,
+  setAIBagOrder,
   useDefaultAI,
 } from "@/store/slices/aiConfigSlice";
 import { connectFigma, disconnectFigma, fetchFigmaStatus } from "@/store/slices/figmaSlice";
@@ -26,12 +41,6 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   anthropic: "Anthropic Claude (your own key)",
   custom: "Custom endpoint (self-hosted / local)",
   portable: "Portable AI model (USB)",
-};
-
-const PRIORITY_LABELS: Record<AIConfigPriority, string> = {
-  primary: "Primary",
-  secondary: "Secondary",
-  tertiary: "Tertiary",
 };
 
 // Fixed local ports the bundled portable-engine sidecar can run on — one
@@ -81,7 +90,9 @@ const LOCAL_STUDIO_URL = "http://127.0.0.1:10086";
 
 export default function SettingsScreen() {
   const dispatch = useDispatch<AppDispatch>();
-  const { configs, isLoading, isSaving } = useSelector((state: RootState) => state.aiConfig);
+  const { configs, isLoading, isSaving, bag, isBagSaving } = useSelector(
+    (state: RootState) => state.aiConfig
+  );
   const {
     connected: figmaConnected,
     figmaHandle,
@@ -102,17 +113,27 @@ export default function SettingsScreen() {
   const [isScanningDrives, setIsScanningDrives] = useState(false);
   const [foundModels, setFoundModels] = useState<PortableModelInfo[]>([]);
   const [launchingModelPath, setLaunchingModelPath] = useState<string | null>(null);
-  const [pendingPortable, setPendingPortable] = useState<{
-    engine: PortableEngineStatus;
-    model: PortableModelInfo;
-  } | null>(null);
+
+  // Local, immediately-reorderable copy of the bag — Reorder.Group needs to
+  // mutate order on every drag frame, well before the PUT round-trip that
+  // persists it lands and refreshes Redux state.
+  const [bagOrder, setBagOrder] = useState<BagConfig[]>([]);
 
   useEffect(() => {
     dispatch(fetchAIConfigs());
+    dispatch(fetchAIBag());
     dispatch(fetchFigmaStatus());
   }, [dispatch]);
 
+  useEffect(() => {
+    setBagOrder(bag);
+  }, [bag]);
+
   const activeConfig = configs.find((c) => c.is_active);
+
+  const refreshBag = () => {
+    dispatch(fetchAIBag());
+  };
 
   const resetForm = () => {
     setProviderType("groq");
@@ -147,6 +168,7 @@ export default function SettingsScreen() {
     if (createAIConfig.fulfilled.match(result)) {
       toast.success(`Now using "${result.payload.label}" 🐯`);
       resetForm();
+      refreshBag();
     } else {
       toast.error((result.payload as string) || "Failed to save AI model.");
     }
@@ -155,18 +177,21 @@ export default function SettingsScreen() {
   const handleUseDefault = async () => {
     await dispatch(useDefaultAI(activeConfig?.id));
     toast.success("Switched back to VengaiCode's default AI.");
+    refreshBag();
   };
 
   const handleSetActive = async (id: string) => {
     const result = await dispatch(setActiveAIConfig(id));
     if (setActiveAIConfig.fulfilled.match(result)) {
       toast.success(`Now using "${result.payload.label}" 🐯`);
+      refreshBag();
     }
   };
 
   const handleDelete = async (id: string) => {
     await dispatch(deleteAIConfig(id));
     toast.success("Removed.");
+    refreshBag();
   };
 
   const detectLocalModel = async () => {
@@ -190,7 +215,7 @@ export default function SettingsScreen() {
     }
   };
 
-  // ── Portable AI model (USB drive) — detect, launch, and assign priority ──
+  // ── Portable AI model (USB drive) — detect and launch ──
 
   const detectPortableModel = async () => {
     setIsScanningDrives(true);
@@ -238,9 +263,24 @@ export default function SettingsScreen() {
         modelPath: model.path,
         port: nextPortablePort(),
       });
-      setPendingPortable({ engine, model });
       setFoundModels((prev) => prev.filter((m) => m.path !== model.path));
-      toast.success(`"${model.display_name}" is running — choose its priority below.`);
+
+      const result = await dispatch(
+        createAIConfig({
+          provider_type: "portable",
+          base_url: engine.base_url,
+          model_name: model.display_name,
+          label: buildPortableLabel(model.display_name),
+          is_active: configs.length === 0,
+        })
+      );
+
+      if (createAIConfig.fulfilled.match(result)) {
+        toast.success(`"${model.display_name}" added 🐯 Drag it into place below to set its order.`);
+        refreshBag();
+      } else {
+        toast.error((result.payload as string) || "Failed to save the portable AI model.");
+      }
     } catch (error: any) {
       toast.error(error?.toString?.() || "Failed to start the portable AI model.");
     } finally {
@@ -248,33 +288,14 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleConfirmPortablePriority = async (priority: AIConfigPriority | null) => {
-    if (!pendingPortable) return;
-    const { engine, model } = pendingPortable;
+  // ── AI model order (drag-to-reorder bag) ──
 
-    const result = await dispatch(
-      createAIConfig({
-        provider_type: "portable",
-        base_url: engine.base_url,
-        model_name: model.display_name,
-        label: buildPortableLabel(model.display_name),
-        is_active: configs.length === 0,
-        priority: priority ?? undefined,
-      })
-    );
-
-    if (createAIConfig.fulfilled.match(result)) {
-      toast.success(`"${model.display_name}" added 🐯`);
-      setPendingPortable(null);
-    } else {
-      toast.error((result.payload as string) || "Failed to save the portable AI model.");
-    }
-  };
-
-  const handleChangePriority = async (id: string, priority: AIConfigPriority | null) => {
-    const result = await dispatch(setConfigPriority({ id, priority }));
-    if (setConfigPriority.fulfilled.match(result)) {
-      toast.success(priority ? `Set as ${PRIORITY_LABELS[priority]}.` : "Removed from fallback order.");
+  const handleBagReorder = async (next: BagConfig[]) => {
+    setBagOrder(next); // optimistic — Reorder.Group already animated it
+    const result = await dispatch(setAIBagOrder(next.map((c) => c.id)));
+    if (!setAIBagOrder.fulfilled.match(result)) {
+      toast.error((result.payload as string) || "Failed to save the new order.");
+      refreshBag();
     }
   };
 
@@ -409,34 +430,6 @@ export default function SettingsScreen() {
               </div>
             )}
 
-            {/* Portable model launched — ask primary/secondary/tertiary */}
-            {pendingPortable && (
-              <div className="space-y-2.5 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] p-4">
-                <p className="text-sm font-medium text-[var(--color-text-primary)]">
-                  "{pendingPortable.model.display_name}" is running. Set its priority among your AI models:
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {(["primary", "secondary", "tertiary"] as AIConfigPriority[]).map((tier) => (
-                    <button
-                      key={tier}
-                      onClick={() => handleConfirmPortablePriority(tier)}
-                      disabled={isSaving}
-                      className="px-3 py-1.5 rounded-lg border border-[var(--color-primary)] bg-[var(--color-surface)] text-xs font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white transition-colors disabled:opacity-60"
-                    >
-                      {PRIORITY_LABELS[tier]}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => handleConfirmPortablePriority(null)}
-                    disabled={isSaving}
-                    className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60"
-                  >
-                    Just save, no order yet
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Current status */}
             <div className="flex items-center justify-between rounded-xl bg-[var(--color-background)] border border-[var(--color-border)] px-4 py-3">
               <div>
@@ -478,33 +471,12 @@ export default function SettingsScreen() {
                               <Check className="w-2.5 h-2.5" /> Active
                             </span>
                           )}
-                          {config.priority && (
-                            <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-surface-raised)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[10px] font-semibold">
-                              {PRIORITY_LABELS[config.priority]}
-                            </span>
-                          )}
                         </div>
                         <p className="text-xs text-[var(--color-text-tertiary)] truncate">
                           {PROVIDER_LABELS[config.provider_type]} · {config.model_name}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <select
-                          value={config.priority ?? ""}
-                          onChange={(e) =>
-                            handleChangePriority(
-                              config.id,
-                              (e.target.value || null) as AIConfigPriority | null
-                            )
-                          }
-                          title="Fallback order"
-                          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-secondary)] outline-none focus:border-[var(--color-primary)]"
-                        >
-                          <option value="">No order</option>
-                          <option value="primary">Primary</option>
-                          <option value="secondary">Secondary</option>
-                          <option value="tertiary">Tertiary</option>
-                        </select>
                         {!config.is_active && (
                           <button
                             onClick={() => handleSetActive(config.id)}
@@ -524,6 +496,54 @@ export default function SettingsScreen() {
                   ))}
                 </div>
               )
+            )}
+
+            {/* AI model order — drag to reorder the effective fallback chain:
+                own configs plus VengaiCode's platform defaults (Ollama, Groq),
+                all in one list. Whatever's on top is tried first. */}
+            {bagOrder.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-[var(--color-text-secondary)]">
+                    AI model order — drag to change what's tried first
+                  </p>
+                  {isBagSaving && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-tertiary)]" />}
+                </div>
+                <Reorder.Group
+                  as="div"
+                  axis="y"
+                  values={bagOrder}
+                  onReorder={handleBagReorder}
+                  className="space-y-1.5"
+                >
+                  {bagOrder.map((entry, index) => (
+                    <Reorder.Item
+                      as="div"
+                      key={entry.id}
+                      value={entry}
+                      className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 cursor-grab active:cursor-grabbing"
+                    >
+                      <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-tertiary)] flex-shrink-0" />
+                      <span className="text-[10px] font-mono text-[var(--color-text-tertiary)] w-4 flex-shrink-0">
+                        {index + 1}
+                      </span>
+                      {entry.is_platform_default ? (
+                        <Server className="w-3.5 h-3.5 text-[var(--color-text-tertiary)] flex-shrink-0" />
+                      ) : (
+                        <Cpu className="w-3.5 h-3.5 text-[var(--color-primary)] flex-shrink-0" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">
+                          {entry.label}
+                        </p>
+                      </div>
+                      <span className="flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-raised)] text-[var(--color-text-tertiary)]">
+                        {entry.is_platform_default ? "VengaiCode default" : "Your config"}
+                      </span>
+                    </Reorder.Item>
+                  ))}
+                </Reorder.Group>
+              </div>
             )}
 
             {/* Add form */}
