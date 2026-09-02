@@ -310,13 +310,18 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️  AI model bag seeding/backfill failed: {e}")
 
     # ── Redis (optional) ──
-    try:
-        from app.core.redis import get_redis
-        redis = await get_redis()
-        await redis.ping()
+    # This used to import a get_redis() factory that never existed in
+    # core/redis.py (only a module-level `redis_client`), so it always
+    # failed on the import itself before ever reaching a real ping.
+    # check_connection() also primes the circuit breaker on failure, so
+    # every request-path helper (rate_limit_check, is_token_blocklisted,
+    # ...) already knows to skip Redis instead of each paying its own
+    # timeout on the first request.
+    from app.core.redis import check_connection as check_redis_connection
+    if await check_redis_connection():
         logger.info("✅ Redis connection established")
-    except Exception as e:
-        logger.warning(f"⚠️  Redis connection failed: {e} — caching disabled")
+    else:
+        logger.warning("⚠️  Redis connection failed — caching/rate-limiting disabled")
 
     # ── AI Backend Check (optional) ──
     try:
