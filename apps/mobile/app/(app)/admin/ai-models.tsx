@@ -11,7 +11,8 @@ import { useTheme } from "@/theme/useTheme";
 // ─── Platform-default AI config (user_id IS NULL) — mirrors backend
 // AdminAIConfigResponse. Sits in every user's AI model bag alongside
 // their own BYO configs — see app/ai/orchestrator.get_effective_bag(). ───
-type AdminProviderType = "groq" | "openai" | "anthropic" | "custom" | "ollama";
+type AdminProviderType = "groq" | "openai" | "anthropic" | "xai" | "custom" | "ollama";
+type AdminTaskType = "codegen" | "general";
 
 interface PlatformAIConfig {
   id: string;
@@ -22,6 +23,7 @@ interface PlatformAIConfig {
   label: string;
   is_active: boolean;
   order_index: number | null;
+  task_type: AdminTaskType | null;
   created_at: string;
 }
 
@@ -29,11 +31,18 @@ const PROVIDERS: { value: AdminProviderType; label: string }[] = [
   { value: "groq", label: "Groq" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic Claude" },
+  { value: "xai", label: "Grok / xAI" },
   { value: "ollama", label: "Ollama (local/self-hosted)" },
   { value: "custom", label: "Custom endpoint" },
 ];
 
-const PROVIDERS_REQUIRING_KEY = new Set<AdminProviderType>(["groq", "openai", "anthropic"]);
+const PROVIDERS_REQUIRING_KEY = new Set<AdminProviderType>(["groq", "openai", "anthropic", "xai"]);
+
+const TASK_TYPES: { value: AdminTaskType | ""; label: string }[] = [
+  { value: "", label: "Any task (default)" },
+  { value: "codegen", label: "Code generation only" },
+  { value: "general", label: "Chat & planning only" },
+];
 
 interface FormState {
   provider_type: AdminProviderType;
@@ -42,6 +51,7 @@ interface FormState {
   model_name: string;
   label: string;
   is_active: boolean;
+  task_type: AdminTaskType | "";
 }
 
 const EMPTY_FORM: FormState = {
@@ -51,6 +61,7 @@ const EMPTY_FORM: FormState = {
   model_name: "",
   label: "",
   is_active: true,
+  task_type: "",
 };
 
 export default function AIModelsScreen() {
@@ -111,6 +122,7 @@ export default function AIModelsScreen() {
         label: form.label.trim(),
         is_active: form.is_active,
         order_index: configs.length,
+        task_type: form.task_type || undefined,
       });
       setConfigs((prev) => [...prev, data.config]);
       showToast(`"${data.config.label}" added to every user's AI model bag 🐯`);
@@ -202,6 +214,13 @@ export default function AIModelsScreen() {
                     ) : (
                       <View style={[styles.badge, { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }]}>
                         <Text style={{ color: colors.textTertiary, fontSize: 9, fontWeight: "700" }}>Paused</Text>
+                      </View>
+                    )}
+                    {config.task_type && (
+                      <View style={[styles.badge, { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.primary }]}>
+                        <Text style={{ color: colors.primary, fontSize: 9, fontWeight: "700" }}>
+                          {config.task_type === "codegen" ? "Codegen only" : "Chat only"}
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -299,6 +318,25 @@ export default function AIModelsScreen() {
                 placeholderTextColor={colors.textTertiary}
                 style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               />
+
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Use for</Text>
+              <View style={styles.chipRow}>
+                {TASK_TYPES.map((t) => {
+                  const selected = form.task_type === t.value;
+                  return (
+                    <Pressable
+                      key={t.value || "any"}
+                      onPress={() => setForm((f) => ({ ...f, task_type: t.value }))}
+                      style={[
+                        styles.chip,
+                        { borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primaryLight : colors.background },
+                      ]}
+                    >
+                      <Text style={{ color: selected ? colors.primary : colors.textSecondary, fontSize: 11, fontWeight: "600" }}>{t.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
 
               <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
                 <Pressable onPress={handleSave} disabled={isSaving} style={[styles.saveButton, { backgroundColor: colors.primary, opacity: isSaving ? 0.6 : 1 }]}>

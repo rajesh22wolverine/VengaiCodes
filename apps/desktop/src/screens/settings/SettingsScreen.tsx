@@ -24,6 +24,7 @@ import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import { IS_LOCAL_BACKEND } from "@/lib/api";
 import {
   AIProviderType,
+  AIConfigTaskType,
   BagConfig,
   createAIConfig,
   deleteAIConfig,
@@ -39,6 +40,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   groq: "Groq (your own key)",
   openai: "OpenAI (your own key)",
   anthropic: "Anthropic Claude (your own key)",
+  xai: "Grok / xAI (your own key)",
   custom: "Custom endpoint (self-hosted / local)",
   portable: "Portable AI model (USB)",
 };
@@ -109,6 +111,7 @@ export default function SettingsScreen() {
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState("");
   const [label, setLabel] = useState("");
+  const [taskType, setTaskType] = useState<AIConfigTaskType | "">("");
 
   const [isScanningDrives, setIsScanningDrives] = useState(false);
   const [foundModels, setFoundModels] = useState<PortableModelInfo[]>([]);
@@ -141,6 +144,7 @@ export default function SettingsScreen() {
     setApiKey("");
     setModelName("");
     setLabel("");
+    setTaskType("");
     setShowForm(false);
   };
 
@@ -162,6 +166,7 @@ export default function SettingsScreen() {
         model_name: modelName.trim(),
         label: label.trim(),
         is_active: true,
+        task_type: taskType || undefined,
       })
     );
 
@@ -537,6 +542,11 @@ export default function SettingsScreen() {
                           {entry.label}
                         </p>
                       </div>
+                      {entry.task_type && (
+                        <span className="flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
+                          {entry.task_type === "codegen" ? "Codegen only" : "Chat only"}
+                        </span>
+                      )}
                       <span className="flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--color-surface-raised)] text-[var(--color-text-tertiary)]">
                         {entry.is_platform_default ? "VengaiCode default" : "Your config"}
                       </span>
@@ -603,7 +613,7 @@ export default function SettingsScreen() {
                   <input
                     value={modelName}
                     onChange={(e) => setModelName(e.target.value)}
-                    placeholder="e.g. llama3-70b-8192, or whatever's currently loaded locally"
+                    placeholder="e.g. llama3-70b-8192, grok-4, or whatever's currently loaded locally"
                     className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
                   />
                 </div>
@@ -618,6 +628,21 @@ export default function SettingsScreen() {
                     placeholder="e.g. My local Qwen (USB)"
                     className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                    Use for
+                  </label>
+                  <select
+                    value={taskType}
+                    onChange={(e) => setTaskType(e.target.value as AIConfigTaskType | "")}
+                    className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                  >
+                    <option value="">Any task (default)</option>
+                    <option value="codegen">Code generation only</option>
+                    <option value="general">Chat &amp; planning only</option>
+                  </select>
                 </div>
 
                 <div className="flex gap-2 pt-1">

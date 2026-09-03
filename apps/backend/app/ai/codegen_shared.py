@@ -189,7 +189,9 @@ async def generate_text_validated(
     BYO/portable AI config (Settings -> AI Model) is honored here too —
     every codegen adapter calls this instead of generate_text() directly.
     """
-    result = await generate_text(prompt, max_tokens=max_tokens, user=user, db=db)
+    result = await generate_text(
+        prompt, max_tokens=max_tokens, user=user, db=db, task_type="codegen"
+    )
     content = strip_code_fences(result["text"])
     issue = validate_generated_content(language, content)
 
@@ -199,7 +201,9 @@ async def generate_text_validated(
             f"Return the corrected, COMPLETE file only — no truncation, "
             f"no markdown fences, no explanation."
         )
-        result = await generate_text(retry_prompt, max_tokens=max_tokens, user=user, db=db)
+        result = await generate_text(
+            retry_prompt, max_tokens=max_tokens, user=user, db=db, task_type="codegen"
+        )
         content = strip_code_fences(result["text"])
         issue = validate_generated_content(language, content)
 

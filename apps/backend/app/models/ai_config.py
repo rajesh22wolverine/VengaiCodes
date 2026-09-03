@@ -54,8 +54,8 @@ class UserAIConfig(Base):
         nullable=True,
     )
 
-    # "groq" | "openai" | "anthropic" | "custom" | "portable" — all but
-    # "anthropic" speak the same OpenAI-compatible /chat/completions
+    # "groq" | "openai" | "anthropic" | "xai" | "custom" | "portable" — all
+    # but "anthropic" speak the same OpenAI-compatible /chat/completions
     # request shape, so one generic call path in orchestrator.py serves
     # them. "portable" is a custom endpoint backed by a locally-launched
     # inference engine (e.g. a model found on a USB drive).
@@ -89,6 +89,12 @@ class UserAIConfig(Base):
     # Deprecated — superseded by User.ai_bag_order. Left in place
     # (unread/unwritten by new code) rather than dropped, since this
     # codebase has no migration path for dropping columns.
+
+    task_type: Optional[str] = Column(String(20), nullable=True)
+    # "codegen" | "general" | NULL. NULL ("untagged") matches every
+    # request — what every row was before task-aware routing existed, so
+    # nobody's bag changes shape until a config is explicitly tagged into
+    # one bucket. See app.ai.orchestrator._task_type_ok()/get_effective_bag().
 
     created_at: datetime = Column(
         DateTime(timezone=True),

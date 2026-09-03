@@ -70,6 +70,8 @@ def _user_snapshot(user: User) -> dict:
         "is_vip": user.is_vip,
         "is_free_extended": user.is_free_extended,
         "free_extended_until": _jsonable(user.free_extended_until),
+        "projects_limit": user.projects_limit,
+        "ai_tokens_limit": user.ai_tokens_limit,
     }
 
 
@@ -245,6 +247,8 @@ class AdminUserUpdateRequest(BaseModel):
     is_vip: Optional[bool] = None
     is_free_extended: Optional[bool] = None
     free_extended_until: Optional[datetime] = None
+    projects_limit: Optional[int] = None
+    ai_tokens_limit: Optional[int] = None
 
 
 _STATUS_ACTION_MAP = {
@@ -295,6 +299,8 @@ async def admin_update_user(
         action_types.append("restrict")
         user.restricted_by = admin.id
         user.restriction_count = (user.restriction_count or 0) + 1
+    if "projects_limit" in updates or "ai_tokens_limit" in updates:
+        action_types.append("adjust_limits")
 
     for field, value in updates.items():
         setattr(user, field, value)
@@ -630,6 +636,7 @@ async def admin_create_ai_config(
         label=payload.label,
         is_active=payload.is_active,
         order_index=payload.order_index,
+        task_type=payload.task_type,
     )
     db.add(config)
     await db.flush()
@@ -692,6 +699,10 @@ async def admin_update_ai_config(
         config.order_index = payload.order_index
     elif payload.clear_order_index:
         config.order_index = None
+    if payload.task_type is not None:
+        config.task_type = payload.task_type
+    elif payload.clear_task_type:
+        config.task_type = None
 
     await _log_action(
         db=db,

@@ -18,7 +18,8 @@ import BabyTiger from "@/components/baby-tiger/BabyTiger";
 // AdminAIConfigResponse in apps/backend/app/schemas/ai_config.py. These
 // sit in every user's "bag" alongside their own BYO configs — see
 // app/ai/orchestrator.get_effective_bag(). ───
-type AdminProviderType = "groq" | "openai" | "anthropic" | "custom" | "ollama";
+type AdminProviderType = "groq" | "openai" | "anthropic" | "xai" | "custom" | "ollama";
+type AdminTaskType = "codegen" | "general";
 
 interface PlatformAIConfig {
   id: string;
@@ -29,6 +30,7 @@ interface PlatformAIConfig {
   label: string;
   is_active: boolean;
   order_index: number | null;
+  task_type: AdminTaskType | null;
   created_at: string;
   updated_at: string;
 }
@@ -37,11 +39,12 @@ const PROVIDER_LABELS: Record<AdminProviderType, string> = {
   groq: "Groq",
   openai: "OpenAI",
   anthropic: "Anthropic Claude",
+  xai: "Grok / xAI",
   ollama: "Ollama (local or self-hosted)",
   custom: "Custom OpenAI-compatible endpoint",
 };
 
-const PROVIDERS_REQUIRING_KEY = new Set<AdminProviderType>(["groq", "openai", "anthropic"]);
+const PROVIDERS_REQUIRING_KEY = new Set<AdminProviderType>(["groq", "openai", "anthropic", "xai"]);
 
 interface FormState {
   provider_type: AdminProviderType;
@@ -50,6 +53,7 @@ interface FormState {
   model_name: string;
   label: string;
   is_active: boolean;
+  task_type: AdminTaskType | "";
 }
 
 const EMPTY_FORM: FormState = {
@@ -59,6 +63,7 @@ const EMPTY_FORM: FormState = {
   model_name: "",
   label: "",
   is_active: true,
+  task_type: "",
 };
 
 export default function AIModelsScreen() {
@@ -101,6 +106,7 @@ export default function AIModelsScreen() {
       model_name: config.model_name,
       label: config.label,
       is_active: config.is_active,
+      task_type: config.task_type || "",
     });
     setEditingId(config.id);
     setShowForm(true);
@@ -128,6 +134,8 @@ export default function AIModelsScreen() {
           model_name: form.model_name.trim(),
           label: form.label.trim(),
           is_active: form.is_active,
+          task_type: form.task_type || undefined,
+          clear_task_type: !form.task_type,
         };
         if (form.api_key.trim()) payload.api_key = form.api_key.trim();
         const { data } = await apiClient.patch(`/admin/ai-configs/${editingId}`, payload);
@@ -142,6 +150,7 @@ export default function AIModelsScreen() {
           label: form.label.trim(),
           is_active: form.is_active,
           order_index: configs.length,
+          task_type: form.task_type || undefined,
         });
         setConfigs((prev) => [...prev, data.config]);
         toast.success(`"${data.config.label}" added to every user's AI model bag 🐯`);
@@ -268,6 +277,11 @@ export default function AIModelsScreen() {
                                 Paused
                               </span>
                             )}
+                            {config.task_type && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] text-[10px] font-semibold">
+                                {config.task_type === "codegen" ? "Codegen only" : "Chat only"}
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-[var(--color-text-tertiary)] truncate">
                             {PROVIDER_LABELS[config.provider_type]} · {config.model_name}
@@ -380,6 +394,23 @@ export default function AIModelsScreen() {
                       placeholder="e.g. Company Groq account"
                       className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+                      Use for
+                    </label>
+                    <select
+                      value={form.task_type}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, task_type: e.target.value as AdminTaskType | "" }))
+                      }
+                      className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
+                    >
+                      <option value="">Any task (default)</option>
+                      <option value="codegen">Code generation only</option>
+                      <option value="general">Chat &amp; planning only</option>
+                    </select>
                   </div>
 
                   <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">

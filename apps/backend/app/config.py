@@ -243,6 +243,15 @@ class Settings(BaseSettings):
     PRICING_PROFESSIONAL_PROJECTS: int = 15
     PRICING_STUDIO_PROJECTS: int = -1
 
+    # Platform AI token quota per tier — set at signup (free) or by hand
+    # via admin on upgrade, same convention as the project limits above
+    # (no auto tier->limit assignment exists in this codebase). Starting
+    # placeholders — tune after watching real usage, not a committed number.
+    PRICING_FREE_AI_TOKENS: int = 200_000
+    PRICING_CREATOR_AI_TOKENS: int = 1_000_000
+    PRICING_PROFESSIONAL_AI_TOKENS: int = 5_000_000
+    PRICING_STUDIO_AI_TOKENS: int = -1
+
     PRICING_CREATOR_PRICE_INR: float = 1999.0
     PRICING_PROFESSIONAL_PRICE_INR: float = 3499.0
     PRICING_STUDIO_PRICE_INR: float = 6000.0

@@ -8,12 +8,15 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ProviderType = Literal["groq", "openai", "anthropic", "custom", "portable"]
+ProviderType = Literal["groq", "openai", "anthropic", "xai", "custom", "portable"]
 # Platform defaults can additionally be "ollama" — a user's own BYO config
 # has no reason to pick that provider_type (they'd just point "custom" at
 # their own Ollama instance instead), so it's admin-only.
-PlatformProviderType = Literal["groq", "openai", "anthropic", "custom", "portable", "ollama"]
+PlatformProviderType = Literal["groq", "openai", "anthropic", "xai", "custom", "portable", "ollama"]
 PriorityTier = Literal["primary", "secondary", "tertiary"]
+TaskType = Literal["codegen", "general"]
+# NULL/omitted (not part of this Literal) means "matches any request" —
+# see UserAIConfig.task_type and app.ai.orchestrator._task_type_ok().
 
 # All schemas below have a `model_name` field, which collides with
 # Pydantic v2's reserved `model_*` namespace — silence the warning.
@@ -24,11 +27,14 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     "groq": "https://api.groq.com/openai/v1",
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com/v1",
+    # xAI's Grok API is OpenAI-compatible (/chat/completions, Bearer auth),
+    # so it needs no special-cased call path — just this base URL.
+    "xai": "https://api.x.ai/v1",
 }
 
 # Providers that require an API key (unlike "custom", which usually
 # points at a keyless local server).
-PROVIDERS_REQUIRING_KEY = {"groq", "openai", "anthropic"}
+PROVIDERS_REQUIRING_KEY = {"groq", "openai", "anthropic", "xai"}
 
 
 # ───────────────────────────────────────────────
@@ -46,6 +52,8 @@ class AIConfigCreate(BaseModel):
     label: str = Field(..., min_length=1, max_length=100)
     is_active: bool = False
     priority: Optional[PriorityTier] = None
+    task_type: Optional[TaskType] = None
+    # None = "any task" (the default — usable for both codegen and chat).
 
 
 class AIConfigUpdate(BaseModel):
@@ -61,6 +69,9 @@ class AIConfigUpdate(BaseModel):
     # PATCH bodies can't distinguish "omit this field" from "set it to
     # null" for a plain Optional field once received — set clear_priority
     # to explicitly drop a config out of the fallback chain.
+    task_type: Optional[TaskType] = None
+    clear_task_type: bool = False
+    # Same PATCH-can't-null-a-field issue as clear_priority above.
 
 
 # ───────────────────────────────────────────────
@@ -76,6 +87,7 @@ class AIConfigResponse(BaseModel):
     label: str
     is_active: bool
     priority: Optional[PriorityTier] = None
+    task_type: Optional[TaskType] = None
     created_at: datetime
     updated_at: datetime
 
@@ -92,6 +104,7 @@ class AIConfigResponse(BaseModel):
             label=config.label,
             is_active=config.is_active,
             priority=config.priority,
+            task_type=config.task_type,
             created_at=config.created_at,
             updated_at=config.updated_at,
         )
@@ -133,6 +146,7 @@ class BagConfigResponse(AIConfigResponse):
             label=config.label,
             is_active=config.is_active,
             priority=config.priority,
+            task_type=config.task_type,
             created_at=config.created_at,
             updated_at=config.updated_at,
             is_platform_default=config.user_id is None,
@@ -169,6 +183,7 @@ class AdminAIConfigCreate(BaseModel):
     label: str = Field(..., min_length=1, max_length=100)
     is_active: bool = True
     order_index: Optional[int] = None
+    task_type: Optional[TaskType] = None
 
 
 class AdminAIConfigUpdate(BaseModel):
@@ -182,6 +197,8 @@ class AdminAIConfigUpdate(BaseModel):
     order_index: Optional[int] = None
     clear_order_index: bool = False
     # Same PATCH-can't-null-a-field issue as AIConfigUpdate.clear_priority.
+    task_type: Optional[TaskType] = None
+    clear_task_type: bool = False
 
 
 class AdminAIConfigResponse(BaseModel):
@@ -193,6 +210,7 @@ class AdminAIConfigResponse(BaseModel):
     label: str
     is_active: bool
     order_index: Optional[int] = None
+    task_type: Optional[TaskType] = None
     created_at: datetime
     updated_at: datetime
 
@@ -209,6 +227,7 @@ class AdminAIConfigResponse(BaseModel):
             label=config.label,
             is_active=config.is_active,
             order_index=config.order_index,
+            task_type=config.task_type,
             created_at=config.created_at,
             updated_at=config.updated_at,
         )

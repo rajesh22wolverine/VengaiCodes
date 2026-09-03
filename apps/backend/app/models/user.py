@@ -120,6 +120,19 @@ class User(Base):
     projects_limit: int = Column(Integer, default=1, nullable=False)
     # -1 = unlimited (Studio tier)
 
+    ai_tokens_used: int = Column(Integer, default=0, nullable=False)
+    ai_tokens_limit: int = Column(Integer, default=200_000, nullable=False)
+    # Default mirrors settings.PRICING_FREE_AI_TOKENS, the same convention
+    # as projects_limit=1 mirroring PRICING_FREE_PROJECTS above. It has to
+    # be the free-tier grant rather than 0, because init_db()'s ALTER TABLE
+    # backfill hands this default to every row that already existed - a 0
+    # there would lock every pre-migration account out of all
+    # platform-default generation on the day this ships.
+    # -1 = unlimited. Meters PLATFORM-DEFAULT AI usage only (real
+    # prompt+completion tokens, captured in app.ai.orchestrator) — a
+    # user's own BYO key or self-hosted endpoint is never metered here,
+    # since VengaiCode isn't paying for that inference.
+
     # ── Admin Controls ──
     # Admin can extend free tier to any user 🐯
     is_free_extended: bool = Column(Boolean, default=False, nullable=False)
@@ -307,6 +320,22 @@ class User(Base):
         if self.projects_limit == -1:
             return 999999  # Effectively unlimited
         return max(0, self.projects_limit - self.projects_used)
+
+    def has_ai_quota_remaining(self) -> bool:
+        """Check if user has platform AI tokens left (see ai_tokens_limit).
+        Never gates a user's own BYO/self-hosted AI config — see
+        app.ai.orchestrator.generate_text()."""
+        if self.ai_tokens_limit == -1:
+            return True
+        if self.is_free_extended:
+            return True
+        return self.ai_tokens_used < self.ai_tokens_limit
+
+    def get_ai_tokens_remaining(self) -> int:
+        """Get number of platform AI tokens user has left this cycle."""
+        if self.ai_tokens_limit == -1:
+            return 999999999  # Effectively unlimited
+        return max(0, self.ai_tokens_limit - self.ai_tokens_used)
 
     def __repr__(self) -> str:
         return (

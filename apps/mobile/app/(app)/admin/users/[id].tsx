@@ -21,6 +21,10 @@ interface AdminUser {
   restriction_level: string;
   created_at: string;
   last_login?: string | null;
+  projects_used: number;
+  projects_limit: number;
+  ai_tokens_used: number;
+  ai_tokens_limit: number;
 }
 
 interface AdminProject {
@@ -60,6 +64,11 @@ export default function AdminUserDetailScreen() {
   const [reason, setReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [projectsLimit, setProjectsLimit] = useState("");
+  const [aiTokensLimit, setAiTokensLimit] = useState("");
+  const [limitsReason, setLimitsReason] = useState("");
+  const [isSavingLimits, setIsSavingLimits] = useState(false);
+
   const loadDetail = async () => {
     setIsLoading(true);
     try {
@@ -68,6 +77,8 @@ export default function AdminUserDetailScreen() {
       setProjects(data.projects || []);
       setRecentActions(data.recent_actions || []);
       setNewStatus(data.user.status);
+      setProjectsLimit(String(data.user.projects_limit));
+      setAiTokensLimit(String(data.user.ai_tokens_limit));
     } catch (error: any) {
       showToast(error.message || "User not found.", "error");
       router.back();
@@ -96,6 +107,34 @@ export default function AdminUserDetailScreen() {
       showToast(error.message || "Failed to update user status.", "error");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const limitsDirty =
+    !!user &&
+    (Number(projectsLimit) !== user.projects_limit || Number(aiTokensLimit) !== user.ai_tokens_limit);
+
+  const handleApplyLimits = async () => {
+    if (!user) return;
+    if (limitsReason.trim().length < 3) {
+      showToast("Please give a reason (at least 3 characters).", "error");
+      return;
+    }
+    setIsSavingLimits(true);
+    try {
+      const { data } = await apiClient.patch(`/admin/users/${user.id}`, {
+        projects_limit: Number(projectsLimit),
+        ai_tokens_limit: Number(aiTokensLimit),
+        reason: limitsReason.trim(),
+      });
+      setUser(data.user);
+      setLimitsReason("");
+      showToast("Limits updated.");
+      loadDetail();
+    } catch (error: any) {
+      showToast(error.message || "Failed to update limits.", "error");
+    } finally {
+      setIsSavingLimits(false);
     }
   };
 
@@ -147,6 +186,20 @@ export default function AdminUserDetailScreen() {
         <View style={styles.summaryRow}>
           <SummaryField label="Restriction" value={user.restriction_level.replace(/_/g, " ")} colors={colors} />
           <SummaryField label="Joined" value={new Date(user.created_at).toLocaleDateString()} colors={colors} />
+        </View>
+        <View style={styles.summaryRow}>
+          <SummaryField
+            label="Projects"
+            value={`${user.projects_used} used / ${user.projects_limit === -1 ? "∞" : user.projects_limit} limit`}
+            colors={colors}
+          />
+          <SummaryField
+            label="AI tokens"
+            value={`${user.ai_tokens_used.toLocaleString()} used / ${
+              user.ai_tokens_limit === -1 ? "∞" : user.ai_tokens_limit.toLocaleString()
+            } limit`}
+            colors={colors}
+          />
         </View>
       </View>
 
@@ -218,6 +271,51 @@ export default function AdminUserDetailScreen() {
           ]}
         >
           {isSubmitting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.applyButtonText}>Apply</Text>}
+        </Pressable>
+      </View>
+
+      {/* Limits */}
+      <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Limits</Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, marginBottom: 4 }}>Projects limit</Text>
+            <TextInput
+              value={projectsLimit}
+              onChangeText={setProjectsLimit}
+              keyboardType="numeric"
+              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, marginBottom: 4 }}>AI tokens limit</Text>
+            <TextInput
+              value={aiTokensLimit}
+              onChangeText={setAiTokensLimit}
+              keyboardType="numeric"
+              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            />
+          </View>
+        </View>
+        <TextInput
+          value={limitsReason}
+          onChangeText={setLimitsReason}
+          placeholder="Reason for this change (required, logged to audit trail)..."
+          placeholderTextColor={colors.textTertiary}
+          multiline
+          numberOfLines={2}
+          style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+        />
+        <Pressable
+          onPress={handleApplyLimits}
+          disabled={isSavingLimits || !limitsDirty}
+          style={[
+            styles.applyButton,
+            { backgroundColor: colors.primary },
+            (isSavingLimits || !limitsDirty) && { opacity: 0.5 },
+          ]}
+        >
+          {isSavingLimits ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.applyButtonText}>Apply</Text>}
         </Pressable>
       </View>
 

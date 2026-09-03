@@ -23,6 +23,7 @@ import { logoutUser } from "@/store/slices/authSlice";
 import { toggleTheme } from "@/store/slices/uiSlice";
 import {
   AIProviderType,
+  AIConfigTaskType,
   createAIConfig,
   deleteAIConfig,
   fetchAIBag,
@@ -38,7 +39,14 @@ const PROVIDERS: { value: AIProviderType; label: string }[] = [
   { value: "groq", label: "Groq (own key)" },
   { value: "openai", label: "OpenAI (own key)" },
   { value: "anthropic", label: "Anthropic (own key)" },
+  { value: "xai", label: "Grok / xAI (own key)" },
   { value: "custom", label: "Custom endpoint" },
+];
+
+const TASK_TYPES: { value: AIConfigTaskType | ""; label: string }[] = [
+  { value: "", label: "Any task (default)" },
+  { value: "codegen", label: "Code generation only" },
+  { value: "general", label: "Chat & planning only" },
 ];
 
 export default function SettingsScreen() {
@@ -57,6 +65,7 @@ export default function SettingsScreen() {
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState("");
   const [label, setLabel] = useState("");
+  const [taskType, setTaskType] = useState<AIConfigTaskType | "">("");
 
   const [showFigmaForm, setShowFigmaForm] = useState(false);
   const [figmaToken, setFigmaToken] = useState("");
@@ -81,6 +90,7 @@ export default function SettingsScreen() {
     setApiKey("");
     setModelName("");
     setLabel("");
+    setTaskType("");
     setShowForm(false);
   };
 
@@ -102,6 +112,7 @@ export default function SettingsScreen() {
         model_name: modelName.trim(),
         label: label.trim(),
         is_active: true,
+        task_type: taskType || undefined,
       })
     );
 
@@ -280,6 +291,7 @@ export default function SettingsScreen() {
                   </Text>
                   <Text style={{ color: colors.textTertiary, fontSize: 10 }}>
                     {entry.is_platform_default ? "VengaiCode default" : "Your config"}
+                    {entry.task_type ? ` · ${entry.task_type === "codegen" ? "Codegen only" : "Chat only"}` : ""}
                   </Text>
                 </View>
                 <View style={{ flexDirection: "row", gap: 2 }}>
@@ -382,6 +394,30 @@ export default function SettingsScreen() {
               placeholderTextColor={colors.textTertiary}
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
             />
+
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Use for</Text>
+            <View style={styles.chipRow}>
+              {TASK_TYPES.map((t) => {
+                const selected = taskType === t.value;
+                return (
+                  <Pressable
+                    key={t.value || "any"}
+                    onPress={() => setTaskType(t.value)}
+                    style={[
+                      styles.chip,
+                      {
+                        borderColor: selected ? colors.primary : colors.border,
+                        backgroundColor: selected ? colors.primaryLight : colors.background,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: selected ? colors.primary : colors.textSecondary, fontSize: 12, fontWeight: "600" }}>
+                      {t.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
             <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
               <Pressable

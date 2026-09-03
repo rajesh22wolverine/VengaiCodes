@@ -19,6 +19,10 @@ interface AdminUser {
   restriction_level: string;
   created_at: string;
   last_login?: string | null;
+  projects_used: number;
+  projects_limit: number;
+  ai_tokens_used: number;
+  ai_tokens_limit: number;
 }
 
 interface AdminProject {
@@ -70,6 +74,11 @@ export default function AdminUserDetailScreen() {
   const [reason, setReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [projectsLimit, setProjectsLimit] = useState("");
+  const [aiTokensLimit, setAiTokensLimit] = useState("");
+  const [limitsReason, setLimitsReason] = useState("");
+  const [isSavingLimits, setIsSavingLimits] = useState(false);
+
   useEffect(() => {
     loadDetail();
   }, [userId]);
@@ -82,6 +91,8 @@ export default function AdminUserDetailScreen() {
       setProjects(data.projects || []);
       setRecentActions(data.recent_actions || []);
       setNewStatus(data.user.status);
+      setProjectsLimit(String(data.user.projects_limit));
+      setAiTokensLimit(String(data.user.ai_tokens_limit));
     } catch (error: any) {
       toast.error(error.message || "User not found.");
       navigate("/admin");
@@ -110,6 +121,34 @@ export default function AdminUserDetailScreen() {
       toast.error(error.message || "Failed to update user status.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const limitsDirty =
+    !!user &&
+    (Number(projectsLimit) !== user.projects_limit || Number(aiTokensLimit) !== user.ai_tokens_limit);
+
+  const handleApplyLimits = async () => {
+    if (!user) return;
+    if (limitsReason.trim().length < 3) {
+      toast.error("Please give a reason (at least 3 characters) for this action.");
+      return;
+    }
+    setIsSavingLimits(true);
+    try {
+      const { data } = await apiClient.patch(`/admin/users/${user.id}`, {
+        projects_limit: Number(projectsLimit),
+        ai_tokens_limit: Number(aiTokensLimit),
+        reason: limitsReason.trim(),
+      });
+      setUser(data.user);
+      setLimitsReason("");
+      toast.success("Limits updated.");
+      loadDetail();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update limits.");
+    } finally {
+      setIsSavingLimits(false);
     }
   };
 
@@ -184,6 +223,19 @@ export default function AdminUserDetailScreen() {
               <p className="text-xs text-[var(--color-text-tertiary)]">Last login</p>
               <p className="text-sm font-medium text-[var(--color-text-primary)]">
                 {user.last_login ? new Date(user.last_login).toLocaleDateString() : "Never"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-[var(--color-text-tertiary)]">Projects</p>
+              <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                {user.projects_used} used / {user.projects_limit === -1 ? "∞" : user.projects_limit} limit
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-[var(--color-text-tertiary)]">AI tokens</p>
+              <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                {user.ai_tokens_used.toLocaleString()} used /{" "}
+                {user.ai_tokens_limit === -1 ? "∞" : user.ai_tokens_limit.toLocaleString()} limit
               </p>
             </div>
           </motion.div>
@@ -263,6 +315,57 @@ export default function AdminUserDetailScreen() {
                 className="px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                Apply
+              </button>
+            </div>
+          </motion.div>
+
+          {/* Limits */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5"
+          >
+            <h2 className="text-sm font-semibold text-[var(--color-text-primary)] mb-3">Limits</h2>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-[var(--color-text-tertiary)] mb-1.5">
+                    Projects limit (-1 = unlimited)
+                  </label>
+                  <input
+                    type="number"
+                    value={projectsLimit}
+                    onChange={(e) => setProjectsLimit(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] text-sm text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[var(--color-text-tertiary)] mb-1.5">
+                    AI tokens limit (-1 = unlimited)
+                  </label>
+                  <input
+                    type="number"
+                    value={aiTokensLimit}
+                    onChange={(e) => setAiTokensLimit(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] text-sm text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)]"
+                  />
+                </div>
+              </div>
+              <textarea
+                value={limitsReason}
+                onChange={(e) => setLimitsReason(e.target.value)}
+                placeholder="Reason for this change (required, logged to the audit trail)..."
+                rows={2}
+                className="w-full px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-primary)] resize-none"
+              />
+              <button
+                onClick={handleApplyLimits}
+                disabled={isSavingLimits || !limitsDirty}
+                className="px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isSavingLimits && <Loader2 className="w-4 h-4 animate-spin" />}
                 Apply
               </button>
             </div>

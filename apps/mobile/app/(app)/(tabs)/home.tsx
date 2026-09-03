@@ -123,6 +123,12 @@ function CreateTab() {
       : `${user.projects_remaining} of ${user.projects_limit} project${user.projects_limit === 1 ? "" : "s"} remaining`
     : "";
 
+  const aiTokensLabel = user
+    ? user.ai_tokens_limit === -1
+      ? "Unlimited AI tokens available"
+      : `${user.ai_tokens_remaining.toLocaleString()} of ${user.ai_tokens_limit.toLocaleString()} AI tokens remaining`
+    : "";
+
   return (
     <ScrollView contentContainerStyle={styles.createScroll} keyboardShouldPersistTaps="handled">
       <View style={styles.hero}>
@@ -145,7 +151,10 @@ function CreateTab() {
       />
 
       <View style={styles.createFooterRow}>
-        <Text style={{ color: colors.textTertiary, fontSize: 11, flex: 1 }}>{remainingLabel}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 11 }}>{remainingLabel}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 11 }}>{aiTokensLabel}</Text>
+        </View>
         <Pressable
           onPress={handleSubmit}
           disabled={isLoading || !idea.trim()}

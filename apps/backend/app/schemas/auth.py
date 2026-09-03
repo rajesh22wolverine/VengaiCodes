@@ -395,6 +395,9 @@ class UserResponse(BaseModel):
     projects_used: int
     projects_limit: int
     projects_remaining: int
+    ai_tokens_used: int
+    ai_tokens_limit: int
+    ai_tokens_remaining: int
     email_verified: bool
     mobile_verified: bool
     govt_id_verified: bool
@@ -432,6 +435,9 @@ class UserResponse(BaseModel):
             projects_used=user.projects_used,
             projects_limit=user.projects_limit,
             projects_remaining=user.get_projects_remaining(),
+            ai_tokens_used=user.ai_tokens_used,
+            ai_tokens_limit=user.ai_tokens_limit,
+            ai_tokens_remaining=user.get_ai_tokens_remaining(),
             email_verified=user.email_verified,
             mobile_verified=user.mobile_verified,
             govt_id_verified=user.govt_id_verified,

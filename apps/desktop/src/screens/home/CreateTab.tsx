@@ -89,15 +89,22 @@ export default function CreateTab() {
           />
 
           <div className="flex items-center justify-between mt-3">
-            <p className="text-xs text-[var(--color-text-tertiary)]">
+            <div className="text-xs text-[var(--color-text-tertiary)] space-y-0.5">
               {user && (
                 <>
-                  {user.projects_remaining === -1 || user.projects_limit === -1
-                    ? "Unlimited projects available"
-                    : `${user.projects_remaining} of ${user.projects_limit} project${user.projects_limit === 1 ? "" : "s"} remaining`}
+                  <p>
+                    {user.projects_remaining === -1 || user.projects_limit === -1
+                      ? "Unlimited projects available"
+                      : `${user.projects_remaining} of ${user.projects_limit} project${user.projects_limit === 1 ? "" : "s"} remaining`}
+                  </p>
+                  <p>
+                    {user.ai_tokens_limit === -1
+                      ? "Unlimited AI tokens available"
+                      : `${user.ai_tokens_remaining.toLocaleString()} of ${user.ai_tokens_limit.toLocaleString()} AI tokens remaining`}
+                  </p>
                 </>
               )}
-            </p>
+            </div>
             <button
               onClick={handleSubmit}
               disabled={isLoading || !idea.trim()}

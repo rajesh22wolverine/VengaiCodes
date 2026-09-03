@@ -136,6 +136,7 @@ async def create_ai_config(
         label=payload.label,
         is_active=payload.is_active,
         priority=payload.priority,
+        task_type=payload.task_type,
     )
     db.add(config)
     await db.commit()
@@ -178,6 +179,10 @@ async def update_ai_config(
         config.priority = payload.priority
     elif payload.clear_priority:
         config.priority = None
+    if payload.task_type is not None:
+        config.task_type = payload.task_type
+    elif payload.clear_task_type:
+        config.task_type = None
 
     await db.commit()
     await db.refresh(config)

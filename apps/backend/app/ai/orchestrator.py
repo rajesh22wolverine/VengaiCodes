@@ -26,7 +26,26 @@ class AIError(Exception):
     pass
 
 
-async def _call_ollama(prompt: str, model: str | None = None, base_url: str | None = None) -> tuple[str, float]:
+class AIQuotaExceededError(AIError):
+    """Raised when a user has exhausted their plan's platform AI token
+    quota and no BYO/self-hosted config in their bag can serve the
+    request instead. Subclasses AIError so every existing
+    `except AIError: raise HTTPException(503, str(e))` call site across
+    the API already catches and surfaces this correctly."""
+    pass
+
+
+def _quota_exceeded_message(user: User) -> str:
+    return (
+        "You've used all of your plan's AI tokens for now. Upgrade your "
+        "plan, or add your own AI key/self-hosted model in Settings to "
+        "keep generating — Baby Tiger needs more fuel! 🐯⛽"
+    )
+
+
+async def _call_ollama(
+    prompt: str, model: str | None = None, base_url: str | None = None
+) -> tuple[str, float, dict]:
     """Call an Ollama instance — settings.OLLAMA_HOST by default, or a bag
     entry's own base_url (e.g. a platform default pointed at a different
     host)."""
@@ -49,7 +68,57 @@ async def _call_ollama(prompt: str, model: str | None = None, base_url: str | No
     response.raise_for_status()
     data = response.json()
     duration_ms = (time.perf_counter() - start) * 1000
-    return data.get("response", "").strip(), duration_ms
+    usage = _usage_from_ollama(data)
+    return data.get("response", "").strip(), duration_ms, usage
+
+
+def _usage_from_ollama(data: dict) -> dict:
+    """Ollama's /api/generate response echoes prompt_eval_count/eval_count
+    (its own names for prompt/completion tokens) in the same JSON body."""
+    prompt_tokens = data.get("prompt_eval_count")
+    completion_tokens = data.get("eval_count")
+    total_tokens = (
+        (prompt_tokens or 0) + (completion_tokens or 0)
+        if prompt_tokens is not None or completion_tokens is not None
+        else None
+    )
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _usage_from_openai_style(data: dict) -> dict:
+    """Shared by Groq/OpenAI/BYO custom endpoints — the OpenAI-compatible
+    `usage` object, when a provider echoes one. A keyless local server that
+    omits it legitimately yields all-None here, not zeros — "unknown" and
+    "actually zero" must stay distinguishable for quota metering."""
+    usage_raw = data.get("usage") or {}
+    return {
+        "prompt_tokens": usage_raw.get("prompt_tokens"),
+        "completion_tokens": usage_raw.get("completion_tokens"),
+        "total_tokens": usage_raw.get("total_tokens"),
+    }
+
+
+def _usage_from_anthropic(data: dict) -> dict:
+    """Anthropic's Messages API uses input_tokens/output_tokens (different
+    key names than the OpenAI-compatible shape) and reports no combined
+    total, so it's computed here."""
+    usage_raw = data.get("usage") or {}
+    input_tokens = usage_raw.get("input_tokens")
+    output_tokens = usage_raw.get("output_tokens")
+    total_tokens = (
+        (input_tokens or 0) + (output_tokens or 0)
+        if input_tokens is not None or output_tokens is not None
+        else None
+    )
+    return {
+        "prompt_tokens": input_tokens,
+        "completion_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
 
 
 async def _call_openai_compatible(
@@ -59,7 +128,7 @@ async def _call_openai_compatible(
     prompt: str,
     max_tokens: int | None = None,
     timeout: float = 180.0,
-) -> tuple[str, float]:
+) -> tuple[str, float, dict]:
     """
     Call any OpenAI-compatible /chat/completions endpoint. Shared by Groq,
     OpenAI, and BYO custom endpoints (e.g. a self-hosted llama.cpp server) —
@@ -109,10 +178,11 @@ async def _call_openai_compatible(
     data = response.json()
     duration_ms = (time.perf_counter() - start) * 1000
     text = data["choices"][0]["message"]["content"].strip()
-    return text, duration_ms
+    usage = _usage_from_openai_style(data)
+    return text, duration_ms, usage
 
 
-async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, float]:
+async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, float, dict]:
     """Call Groq cloud API using VengaiCode's own key."""
     if not settings.GROQ_API_KEY:
         raise AIError("Groq API key not configured")
@@ -134,7 +204,7 @@ async def _call_anthropic(
     prompt: str,
     max_tokens: int | None = None,
     timeout: float = 180.0,
-) -> tuple[str, float]:
+) -> tuple[str, float, dict]:
     """
     Call Anthropic's Messages API — a different shape from the OpenAI-
     compatible providers: x-api-key header (not Bearer), /messages path
@@ -164,10 +234,13 @@ async def _call_anthropic(
     data = response.json()
     duration_ms = (time.perf_counter() - start) * 1000
     text = data["content"][0]["text"].strip()
-    return text, duration_ms
+    usage = _usage_from_anthropic(data)
+    return text, duration_ms, usage
 
 
-async def _call_user_ai_config(config: UserAIConfig, prompt: str, max_tokens: int | None = None) -> tuple[str, float]:
+async def _call_user_ai_config(
+    config: UserAIConfig, prompt: str, max_tokens: int | None = None
+) -> tuple[str, float, dict]:
     """Call one bag entry — a platform default (config.user_id is None) or
     a user's own saved BYO config (their key, or their custom endpoint)."""
     if config.provider_type == "ollama":
@@ -181,6 +254,16 @@ async def _call_user_ai_config(config: UserAIConfig, prompt: str, max_tokens: in
         return await _call_anthropic(config.base_url, api_key, config.model_name, prompt, max_tokens)
 
     return await _call_openai_compatible(config.base_url, api_key, config.model_name, prompt, max_tokens)
+
+
+def _task_type_ok(config: UserAIConfig, task_type: Optional[str]) -> bool:
+    """NULL config.task_type ("untagged") matches every request — the
+    state of every UserAIConfig row before task-aware routing existed, so
+    filtering is a no-op until someone opts a specific config into a
+    bucket. A config explicitly tagged "codegen" or "general" only
+    matches a request asking for that same bucket, so a coder fine-tune
+    never serves a chat prompt and vice versa."""
+    return config.task_type is None or config.task_type == (task_type or "general")
 
 
 def _leading_own_count(bag: list[UserAIConfig]) -> int:
@@ -199,7 +282,9 @@ def _leading_own_count(bag: list[UserAIConfig]) -> int:
     return count
 
 
-async def get_effective_bag(user: User, db: AsyncSession) -> tuple[list[UserAIConfig], int]:
+async def get_effective_bag(
+    user: User, db: AsyncSession, task_type: Optional[str] = None
+) -> tuple[list[UserAIConfig], int]:
     """
     Assemble a user's effective AI model "bag" — platform-wide defaults
     (user_id IS NULL, admin-managed via /admin/ai-configs) plus that
@@ -209,6 +294,13 @@ async def get_effective_bag(user: User, db: AsyncSession) -> tuple[list[UserAICo
     platform default (see _leading_own_count()); generate_text() uses it
     to stop and raise once that run is exhausted instead of silently
     spilling into the platform defaults that follow.
+
+    `task_type` ("codegen" | "general" | None) narrows both the user's
+    own configs and the platform defaults to ones tagged for that task,
+    or untagged (see _task_type_ok()), before any of the ordering logic
+    below runs. Filtering can only narrow the bag, never error — an
+    empty result just means generate_text() falls through to its
+    hardcoded Ollama-then-Groq safety net, same as an unseeded bag today.
 
     Natural order (no explicit User.ai_bag_order override):
       1. The user's own configs, in their *legacy* effective order — a
@@ -232,7 +324,7 @@ async def get_effective_bag(user: User, db: AsyncSession) -> tuple[list[UserAICo
     after, in the natural order above, rather than hidden.
     """
     own_result = await db.execute(select(UserAIConfig).where(UserAIConfig.user_id == user.id))
-    own = own_result.scalars().all()
+    own = [c for c in own_result.scalars().all() if _task_type_ok(c, task_type)]
 
     priority_rank = {"primary": 0, "secondary": 1, "tertiary": 2}
     chain = sorted((c for c in own if c.priority), key=lambda c: priority_rank[c.priority])
@@ -244,7 +336,7 @@ async def get_effective_bag(user: User, db: AsyncSession) -> tuple[list[UserAICo
         )
     )
     platform_defaults = sorted(
-        platform_result.scalars().all(),
+        (c for c in platform_result.scalars().all() if _task_type_ok(c, task_type)),
         key=lambda c: (c.order_index is None, c.order_index or 0, c.created_at),
     )
 
@@ -367,6 +459,7 @@ async def generate_text(
     max_tokens: int | None = None,
     user: Optional[User] = None,
     db: Optional[AsyncSession] = None,
+    task_type: Optional[str] = None,
 ) -> dict:
     """
     Generate text by walking the caller's effective AI model "bag" — see
@@ -390,24 +483,50 @@ async def generate_text(
     `max_tokens` only applies to Groq-shaped calls — Ollama's local
     models are bounded by their own context window, not a per-request
     token cap.
+
+    `task_type` ("codegen" | "general" | None) narrows the bag to configs
+    tagged for that task, or untagged ones — see get_effective_bag() and
+    UserAIConfig.task_type. None (the default, used by every caller that
+    hasn't opted in) behaves exactly as before this parameter existed.
+
+    Platform-default calls (bag_config.user_id is None) are metered
+    against `user.ai_tokens_used`/`ai_tokens_limit` — a user's own BYO key
+    or self-hosted endpoint is never metered, since VengaiCode isn't
+    paying for that inference. See User.has_ai_quota_remaining().
     """
     # ── Walk the effective bag (own config(s), then platform defaults) ──
     if user is not None and db is not None:
-        bag, own_boundary = await get_effective_bag(user, db)
+        bag, own_boundary = await get_effective_bag(user, db, task_type=task_type)
 
         if bag:
             errors: list[str] = []
+            any_non_quota_failure = False
             for i, bag_config in enumerate(bag):
+                is_platform = bag_config.user_id is None
+
+                if is_platform and not user.has_ai_quota_remaining():
+                    errors.append(f"{bag_config.label}: platform AI token quota exhausted")
+                    if i + 1 == own_boundary:
+                        raise AIQuotaExceededError(_quota_exceeded_message(user))
+                    continue
+
                 try:
-                    text, duration_ms = await _call_user_ai_config(bag_config, prompt, max_tokens)
+                    text, duration_ms, usage = await _call_user_ai_config(
+                        bag_config, prompt, max_tokens
+                    )
+                    if is_platform and usage.get("total_tokens") is not None:
+                        user.ai_tokens_used += usage["total_tokens"]
+                        await db.commit()
                     source = "byo" if bag_config.user_id is not None else "platform"
                     return {
                         "text": text,
                         "source": f"{source}:{bag_config.provider_type}",
                         "duration_ms": duration_ms,
                         "model": bag_config.model_name,
+                        "usage": usage,
                     }
                 except Exception as e:
+                    any_non_quota_failure = True
                     logger.warning(
                         f"AI config '{bag_config.label}' failed: {e} — trying next in the bag"
                     )
@@ -423,6 +542,12 @@ async def generate_text(
                         "back to VengaiCode's default AI in Settings."
                     )
 
+            if not any_non_quota_failure and errors:
+                # Every remaining entry was skipped purely for quota
+                # reasons, never a real provider failure — surface the
+                # quota message, not the generic "unavailable" one.
+                raise AIQuotaExceededError(_quota_exceeded_message(user))
+
             raise AIError(
                 "Both local AI (Ollama) and cloud AI (Groq) are unavailable. "
                 "Baby Tiger can't think right now! 🐯💭 Please check your "
@@ -431,12 +556,13 @@ async def generate_text(
 
     # ── Try Ollama first ──
     try:
-        text, duration_ms = await _call_ollama(prompt, model)
+        text, duration_ms, usage = await _call_ollama(prompt, model)
         return {
             "text": text,
             "source": "ollama",
             "duration_ms": duration_ms,
             "model": model or settings.OLLAMA_CHAT_MODEL,
+            "usage": usage,
         }
     except Exception as e:
         print(f"[DEBUG] Ollama failed: {e}", flush=True)
@@ -444,12 +570,13 @@ async def generate_text(
 
     # ── Fallback to Groq ──
     try:
-        text, duration_ms = await _call_groq(prompt, max_tokens)
+        text, duration_ms, usage = await _call_groq(prompt, max_tokens)
         return {
             "text": text,
             "source": "groq",
             "duration_ms": duration_ms,
             "model": settings.GROQ_DEFAULT_MODEL,
+            "usage": usage,
         }
     except AIError:
         raise

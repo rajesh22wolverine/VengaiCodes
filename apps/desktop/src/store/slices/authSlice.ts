@@ -17,6 +17,9 @@ export interface User {
   projects_used: number;
   projects_limit: number;
   projects_remaining: number;
+  ai_tokens_used: number;
+  ai_tokens_limit: number;
+  ai_tokens_remaining: number;
   email_verified: boolean;
   mobile_verified: boolean;
   govt_id_verified: boolean;

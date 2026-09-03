@@ -2,8 +2,10 @@ import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import apiClient from "@/lib/api";
 
 // ─── BYO AI Model Config — mirrors backend UserAIConfig / AIConfigResponse ───
-export type AIProviderType = "groq" | "openai" | "anthropic" | "custom";
+export type AIProviderType = "groq" | "openai" | "anthropic" | "xai" | "custom";
 export type AIConfigPriority = "primary" | "secondary" | "tertiary";
+export type AIConfigTaskType = "codegen" | "general";
+// undefined/null = "any task" — see backend UserAIConfig.task_type.
 
 export interface AIConfig {
   id: string;
@@ -14,6 +16,7 @@ export interface AIConfig {
   label: string;
   is_active: boolean;
   priority: AIConfigPriority | null;
+  task_type: AIConfigTaskType | null;
   created_at: string;
   updated_at: string;
 }
@@ -26,6 +29,7 @@ export interface CreateAIConfigInput {
   label: string;
   is_active?: boolean;
   priority?: AIConfigPriority;
+  task_type?: AIConfigTaskType;
 }
 
 // ─── Bag — the merged, ordered view of platform defaults + this user's

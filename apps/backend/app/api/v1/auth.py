@@ -250,6 +250,7 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)):
         verification_status=VerificationStatus.NOT_STARTED,
         tier="free",
         projects_limit=settings.PRICING_FREE_PROJECTS,
+        ai_tokens_limit=settings.PRICING_FREE_AI_TOKENS,
         revenue_sharing_agreed=False,
     )
     db.add(new_user)
