@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "build": "npx eas build -p android --profile preview",
     "typecheck": "tsc --noEmit",
+    "test": "vitest",
     "lint": "expo lint"
   },
   "dependencies": {
@@ -51,6 +52,7 @@
     "babel-preset-expo": "^54.0.12",
     "grapesjs": "0.23.4",
     "grapesjs-blocks-basic": "1.0.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^1.6.1"
   }
 }

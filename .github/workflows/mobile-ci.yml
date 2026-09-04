@@ -1,0 +1,60 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Mobile CI (typecheck + unit tests)
+#
+#  Counterpart to backend-ci.yml and desktop-ci.yml for apps/mobile,
+#  which previously had no test runner declared at all — not even a
+#  "test" script.
+#
+#  Runner choice: vitest, not jest-expo. Everything covered here is pure
+#  logic, reducers, or axios wiring, none of which renders a React Native
+#  component or touches the native runtime, so the Expo/Metro test stack
+#  buys nothing and costs a far heavier install. Real component tests
+#  (rendering a screen, firing a press) WOULD need jest-expo plus
+#  @testing-library/react-native, added alongside this rather than
+#  instead of it.
+#
+#  expo-secure-store / AsyncStorage are mocked at the src/lib/storage
+#  module boundary so this runs in plain node with no emulator.
+# ═══════════════════════════════════════════════════════════════
+
+name: Mobile CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+
+jobs:
+  typecheck-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (tsc)
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
+
+      - name: Run unit tests (vitest)
+        working-directory: apps/mobile
+        run: npx vitest run
