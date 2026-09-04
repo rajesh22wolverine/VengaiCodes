@@ -400,6 +400,62 @@ async def seed_default_ai_configs() -> None:
         await db.commit()
 
 
+# Groq model ids that are past their shutdown date and now answer every
+# request with 404 "model_not_found". Keep this in step with the model
+# defaults in config.py and with console.groq.com/docs/deprecations —
+# each entry maps to the replacement Groq itself recommends.
+DECOMMISSIONED_GROQ_MODELS: dict[str, str] = {
+    # Shut down 2025-08-30.
+    "llama3-70b-8192": "openai/gpt-oss-120b",
+    "llama3-8b-8192": "openai/gpt-oss-20b",
+    # Shut down 2026-08-16 for free/developer-tier keys.
+    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+}
+
+
+async def retire_decommissioned_groq_models() -> None:
+    """
+    Repoint platform-default Groq bag rows that are pinned to a model
+    Groq has since shut down.
+
+    seed_default_ai_configs() only ever *inserts*, and it skips entirely
+    once a platform-default row of that provider_type exists — so once
+    the bag has been seeded, the model id lives in the database and
+    bumping GROQ_DEFAULT_MODEL in config.py (or in Render's env) changes
+    nothing. That is exactly how a live deploy ends up serving 404
+    "model_not_found" out of every generation phase: the row still holds
+    the id that was current on the day it was seeded.
+
+    Only platform-default rows (user_id IS NULL) are touched. A user's
+    own BYO row is their key and their model choice — if they pinned a
+    retired model, that config fails and the bag moves on to the next
+    entry, which is the intended behaviour; silently rewriting someone
+    else's config is not.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(UserAIConfig).where(
+                UserAIConfig.user_id.is_(None),
+                UserAIConfig.provider_type == "groq",
+                UserAIConfig.model_name.in_(DECOMMISSIONED_GROQ_MODELS.keys()),
+            )
+        )
+        rows = result.scalars().all()
+
+        for config in rows:
+            retired = config.model_name
+            config.model_name = DECOMMISSIONED_GROQ_MODELS[retired]
+            logger.warning(
+                f"⚠️  Platform AI config '{config.label}' pointed at "
+                f"decommissioned Groq model '{retired}' — repointed to "
+                f"'{config.model_name}'"
+            )
+
+        if rows:
+            await db.commit()
+
+
 async def backfill_legacy_bag_orders() -> None:
     """
     One-time convenience migration for users who already had their own

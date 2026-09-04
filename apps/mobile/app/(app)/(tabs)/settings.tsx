@@ -380,7 +380,7 @@ export default function SettingsScreen() {
             <TextInput
               value={modelName}
               onChangeText={setModelName}
-              placeholder="e.g. llama3-70b-8192"
+              placeholder="e.g. openai/gpt-oss-120b"
               placeholderTextColor={colors.textTertiary}
               autoCapitalize="none"
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}

@@ -299,12 +299,22 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Database initialization failed: {e}")
         raise
 
-    # ── AI model bag — seed platform defaults, backfill legacy priorities ──
-    # Both are one-time, additive, and non-fatal: a failure here shouldn't
-    # crash startup, just leave the bag to be configured manually.
+    # ── AI model bag — seed platform defaults, retire dead models,
+    #    backfill legacy priorities ──
+    # All three are one-time, idempotent and non-fatal: a failure here
+    # shouldn't crash startup, just leave the bag to be configured
+    # manually. The retire step runs after seeding because seeding only
+    # inserts — a platform row seeded with a model Groq has since shut
+    # down would otherwise keep 404ing forever, no matter what
+    # GROQ_DEFAULT_MODEL says.
     try:
-        from app.ai.orchestrator import seed_default_ai_configs, backfill_legacy_bag_orders
+        from app.ai.orchestrator import (
+            seed_default_ai_configs,
+            retire_decommissioned_groq_models,
+            backfill_legacy_bag_orders,
+        )
         await seed_default_ai_configs()
+        await retire_decommissioned_groq_models()
         await backfill_legacy_bag_orders()
     except Exception as e:
         logger.warning(f"⚠️  AI model bag seeding/backfill failed: {e}")

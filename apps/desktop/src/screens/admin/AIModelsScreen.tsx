@@ -379,7 +379,7 @@ export default function AIModelsScreen() {
                     <input
                       value={form.model_name}
                       onChange={(e) => setForm((f) => ({ ...f, model_name: e.target.value }))}
-                      placeholder="e.g. llama3-70b-8192, qwen2.5-coder"
+                      placeholder="e.g. openai/gpt-oss-120b, qwen2.5-coder"
                       className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
                     />
                   </div>

@@ -597,7 +597,7 @@ export default function SettingsScreen() {
                   <input
                     value={modelName}
                     onChange={(e) => setModelName(e.target.value)}
-                    placeholder="e.g. llama3-70b-8192, grok-4, or whatever's currently loaded locally"
+                    placeholder="e.g. openai/gpt-oss-120b, grok-4, or whatever's currently loaded locally"
                     className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]"
                   />
                 </div>

@@ -120,8 +120,18 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_TIMEOUT: int = 60
-    GROQ_DEFAULT_MODEL: str = "llama3-70b-8192"
-    GROQ_CODE_MODEL: str = "llama3-70b-8192"
+    # Groq retires text models on a published schedule, and a retired id
+    # 404s with "model_not_found" rather than degrading: llama3-70b-8192
+    # went out 2025-08-30, and llama-3.3-70b-versatile followed on
+    # 2026-08-16 for free/developer-tier keys — it survives only on
+    # committed-spend enterprise contracts, which is why it still appears
+    # in Groq's public model table while our key 404s on it.
+    # openai/gpt-oss-120b is Groq's own recommended replacement. Check
+    # console.groq.com/docs/deprecations before changing these, and keep
+    # DECOMMISSIONED_GROQ_MODELS in ai/orchestrator.py in step so
+    # already-seeded platform bag rows get repointed too.
+    GROQ_DEFAULT_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_CODE_MODEL: str = "openai/gpt-oss-120b"
     # Vision-capable model served by Groq — used for design-image-to-code.
     # Groq has retired vision models before (the old Llama 3.2 vision
     # preview models were decommissioned); verify the exact model id in

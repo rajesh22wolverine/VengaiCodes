@@ -304,7 +304,7 @@ export default function AIModelsScreen() {
               <TextInput
                 value={form.model_name}
                 onChangeText={(v) => setForm((f) => ({ ...f, model_name: v }))}
-                placeholder="e.g. llama3-70b-8192, qwen2.5-coder"
+                placeholder="e.g. openai/gpt-oss-120b, qwen2.5-coder"
                 placeholderTextColor={colors.textTertiary}
                 autoCapitalize="none"
                 style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}

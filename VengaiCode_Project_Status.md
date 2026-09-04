@@ -14,7 +14,7 @@
 | **Database** | **Supabase Postgres** (session pooler, SSL required) | Plain `DATABASE_URL` + SQLAlchemy/asyncpg — no Supabase SDK or PostgREST anywhere, so the DB is portable. |
 | **Object storage** | **Supabase Storage**, bucket `design-uploads` (must be public) | `app/core/storage.py`, raw httpx REST. Used for design-image-to-code uploads. |
 | **Cache / rate limit / JWT blocklist** | **Upstash Redis** | `app/core/redis.py`. Fail-open by design — everything degrades gracefully when Redis is unreachable. |
-| **AI (platform default)** | **Groq** | `GROQ_DEFAULT_MODEL` env var on Render = `llama-3.3-70b-versatile`. ⚠️ The in-code default in `config.py` is still the **decommissioned** `llama3-70b-8192` — it only works because Render overrides it. |
+| **AI (platform default)** | **Groq** | In-code default in `config.py` = `openai/gpt-oss-120b` (fixed 2026-09-04). Groq retired `llama-3.3-70b-versatile` on **2026-08-16** for free/developer keys, which 404'd every generation phase into a 503. `retire_decommissioned_groq_models()` runs at startup and repoints platform bag rows off dead model ids. The live bag reads `model_name` off the DB row, so a redeploy fixes generation on its own. ⚠️ **`GROQ_DEFAULT_MODEL` on Render should still be updated by hand** (to `openai/gpt-oss-120b`, or just cleared) — the migration rewrites the DB row, not the env var, and that env var is what the legacy `_call_groq()` path and any future re-seed still read. |
 | **SMS / OTP** | **MSG91** | `app/services/msg91_service.py` |
 | **CI / user-app builds** | **GitHub Actions** — 18 workflows | Triggered by the backend via `repository_dispatch` using `GITHUB_TOKEN` / `GITHUB_REPO` / `BUILD_SECRET`. |
 | **Mobile builds** | **Expo EAS** — org `vengaicode`, project `vengaicode-mobile` | projectId `dd862d0d-90d4-4c15-adfa-3ead014a09b2` |
@@ -160,7 +160,7 @@ Also written but never run: `docker-compose.prod.yml` (self-hosted Postgres + ba
 
 ## 7. Known Gaps & Risks
 
-1. **`GROQ_DEFAULT_MODEL` in `config.py` is a decommissioned model.** It works only because Render overrides it. Any new environment will fail. Fix the default.
+1. **Render's `GROQ_DEFAULT_MODEL` still holds the retired `llama-3.3-70b-versatile`** (fixed in `config.py` on 2026-09-04, but an env var overrides the code default). The startup migration repoints the DB bag row so generation works regardless; clear or update the env var in the dashboard to finish the job.
 2. **Render's `GITHUB_REPO` must be `rajesh22wolverine/VengaiCodes`** — an old `KalRaj2` value would silently break all packaging dispatches. Cannot be verified from here (no Render API key locally); confirm in the Render dashboard.
 3. **AI token quota migration never run against Postgres** — see §4 for the `UPDATE` statement.
 4. **Android release-signing secrets do not exist** — all APKs are debug-signed.
@@ -210,7 +210,7 @@ Pattern: `rajesh22wolverine+SUFFIX@gmail.com` (Gmail `+` trick, all land in the 
 
 ## 11. Next Candidates
 
-- Fix the stale `GROQ_DEFAULT_MODEL` default and verify Render's `GITHUB_REPO`.
+- Clear/update Render's `GROQ_DEFAULT_MODEL` env var and verify Render's `GITHUB_REPO`.
 - Run `gh auth login` so CI can be dispatched and inspected.
 - Trigger one native pipeline (Compose or Flutter) for real — 7 of the 10 generation pipelines have never executed.
 - Generate the Android release-signing secrets.
