@@ -18,11 +18,8 @@ import uuid
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.ai.orchestrator import (
-    DECOMMISSIONED_GROQ_MODELS,
-    retire_decommissioned_groq_models,
-)
-from app.config import settings
+from app.ai.orchestrator import retire_decommissioned_groq_models
+from app.config import DECOMMISSIONED_GROQ_MODELS, Settings, settings
 from app.core.database import Base
 from app.models.ai_config import UserAIConfig
 
@@ -54,6 +51,37 @@ def test_replacements_are_not_themselves_decommissioned() -> None:
             f"{retired} is migrated onto {replacement}, which is also "
             f"decommissioned"
         )
+
+
+def test_env_var_cannot_pin_a_retired_model() -> None:
+    """The production failure mode: an env var (Render's dashboard)
+    overrides the corrected code default and silently reinstates a dead
+    model. Fixing the default alone can't prevent that, because env
+    always wins — so the value is substituted whatever set it."""
+    s = Settings(
+        GROQ_DEFAULT_MODEL="llama-3.3-70b-versatile",
+        GROQ_CODE_MODEL="llama3-70b-8192",
+    )
+    assert s.GROQ_DEFAULT_MODEL == "openai/gpt-oss-120b"
+    assert s.GROQ_CODE_MODEL == "openai/gpt-oss-120b"
+
+
+def test_retired_model_is_honoured_when_explicitly_allowed() -> None:
+    """llama-3.3-70b-versatile still runs on committed-spend enterprise
+    contracts, so the substitution must be overridable rather than
+    absolute."""
+    s = Settings(
+        GROQ_DEFAULT_MODEL="llama-3.3-70b-versatile",
+        GROQ_ALLOW_RETIRED_MODELS=True,
+    )
+    assert s.GROQ_DEFAULT_MODEL == "llama-3.3-70b-versatile"
+
+
+def test_live_model_passes_through_untouched() -> None:
+    """Only known-dead ids are rewritten — an unrecognised or current
+    model id must survive exactly as configured."""
+    s = Settings(GROQ_DEFAULT_MODEL="qwen/qwen3.6-27b")
+    assert s.GROQ_DEFAULT_MODEL == "qwen/qwen3.6-27b"
 
 
 class _Bag:

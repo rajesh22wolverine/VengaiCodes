@@ -3,11 +3,30 @@
 #  config.py — All settings loaded from environment variables
 #  Uses Pydantic BaseSettings for type-safe config
 # ═══════════════════════════════════════════════════════════════
+import logging
 from typing import List
 from functools import lru_cache
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("vengaicode.config")
+
+
+# Groq model ids that are past their shutdown date and now answer every
+# request with 404 "model_not_found", mapped to the replacement Groq
+# itself recommends. Keep in step with
+# console.groq.com/docs/deprecations. Lives here rather than in
+# ai/orchestrator.py so the settings validator below and the startup
+# bag migration (retire_decommissioned_groq_models()) read one list.
+DECOMMISSIONED_GROQ_MODELS: dict[str, str] = {
+    # Shut down 2025-08-30.
+    "llama3-70b-8192": "openai/gpt-oss-120b",
+    "llama3-8b-8192": "openai/gpt-oss-20b",
+    # Shut down 2026-08-16 for free/developer-tier keys.
+    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+}
 
 
 class Settings(BaseSettings):
@@ -128,10 +147,21 @@ class Settings(BaseSettings):
     # in Groq's public model table while our key 404s on it.
     # openai/gpt-oss-120b is Groq's own recommended replacement. Check
     # console.groq.com/docs/deprecations before changing these, and keep
-    # DECOMMISSIONED_GROQ_MODELS in ai/orchestrator.py in step so
-    # already-seeded platform bag rows get repointed too.
+    # DECOMMISSIONED_GROQ_MODELS (above) in step so already-seeded
+    # platform bag rows get repointed too.
+    #
+    # An env var overrides these defaults, which is exactly how the
+    # retired llama-3.3-70b-versatile kept breaking production long
+    # after the code default was fixed — a deployment's dashboard is a
+    # second, invisible source of truth. validate_groq_model() below
+    # therefore refuses to honour a retired id from ANY source.
     GROQ_DEFAULT_MODEL: str = "openai/gpt-oss-120b"
     GROQ_CODE_MODEL: str = "openai/gpt-oss-120b"
+    # Escape hatch: llama-3.3-70b-versatile and llama-3.1-8b-instant are
+    # still served on committed-spend enterprise contracts. Set this to
+    # true on such an account to use them deliberately, rather than
+    # having the validator below substitute them away.
+    GROQ_ALLOW_RETIRED_MODELS: bool = False
     # Vision-capable model served by Groq — used for design-image-to-code.
     # Groq has retired vision models before (the old Llama 3.2 vision
     # preview models were decommissioned); verify the exact model id in
@@ -287,6 +317,42 @@ class Settings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"JWT_ALGORITHM must be one of {allowed}")
         return v
+
+    @model_validator(mode="after")
+    def substitute_retired_groq_models(self) -> "Settings":
+        """
+        Refuse to run on a Groq model id Groq has already shut down, no
+        matter where it came from.
+
+        The code default is easy to keep current; a deployment's env var
+        is not. Render's GROQ_DEFAULT_MODEL stayed pinned to
+        llama-3.3-70b-versatile after that model was retired, silently
+        overriding the corrected default and 404ing every generation
+        phase into a 503. Since an env var always wins over the default,
+        fixing the default alone can't prevent a repeat — so a retired
+        id gets substituted here instead, whatever set it.
+
+        A model_validator (not a field_validator) because this needs
+        GROQ_ALLOW_RETIRED_MODELS, which is declared after the fields it
+        guards and so isn't yet in a field validator's info.data.
+        """
+        if self.GROQ_ALLOW_RETIRED_MODELS:
+            return self
+
+        for field in ("GROQ_DEFAULT_MODEL", "GROQ_CODE_MODEL"):
+            configured = getattr(self, field)
+            replacement = DECOMMISSIONED_GROQ_MODELS.get(configured)
+            if replacement:
+                setattr(self, field, replacement)
+                logger.warning(
+                    f"⚠️  {field} is set to '{configured}', which Groq has "
+                    f"decommissioned — using '{replacement}' instead. Update "
+                    f"or remove the {field} environment variable; set "
+                    f"GROQ_ALLOW_RETIRED_MODELS=true only on an enterprise "
+                    f"account that still has access to it."
+                )
+
+        return self
 
     @model_validator(mode="after")
     def warn_about_defaults(self) -> "Settings":

@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import DECOMMISSIONED_GROQ_MODELS, settings
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.database import AsyncSessionLocal
 from app.models.ai_config import UserAIConfig
@@ -398,20 +398,6 @@ async def seed_default_ai_configs() -> None:
             logger.info("✅ Seeded platform-default Groq AI config into the bag")
 
         await db.commit()
-
-
-# Groq model ids that are past their shutdown date and now answer every
-# request with 404 "model_not_found". Keep this in step with the model
-# defaults in config.py and with console.groq.com/docs/deprecations —
-# each entry maps to the replacement Groq itself recommends.
-DECOMMISSIONED_GROQ_MODELS: dict[str, str] = {
-    # Shut down 2025-08-30.
-    "llama3-70b-8192": "openai/gpt-oss-120b",
-    "llama3-8b-8192": "openai/gpt-oss-20b",
-    # Shut down 2026-08-16 for free/developer-tier keys.
-    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
-    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
-}
 
 
 async def retire_decommissioned_groq_models() -> None:
