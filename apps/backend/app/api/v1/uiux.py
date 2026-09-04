@@ -3,7 +3,6 @@
 #  api/v1/uiux.py — Generate design system from approved requirements
 # ═══════════════════════════════════════════════════════════════
 
-import asyncio
 import base64
 import json
 import logging
@@ -292,7 +291,26 @@ async def generate_uiux(
             # regenerates or uploads their own mockup for it.
             logger.warning(f"Auto mockup generation failed for screen '{screen.name}': {e}")
 
-    await asyncio.gather(*(_mockup_for(screen) for screen in design.screens))
+    # Sequential, NOT asyncio.gather(). Every _mockup_for() call reaches
+    # generate_text(user=..., db=...), which uses this request's single
+    # AsyncSession — it queries the model bag and, for platform-default
+    # configs, does `user.ai_tokens_used += ...; await db.commit()`.
+    # Fanning that out concurrently broke three ways at once:
+    #   1. AsyncSession is not safe for concurrent use. Two screens
+    #      touching it at the same time raised
+    #      "IllegalStateChangeError: Method 'close()' can't be called
+    #      here; method '_connection_for_bind()' is already in progress"
+    #      in production.
+    #   2. ai_tokens_used is a read-modify-write, so parallel screens lost
+    #      each other's updates and the platform quota under-counted.
+    #   3. N screens hit the provider simultaneously against a per-minute
+    #      token ceiling (Groq's free tier is 8k TPM), so the burst just
+    #      turned into 429s and retry backoff — no real speedup anyway.
+    # Making these concurrent again needs generate_text() split into
+    # "resolve the bag" (one DB hit up front) and "call the provider"
+    # (no session), with token metering summed once at the end.
+    for screen in design.screens:
+        await _mockup_for(screen)
 
     project.uiux_data = {
         "design": design.model_dump(),
