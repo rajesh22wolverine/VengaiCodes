@@ -1,0 +1,66 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — Desktop CI (typecheck + unit tests)
+#
+#  Counterpart to backend-ci.yml for apps/desktop. Before this, the
+#  desktop app had NO automated check of any kind: `vitest` and
+#  `@playwright/test` were declared as devDependencies and package.json
+#  had "test"/"test:e2e" scripts, but there was no vitest config and
+#  zero test files anywhere — the scripts were wired to nothing.
+#
+#  Two fast checks, no browser and no backend needed:
+#    - tsc --noEmit: the typecheck that has caught real breakage here
+#      before (see the "Fix desktop app type-check gaps" commit).
+#    - vitest run: the unit suite (src/**/*.test.ts). Runs in vitest's
+#      "node" environment — everything covered is pure logic, reducers,
+#      or axios wiring, so no jsdom dependency is needed.
+#
+#  Playwright specs are deliberately NOT run here: driving the real app
+#  needs a running backend, and the local dev setup has no Redis, which
+#  adds ~4s to every request. That belongs in a separate, slower job if
+#  it is ever wanted.
+# ═══════════════════════════════════════════════════════════════
+
+name: Desktop CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-ci.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-ci.yml"
+
+jobs:
+  typecheck-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The repo is a pnpm workspace (pnpm@8.15.1 per root package.json's
+      # packageManager field); corepack is how the other workflows in this
+      # directory pin it too.
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (tsc)
+        working-directory: apps/desktop
+        run: npx tsc --noEmit
+
+      - name: Run unit tests (vitest)
+        working-directory: apps/desktop
+        run: npx vitest run

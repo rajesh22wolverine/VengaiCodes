@@ -22,6 +22,7 @@ import { invoke } from "@tauri-apps/api/tauri";
 import { AppDispatch, RootState } from "@/store";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import { IS_LOCAL_BACKEND } from "@/lib/api";
+import { buildPortableLabel } from "@/lib/portableLabel";
 import {
   AIProviderType,
   AIConfigTaskType,
@@ -48,23 +49,6 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
 // Fixed local ports the bundled portable-engine sidecar can run on — one
 // per fallback-chain slot, so up to 3 portable models can be configured.
 const PORTABLE_ENGINE_PORTS = [11501, 11502, 11503];
-
-// Mirrors AIConfigCreate.label's max_length=100 in
-// apps/backend/app/schemas/ai_config.py. Real-world .gguf filenames
-// (org--repo--quant-details.gguf) routinely exceed this on their own,
-// so the label built from them must be clamped before it's sent —
-// otherwise the backend 422s and the save silently fails.
-const PORTABLE_LABEL_MAX_LENGTH = 100;
-const PORTABLE_LABEL_SUFFIX = " (USB)";
-
-function buildPortableLabel(displayName: string): string {
-  const maxNameLength = PORTABLE_LABEL_MAX_LENGTH - PORTABLE_LABEL_SUFFIX.length;
-  const name =
-    displayName.length > maxNameLength
-      ? `${displayName.slice(0, maxNameLength - 1)}…`
-      : displayName;
-  return `${name}${PORTABLE_LABEL_SUFFIX}`;
-}
 
 // Rust command return shapes — see apps/desktop/src-tauri/src/commands/{scan,ai}.rs.
 // Tauri serializes these with serde's default (snake_case) field names.
