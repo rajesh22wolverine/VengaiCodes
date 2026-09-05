@@ -172,6 +172,19 @@ class Settings(BaseSettings):
     # used to transcribe voice notes attached to uploaded designs.
     GROQ_WHISPER_MODEL: str = "whisper-large-v3"
 
+    # OpenRouter — one key, every model. Its endpoint is OpenAI-compatible,
+    # so it needs no dedicated call path: it's seeded into the bag as a
+    # "custom" provider and _call_openai_compatible() serves it unchanged.
+    # Leave OPENROUTER_API_KEY blank to skip seeding it entirely.
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    # OpenRouter slugs are namespaced and often date-suffixed. A wrong slug
+    # 404s and surfaces as a generic "config failed" — i.e. it looks like a
+    # bad key, not a typo — so copy the exact id from openrouter.ai/models
+    # rather than guessing it. Same failure class the
+    # DECOMMISSIONED_GROQ_MODELS map above exists to prevent.
+    OPENROUTER_DEFAULT_MODEL: str = "deepseek/deepseek-v4-pro-0813"
+
     # AI Performance Thresholds
     AI_SLOW_RESPONSE_THRESHOLD_MS: int = 3000
     AI_CRITICAL_RESPONSE_THRESHOLD_MS: int = 10000

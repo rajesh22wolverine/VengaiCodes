@@ -121,6 +121,22 @@ def _usage_from_anthropic(data: dict) -> dict:
     }
 
 
+# Reasoning models spend reasoning tokens from the SAME max_tokens budget
+# as the reply. Measured against deepseek/deepseek-v4-pro via OpenRouter on
+# a real codegen prompt at max_tokens=6000: completion_tokens=2952, of which
+# completion_tokens_details.reasoning_tokens=2782 — leaving ~170 tokens for
+# the actual source file. When reasoning happens to consume the whole
+# budget the provider returns "content": null, which crashed on .strip()
+# and dropped the request through to the next entry in the bag: a paid
+# frontier model silently demoted to whatever came next (here, a local 3B).
+#
+# Scoped to "custom" providers on purpose — see _call_user_ai_config().
+# Groq enforces a per-model max_completion_tokens and 400s above it, so the
+# named-provider paths keep sending exactly what the caller asked for.
+# Headroom is a ceiling, not a reservation: providers bill tokens produced.
+REASONING_TOKEN_HEADROOM = 8000
+
+
 async def _call_openai_compatible(
     base_url: str,
     api_key: Optional[str],
@@ -128,6 +144,7 @@ async def _call_openai_compatible(
     prompt: str,
     max_tokens: int | None = None,
     timeout: float = 180.0,
+    token_headroom: int = 0,
 ) -> tuple[str, float, dict]:
     """
     Call any OpenAI-compatible /chat/completions endpoint. Shared by Groq,
@@ -138,6 +155,10 @@ async def _call_openai_compatible(
     Retry-After header when present, since Groq's shared/free tier trips
     this under normal load and a transient rate-limit shouldn't surface
     as a hard failure to the user.
+
+    `token_headroom` is added to max_tokens for endpoints that may spend
+    part of the budget on reasoning before answering — see
+    REASONING_TOKEN_HEADROOM.
     """
     start = time.perf_counter()
     headers = {"Content-Type": "application/json"}
@@ -148,7 +169,7 @@ async def _call_openai_compatible(
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": settings.AI_TEMPERATURE,
-        "max_tokens": max_tokens or settings.AI_MAX_TOKENS,
+        "max_tokens": (max_tokens or settings.AI_MAX_TOKENS) + token_headroom,
     }
 
     max_attempts = 3
@@ -177,7 +198,28 @@ async def _call_openai_compatible(
 
     data = response.json()
     duration_ms = (time.perf_counter() - start) * 1000
-    text = data["choices"][0]["message"]["content"].strip()
+
+    choice = (data.get("choices") or [{}])[0]
+    content = (choice.get("message") or {}).get("content")
+
+    # A reasoning model that spent the whole budget thinking returns
+    # content: null with the reasoning in a separate field. Calling
+    # .strip() on that raised an AttributeError which the bag loop caught
+    # as a generic "config failed", so the request quietly moved on to the
+    # next model instead of reporting a budget problem. Say what happened.
+    if content is None or not content.strip():
+        usage_raw = data.get("usage") or {}
+        reasoning = (usage_raw.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        raise AIError(
+            f"{model} returned no content "
+            f"(finish_reason={choice.get('finish_reason')}, "
+            f"completion_tokens={usage_raw.get('completion_tokens')}, "
+            f"reasoning_tokens={reasoning}). If reasoning_tokens is close to "
+            f"completion_tokens the model spent its whole max_tokens budget "
+            f"thinking — raise REASONING_TOKEN_HEADROOM."
+        )
+
+    text = content.strip()
     usage = _usage_from_openai_style(data)
     return text, duration_ms, usage
 
@@ -197,18 +239,36 @@ async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, f
     )
 
 
+# Thinking is ON BY DEFAULT on claude-opus-5, claude-sonnet-5 and the
+# Fable family, and thinking tokens are spent from the SAME max_tokens
+# budget as the reply that follows them. So a caller asking for a
+# 6000-token source file (GROQ_FILE_MAX_TOKENS) actually gets a file
+# truncated by however much the model thought first — which
+# validate_generated_content() then rejects and retries, at double the
+# cost, straight into the same truncation. Give the reply its full
+# requested budget by adding headroom for the thinking in front of it.
+# Anthropic bills tokens actually produced, so headroom that goes
+# unused is free — this is a ceiling, not a reservation.
+ANTHROPIC_THINKING_HEADROOM = 8000
+
+
 async def _call_anthropic(
     base_url: str,
     api_key: str,
     model: str,
     prompt: str,
     max_tokens: int | None = None,
-    timeout: float = 180.0,
+    timeout: float = 420.0,
 ) -> tuple[str, float, dict]:
     """
     Call Anthropic's Messages API — a different shape from the OpenAI-
     compatible providers: x-api-key header (not Bearer), /messages path
     (not /chat/completions), and a content[] response array.
+
+    The timeout is much longer than the Groq path's: this is a
+    non-streaming request, and a 6000-token file plus the thinking
+    ahead of it is minutes of generation on an Opus-class model, not
+    seconds.
     """
     start = time.perf_counter()
 
@@ -222,7 +282,9 @@ async def _call_anthropic(
             },
             json={
                 "model": model,
-                "max_tokens": max_tokens or settings.AI_MAX_TOKENS,
+                "max_tokens": (
+                    (max_tokens or settings.AI_MAX_TOKENS) + ANTHROPIC_THINKING_HEADROOM
+                ),
                 "messages": [{"role": "user", "content": prompt}],
             },
         )
@@ -233,7 +295,26 @@ async def _call_anthropic(
 
     data = response.json()
     duration_ms = (time.perf_counter() - start) * 1000
-    text = data["content"][0]["text"].strip()
+
+    # content[] is not always [text]. Models that think by default
+    # (claude-opus-5, claude-sonnet-5, the Fable family) put a thinking
+    # block first, so content[0]["text"] raises a KeyError that reaches
+    # the user as a generic "your AI config failed" — which reads like a
+    # bad API key. Collect every text block instead, and say plainly when
+    # there are none (a refusal, or max_tokens hit during thinking).
+    text = "".join(
+        block.get("text", "")
+        for block in data.get("content", [])
+        if block.get("type") == "text"
+    ).strip()
+
+    if not text:
+        raise AIError(
+            f"Anthropic ({model}) returned no text "
+            f"(stop_reason={data.get('stop_reason')}). The model may have "
+            f"refused the request, or hit its max_tokens cap while thinking."
+        )
+
     usage = _usage_from_anthropic(data)
     return text, duration_ms, usage
 
@@ -253,7 +334,20 @@ async def _call_user_ai_config(
             raise AIError("Anthropic requires an API key")
         return await _call_anthropic(config.base_url, api_key, config.model_name, prompt, max_tokens)
 
-    return await _call_openai_compatible(config.base_url, api_key, config.model_name, prompt, max_tokens)
+    # "custom" is where the aggregators and reasoning models live
+    # (OpenRouter, DeepSeek, Moonshot, ...), and they bill only what they
+    # produce, so the headroom is free when unused. The named providers are
+    # left alone: Groq in particular rejects a max_tokens above the model's
+    # own max_completion_tokens with a 400.
+    headroom = REASONING_TOKEN_HEADROOM if config.provider_type == "custom" else 0
+    return await _call_openai_compatible(
+        config.base_url,
+        api_key,
+        config.model_name,
+        prompt,
+        max_tokens,
+        token_headroom=headroom,
+    )
 
 
 def _task_type_ok(config: UserAIConfig, task_type: Optional[str]) -> bool:
@@ -364,11 +458,26 @@ async def seed_default_ai_configs() -> None:
     """
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(UserAIConfig.provider_type).where(UserAIConfig.user_id.is_(None))
+            select(UserAIConfig.provider_type, UserAIConfig.base_url).where(
+                UserAIConfig.user_id.is_(None)
+            )
         )
-        existing_types = {row[0] for row in result.all()}
+        existing_rows = result.all()
+        existing_types = {row[0] for row in existing_rows}
+        existing_base_urls = {row[1] for row in existing_rows}
 
-        if "ollama" not in existing_types:
+        # Ollama is a LOCAL inference server. On a cloud host (Render et al)
+        # there is nothing listening on OLLAMA_HOST, so seeding it there just
+        # puts a guaranteed-dead entry near the front of every user's bag:
+        # every AI call would burn its connection timeout before falling
+        # through to a provider that actually answers. Skip it in production
+        # and let the cloud bag be cloud providers only.
+        #
+        # Seeding is additive-only, so an Ollama row seeded before this check
+        # existed stays put — deactivate it in Admin -> AI Models.
+        if settings.is_production and "ollama" not in existing_types:
+            logger.info("Skipping Ollama platform default — no local inference server in production")
+        elif "ollama" not in existing_types:
             db.add(
                 UserAIConfig(
                     user_id=None,
@@ -396,6 +505,38 @@ async def seed_default_ai_configs() -> None:
                 )
             )
             logger.info("✅ Seeded platform-default Groq AI config into the bag")
+
+        # OpenRouter rides the generic OpenAI-compatible path, so it's
+        # seeded as provider_type "custom" — which means the
+        # existing_types check the two blocks above use can't identify it
+        # (any unrelated "custom" platform row would mask it, and two
+        # OpenRouter rows would look identical to it). Key its idempotency
+        # on the base_url instead, which is what actually distinguishes it.
+        if (
+            settings.OPENROUTER_API_KEY
+            and settings.OPENROUTER_BASE_URL not in existing_base_urls
+        ):
+            db.add(
+                UserAIConfig(
+                    user_id=None,
+                    provider_type="custom",
+                    base_url=settings.OPENROUTER_BASE_URL,
+                    api_key_encrypted=encrypt_secret(settings.OPENROUTER_API_KEY),
+                    model_name=settings.OPENROUTER_DEFAULT_MODEL,
+                    label="Platform default (OpenRouter)",
+                    is_active=True,
+                    # Negative on purpose: it sorts ahead of the Ollama (0)
+                    # and Groq (1) rows WITHOUT rewriting them, keeping this
+                    # function additive-only as documented above. Seeding it
+                    # last would seed it dead — get_effective_bag() would put
+                    # it behind an Ollama that isn't running in production,
+                    # so every call would eat that connection failure first
+                    # and the key would rarely be reached. Drag to reorder in
+                    # Admin -> AI Models, which renumbers every row from 0.
+                    order_index=-1,
+                )
+            )
+            logger.info("✅ Seeded platform-default OpenRouter AI config into the bag")
 
         await db.commit()
 
