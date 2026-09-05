@@ -2,16 +2,17 @@
 #  VengaiCode — Android APK build for VengaiCode's OWN mobile client
 #  (apps/mobile), built with Gradle directly on the GitHub runner.
 #
-#  This is the EAS-free alternative to build-android-apk.yml. That
-#  workflow only shells out to `eas build`, so it inherits Expo's
-#  cloud build queue (observed sitting IN_QUEUE for 1h45m+ on the free
-#  tier) and needs EAS_TOKEN/EXPO_TOKEN secrets that have never been
-#  configured. This one runs `expo prebuild` + `gradlew` on
-#  ubuntu-latest, which already ships the Android SDK and needs no
+#  This is now the ONLY Android build for VengaiCode's own client. It
+#  replaced build-android-apk.yml, which shelled out to `eas build` and
+#  so inherited Expo's cloud build queue (observed sitting IN_QUEUE for
+#  1h45m+ on the free tier) while needing EAS_TOKEN/EXPO_TOKEN secrets
+#  that were never configured. This one runs `expo prebuild` + `gradlew`
+#  on ubuntu-latest, which already ships the Android SDK and needs no
 #  Expo account at all.
 #
-#  Both are kept: EAS remains the fallback (and the only path to
-#  managed credentials / Play Store submission), this is the fast one.
+#  Tradeoff of dropping EAS: there is no longer a managed-credentials
+#  path to the Play Store. See the signing note below — publishing
+#  needs a real upload keystore wired in here.
 #
 #  apps/mobile is a MANAGED Expo project — there is no android/ dir in
 #  the repo. `expo prebuild` generates it into the runner's workspace

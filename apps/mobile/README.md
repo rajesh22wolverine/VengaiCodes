@@ -13,16 +13,22 @@ From the repo root:
 
 ## GitHub Actions
 
-This repo includes a workflow to build an Android APK via EAS:
+This repo includes a workflow to build an Android APK with Gradle directly
+on the runner — no Expo account and no EAS build queue:
 
-- `.github/workflows/build-android-apk.yml`
+- `.github/workflows/build-android-gradle.yml`
 
-It is triggered manually or by `repository_dispatch` with type `build-android-app`.
+It is triggered manually (`workflow_dispatch`) and runs `expo prebuild` +
+`gradlew` on `ubuntu-latest`, which already ships the Android SDK.
 
 ### Required secrets
 
-- `EAS_TOKEN`
-- `EXPO_TOKEN`
+None. The EAS-based workflow that needed `EAS_TOKEN` / `EXPO_TOKEN` was
+removed — those secrets were never configured and its builds sat in
+Expo's free-tier queue for hours.
+
+Note: the APK is debug-signed and installable directly, but is **not**
+Play Store-publishable. That needs a real upload keystore.
 
 ## Notes
 

@@ -6,7 +6,7 @@
 #  project_id) — this workflow builds VengaiCode's own fixed source
 #  tree at apps/desktop into a real, installable Windows app. There is
 #  no project_id here; it always builds whatever's on the checked-out
-#  branch, the same way build-android-apk.yml builds VengaiCode's own
+#  branch, the same way build-android-gradle.yml builds VengaiCode's own
 #  mobile client.
 #
 #  Uses the repo's own pnpm/turborepo scripts (root package.json's

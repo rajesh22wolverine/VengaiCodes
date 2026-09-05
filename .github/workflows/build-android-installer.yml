@@ -5,7 +5,7 @@
 #  APK via Capacitor, mirroring how build-windows-installer.yml
 #  wraps the same kind of frontend as a Windows desktop app.
 #
-#  NOT to be confused with build-android-apk.yml, which builds the
+#  NOT to be confused with build-android-gradle.yml, which builds the
 #  VengaiCode product's own Expo mobile client (apps/mobile) — this
 #  workflow instead packages a per-project generated frontend.
 #

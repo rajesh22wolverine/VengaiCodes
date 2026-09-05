@@ -127,7 +127,7 @@ Substantially rebuilt since the last update. Current architecture:
 |---|---|---|
 | Windows desktop `.msi` / `.exe` | `build-desktop-windows.yml` | ✅ **Builds work** — but only ever run **locally**; the workflow has 0 runs |
 | Linux `.deb` / AppImage | `build-desktop-linux.yml` | 🟡 0 runs, untested |
-| Own Android APK | `build-android-apk.yml` | ✅ Builds work via **EAS CLI directly**; the workflow has 0 runs and needs `EAS_TOKEN` / `EXPO_TOKEN` secrets |
+| Own Android APK | `build-android-gradle.yml` | ✅ Builds work — Gradle on the runner, no EAS account needed. Debug-signed, not Play Store-publishable. The EAS workflow (`build-android-apk.yml`) was removed 2026-09-05 |
 
 - **macOS is still blocked** — `apps/desktop/src-tauri/icons/icon.icns` is a 0-byte stub and no code-signing setup exists.
 - ⚠️ `apps/desktop/.env` has `VITE_API_URL=http://localhost:8000`, which is **baked in at build time**. Locally-built installers point at localhost, not Render. Change this before shipping a real installer.
