@@ -47,6 +47,7 @@ from app.schemas.auth import (
     validate_indian_mobile,
 )
 from app.services.msg91_service import send_otp_sms, MSG91Error
+from app.services.resend_service import send_password_reset_email
 from app.utils.otp import create_otp_record, verify_otp_code
 
 logger = logging.getLogger("vengaicode.auth")
@@ -262,7 +263,12 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)):
             db, target=new_user.email, otp_type="email",
             purpose="signup", user_id=new_user.id,
         )
-        print(f"[DEV] Signup OTP for {new_user.email}: {plain_otp}", flush=True)
+        if not settings.is_production:
+            # Local convenience so the signup flow is testable without an
+            # email provider. Gated: in production this wrote a live
+            # credential into the host's logs next to the account it
+            # unlocks. See resend_service for the delivery path.
+            logger.warning(f"[DEV MODE] Signup OTP for {new_user.email}: {plain_otp}")
     except ValueError as e:
         logger.warning(f"OTP creation rate-limited for new user: {e}")
 
@@ -331,8 +337,12 @@ async def send_otp(payload: SendOTPRequest, db: AsyncSession = Depends(get_db)):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Failed to send OTP. Please try again shortly.",
             )
-    else:
-        print(f"[DEV] OTP for {target}: {plain_otp}", flush=True)
+    elif not settings.is_production:
+        # Email-type OTPs have no provider wired up yet (only password
+        # reset does, and only for the admin address), so locally the
+        # code is logged to keep the flow testable. Gated for the same
+        # reason as the signup OTP above.
+        logger.warning(f"[DEV MODE] OTP for {target}: {plain_otp}")
 
     mask_fn = mask_email if payload.otp_type == "email" else mask_mobile
     return SendOTPResponse(
@@ -627,7 +637,17 @@ async def forgot_password(
             db, target=user.email, otp_type="email",
             purpose="password_reset", user_id=user.id,
         )
-        print(f"[DEV] Password reset OTP for {user.email}: {plain_otp}", flush=True)
+        # Delivery is allowlisted to ADMIN_EMAIL for now — see
+        # resend_service.send_password_reset_email(). The return value is
+        # deliberately ignored: this endpoint answers identically whether
+        # or not the account exists, so it must not vary on whether mail
+        # actually went out.
+        #
+        # This used to print the OTP unconditionally, which in production
+        # wrote every reset code into the host's logs in plaintext beside
+        # the account's email. The dev-only fallback log now lives behind
+        # an is_production check inside the service.
+        await send_password_reset_email(user.email, plain_otp)
     except ValueError:
         pass
 
