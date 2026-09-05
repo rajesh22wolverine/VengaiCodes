@@ -133,8 +133,35 @@ def _usage_from_anthropic(data: dict) -> dict:
 # Scoped to "custom" providers on purpose — see _call_user_ai_config().
 # Groq enforces a per-model max_completion_tokens and 400s above it, so the
 # named-provider paths keep sending exactly what the caller asked for.
-# Headroom is a ceiling, not a reservation: providers bill tokens produced.
-REASONING_TOKEN_HEADROOM = 8000
+#
+# Kept SMALL, and paired with REASONING_MAX_TOKENS below. Two things make
+# a large headroom actively harmful:
+#
+#  1. OpenRouter allocates reasoning as a PERCENTAGE of the available
+#     budget (~10% at "minimal" up to ~95% at "max"), so every extra token
+#     of headroom becomes more thinking rather than more answer. Observed
+#     in production at headroom=8000: completion_tokens=12096,
+#     reasoning_tokens=12096, finish_reason=length, content empty — the
+#     model spent the entire budget, headroom included, on thinking.
+#  2. OpenRouter reserves credit for the FULL max_tokens up front, not for
+#     what is actually produced. An inflated ceiling therefore triples the
+#     balance a request needs and returns 402 "requested up to 12096
+#     tokens, but can only afford 3274" long before the money is spent.
+#
+# So the answer is not more room, it is a hard cap on the thinking. This
+# only needs to cover the capped reasoning.
+REASONING_TOKEN_HEADROOM = 2048
+
+# Hard ceiling on reasoning tokens for OpenRouter-hosted models, sent as
+# {"reasoning": {"max_tokens": N}}. Reserved separately from the top-level
+# max_tokens, so the remainder is guaranteed to the answer instead of
+# competing with it. OpenRouter requires 1024 <= N < max_tokens.
+#
+# Sent ONLY to OpenRouter: `reasoning` is its own extension, and other
+# OpenAI-compatible servers (Groq, llama.cpp, a user's BYO endpoint) may
+# reject an unknown top-level field outright.
+REASONING_MAX_TOKENS = 2048
+OPENROUTER_HOST = "openrouter.ai"
 
 
 async def _call_openai_compatible(
@@ -170,6 +197,14 @@ async def _call_openai_compatible(
         "messages": [{"role": "user", "content": prompt}],
         "temperature": settings.AI_TEMPERATURE,
         "max_tokens": (max_tokens or settings.AI_MAX_TOKENS) + token_headroom,
+        **(
+            # Cap the thinking so it can't consume the answer's budget.
+            # Only meaningful (and only safe) on OpenRouter — see
+            # REASONING_MAX_TOKENS.
+            {"reasoning": {"max_tokens": REASONING_MAX_TOKENS}}
+            if OPENROUTER_HOST in base_url
+            else {}
+        ),
     }
 
     max_attempts = 3

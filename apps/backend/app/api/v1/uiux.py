@@ -211,6 +211,25 @@ Respond with ONLY a JSON object, no markdown, no extra text:
 }}"""
 
 
+# Both UI/UX calls used to omit max_tokens and so silently inherited
+# settings.AI_MAX_TOKENS (4096), which is far too small for the mockup
+# call and left it truncated mid-markup: the reply came back HTTP 200 but
+# json.loads() failed with "Unterminated string starting at: line 2
+# column 11" — column 11 of line 2 is the opening quote of the "html"
+# value, i.e. it was cut off before the markup even got going. The screen
+# then silently fell back to a text-only card.
+#
+# A mockup returns a whole HTML page AND its stylesheet, both embedded as
+# JSON strings, so every quote and newline in the markup is escaped and
+# billed. Reasoning models make it tighter still, spending part of the
+# budget thinking before emitting any markup — see
+# REASONING_TOKEN_HEADROOM in the orchestrator, which adds room on top of
+# whatever is requested here rather than replacing the need for a
+# sensible request.
+UIUX_DESIGN_MAX_TOKENS = 6000    # compact JSON: palette, typography, screen list
+UIUX_MOCKUP_MAX_TOKENS = 12000   # a full HTML page + CSS, JSON-escaped
+
+
 def parse_ai_json(text: str) -> dict:
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -256,7 +275,9 @@ async def generate_uiux(
 
     try:
         prompt = build_uiux_prompt(project.name, frd)
-        ai_result = await generate_text(prompt, user=user, db=db)
+        ai_result = await generate_text(
+            prompt, max_tokens=UIUX_DESIGN_MAX_TOKENS, user=user, db=db
+        )
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
@@ -279,7 +300,9 @@ async def generate_uiux(
             screen_prompt = build_screen_to_code_prompt(
                 screen.model_dump(), design.design_style, palette_dict, design.typography
             )
-            screen_result = await generate_text(screen_prompt, user=user, db=db)
+            screen_result = await generate_text(
+                screen_prompt, max_tokens=UIUX_MOCKUP_MAX_TOKENS, user=user, db=db
+            )
             screen_parsed = parse_ai_json(screen_result["text"])
             screen.generated_html = screen_parsed.get("html")
             screen.generated_css = screen_parsed.get("css")
