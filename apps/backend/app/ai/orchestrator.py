@@ -114,11 +114,25 @@ def _usage_from_anthropic(data: dict) -> dict:
         if input_tokens is not None or output_tokens is not None
         else None
     )
-    return {
+    usage = {
         "prompt_tokens": input_tokens,
         "completion_tokens": output_tokens,
         "total_tokens": total_tokens,
     }
+
+    # Surface the cache counters when Anthropic reports them, so the
+    # cache breakpoint in _call_anthropic() is actually verifiable: a
+    # cache_read_input_tokens that stays 0 across repeated calls means
+    # the prefix isn't matching, which is otherwise silent and free to
+    # get wrong. Deliberately kept OUT of total_tokens — cached reads
+    # aren't counted in input_tokens by the API either, and quota
+    # metering (see generate_text) should track billed spend, which a
+    # cache read reduces to ~0.1x.
+    for key in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+        if usage_raw.get(key) is not None:
+            usage[key] = usage_raw[key]
+
+    return usage
 
 
 # Reasoning models spend reasoning tokens from the SAME max_tokens budget
@@ -320,7 +334,39 @@ async def _call_anthropic(
                 "max_tokens": (
                     (max_tokens or settings.AI_MAX_TOKENS) + ANTHROPIC_THINKING_HEADROOM
                 ),
-                "messages": [{"role": "user", "content": prompt}],
+                # Cache breakpoint at the end of the prompt. Anthropic's
+                # caching is a PREFIX match, so today this buys exactly
+                # one thing: generate_text_validated()'s retry re-sends
+                # this prompt verbatim with the rejection appended — a
+                # strict prefix extension — so the retry reads the whole
+                # original prompt back at ~0.1x instead of paying full
+                # price for it a second time.
+                #
+                # It is NOT the big win yet. requirements_text is shared
+                # by every file in a project, but each adapter puts its
+                # per-file instruction line AHEAD of it, so the prefix
+                # diverges within ~15 tokens and that shared block never
+                # matches across files. Moving the stable preamble to the
+                # front of the adapter prompts is what unlocks that, and
+                # this breakpoint starts paying for it the day they move.
+                #
+                # A miss is cheap and bounded: cache writes bill at 1.25x
+                # input, and input is the cheap side of a codegen call
+                # (~2% of spend on a 6k-token file). Under the model's
+                # minimum cacheable length the breakpoint is ignored
+                # silently — no write, no charge.
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    }
+                ],
             },
         )
 
@@ -572,6 +618,35 @@ async def seed_default_ai_configs() -> None:
                 )
             )
             logger.info("✅ Seeded platform-default OpenRouter AI config into the bag")
+
+        # Anthropic has its own provider_type (it needs _call_anthropic(),
+        # not the OpenAI-compatible path), so unlike OpenRouter above it
+        # can key its idempotency on existing_types like Ollama and Groq.
+        #
+        # order_index -2 sorts it ahead of OpenRouter (-1), Ollama (0) and
+        # Groq (1) without rewriting them, keeping this function
+        # additive-only as documented above. Seeded behind an Ollama that
+        # isn't running in production, a paid key would rarely be reached
+        # at all — the same trap the OpenRouter comment describes.
+        #
+        # This is a PLATFORM default: it serves every user, on this key,
+        # metered against each user's own token quota. For Claude on a
+        # single account, leave ANTHROPIC_API_KEY blank and add a BYO
+        # config in Settings instead — see the config.py note.
+        if "anthropic" not in existing_types and settings.ANTHROPIC_API_KEY:
+            db.add(
+                UserAIConfig(
+                    user_id=None,
+                    provider_type="anthropic",
+                    base_url=settings.ANTHROPIC_BASE_URL,
+                    api_key_encrypted=encrypt_secret(settings.ANTHROPIC_API_KEY),
+                    model_name=settings.ANTHROPIC_DEFAULT_MODEL,
+                    label="Platform default (Anthropic Claude)",
+                    is_active=True,
+                    order_index=-2,
+                )
+            )
+            logger.info("✅ Seeded platform-default Anthropic AI config into the bag")
 
         await db.commit()
 

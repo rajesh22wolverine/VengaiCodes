@@ -185,6 +185,25 @@ class Settings(BaseSettings):
     # DECOMMISSIONED_GROQ_MODELS map above exists to prevent.
     OPENROUTER_DEFAULT_MODEL: str = "deepseek/deepseek-v4-pro-0813"
 
+    # Anthropic (Claude) — unlike the two above, its Messages API has its
+    # own request shape (x-api-key instead of Bearer, /messages instead of
+    # /chat/completions, a content[] response array), so _call_anthropic()
+    # serves it rather than the generic OpenAI-compatible path.
+    #
+    # Setting this key seeds a PLATFORM-DEFAULT row — it lands in every
+    # user's bag and every call bills to this key. To give Claude to one
+    # account only (e.g. the owner's), leave this blank and add a BYO
+    # config in Settings instead: own configs are tried first and are
+    # never metered against the platform token quota.
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_BASE_URL: str = "https://api.anthropic.com/v1"
+    # Exact model ids, never date-suffixed — "claude-opus-5", not
+    # "claude-opus-5-20260401". A wrong id 404s and surfaces as a generic
+    # "config failed", the same footgun the OpenRouter note above covers.
+    # claude-opus-5 is the strongest for codegen; claude-sonnet-5 (~2.5x
+    # cheaper) and claude-haiku-4-5 (~5x cheaper) are the step-downs.
+    ANTHROPIC_DEFAULT_MODEL: str = "claude-opus-5"
+
     # AI Performance Thresholds
     AI_SLOW_RESPONSE_THRESHOLD_MS: int = 3000
     AI_CRITICAL_RESPONSE_THRESHOLD_MS: int = 10000
