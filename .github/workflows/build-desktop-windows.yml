@@ -25,9 +25,13 @@
 #  build, not a per-user/per-project action, so nothing in the backend
 #  ever dispatches this automatically.
 #
-#  HONEST STATUS: written but UNTESTED end-to-end — no Rust/Tauri
-#  toolchain available in this dev environment to live-verify a real
-#  build. Builds the "msi"/"nsis" (Windows) targets from
+#  HONEST STATUS: first real CI run (34145311478, 2026-09-07) failed
+#  after 5m47s — not in Rust, but in the build script, on the missing
+#  llama-server sidecar; see the step that now fetches it. Everything
+#  ahead of that (checkout, pnpm, Rust toolchain, dependency install,
+#  and ~4.5 minutes of crate compilation) passed, so the toolchain
+#  wiring is sound. The link, bundle and upload steps past it are still
+#  unproven. Builds the "msi"/"nsis" (Windows) targets from
 #  tauri.conf.json; see build-desktop-linux.yml for the "deb"/
 #  "appimage" (Linux) targets, which now share this same source tree.
 #  icons/icon.icns is still an empty stub, so macOS bundling isn't
@@ -67,6 +71,63 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # ── Portable AI engine sidecar ───────────────────────────────
+      #  tauri.conf.json declares this as a HARD build dependency:
+      #      "externalBin": ["binaries/llama-server"]
+      #      "resources":   { "binaries/*.dll": "" }
+      #  but binaries/*.exe and *.dll are gitignored (.gitignore), so a
+      #  fresh runner has neither and `tauri build` dies with
+      #  "path matching binaries/llama-server-x86_64-pc-windows-msvc.exe
+      #  not found." before it links anything. That is exactly how this
+      #  workflow failed on its first ever run (34145311478) — the build
+      #  had never been exercised on CI, only locally, where the July
+      #  binaries from binaries/README.md's manual setup were sitting on
+      #  disk. This step is the CI equivalent of that manual setup.
+      #
+      #  The tag is PINNED on purpose. Tracking "latest" would swap the
+      #  inference engine inside a shipped installer between builds with
+      #  nothing recording which version went out.
+      #
+      #  Copies every DLL in the archive. llama-server.exe is a ~9 KB
+      #  launcher that needs llama-server-impl.dll, llama.dll and the
+      #  ggml-cpu-* variants it picks at runtime; the archive also
+      #  carries -impl DLLs for tools we don't ship (llama-cli,
+      #  llama-bench, ...). Dropping those would save ~15 MB, but a
+      #  wrong guess is a silent runtime "missing DLL" in the shipped
+      #  app, and nobody here can test the sidecar on Windows to verify
+      #  a trimmed set. Take the size until someone can.
+      #
+      #  win-cpu-x64 (not CUDA/Vulkan/SYCL): the sidecar has to start on
+      #  any user's machine, and the CUDA builds need a matching runtime.
+      - name: Fetch llama.cpp sidecar (portable AI engine)
+        shell: pwsh
+        env:
+          LLAMA_CPP_TAG: b10840
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag  = $env:LLAMA_CPP_TAG
+          $zip  = Join-Path $env:RUNNER_TEMP "llama.zip"
+          $work = Join-Path $env:RUNNER_TEMP "llama"
+          $url  = "https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-bin-win-cpu-x64.zip"
+
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $work -Force
+
+          $dest = "apps/desktop/src-tauri/binaries"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+          # Tauri appends the target triple to externalBin at build time,
+          # so the file on disk must already carry it.
+          $exe = Join-Path $dest "llama-server-x86_64-pc-windows-msvc.exe"
+          Copy-Item (Join-Path $work "llama-server.exe") $exe
+          Copy-Item (Join-Path $work "*.dll") $dest
+
+          if (-not (Test-Path $exe)) { throw "sidecar exe missing after copy" }
+          $dlls = (Get-ChildItem $dest -Filter *.dll).Count
+          if ($dlls -lt 1) { throw "no DLLs copied - the archive layout changed" }
+          Write-Host "Sidecar ready: llama-server.exe + $dlls DLLs (llama.cpp $tag)"
 
       - name: Build Windows app (msi + nsis)
         env:

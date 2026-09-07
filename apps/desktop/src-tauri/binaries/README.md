@@ -4,10 +4,21 @@ The "Detect Portable AI Model" feature spawns a bundled `llama-server`
 binary (from [llama.cpp](https://github.com/ggml-org/llama.cpp), MIT
 licensed) to run `.gguf` model files found on a USB drive.
 
-This directory needs the actual binary before the feature works — it
-isn't fetched automatically by this repo.
+This directory needs the actual binary before the feature works. It is
+gitignored (`.gitignore`: `binaries/*.exe`, `binaries/*.dll`), so it is
+never committed.
 
-## Setup (Windows)
+**CI fetches it automatically.** `.github/workflows/build-desktop-
+windows.yml` downloads a pinned llama.cpp Windows release and drops the
+sidecar here before `tauri build` runs — a fresh runner has nothing in
+this directory, and `tauri.conf.json` treats the sidecar as a hard build
+dependency, so without that step the build fails with "path matching
+binaries/llama-server-x86_64-pc-windows-msvc.exe not found." Bump
+`LLAMA_CPP_TAG` in that workflow to move the engine version.
+
+The manual steps below are only needed for **local** desktop builds.
+
+## Setup (Windows, local builds only)
 
 1. Download the latest Windows release asset from
    https://github.com/ggml-org/llama.cpp/releases (look for a `win-*.zip`
