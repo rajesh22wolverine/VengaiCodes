@@ -29,8 +29,18 @@ logger = logging.getLogger("vengaicode.codegen")
 # route, and screen file gets its OWN AI call and its own full token
 # budget, so a 3-screen app and a 15-screen app both get fully-
 # implemented files instead of the second one getting starved.
-GROQ_FILE_MAX_TOKENS = 6000
-GROQ_WIRING_MAX_TOKENS = 4000
+#
+# None = no VengaiCode-imposed ceiling on a generated file. These were
+# 6000 and 4000, which capped every source file the product has ever
+# produced at roughly 450 and 300 lines — a limit that came from us, not
+# from any model. The only ceiling now is the provider's own model
+# maximum (see settings.AI_MAX_TOKENS and _call_openai_compatible(),
+# which omits max_tokens entirely when there is nothing to cap).
+#
+# The names are kept because ~50 codegen adapters pass these constants
+# through by name; only the values changed.
+GROQ_FILE_MAX_TOKENS: int | None = None
+GROQ_WIRING_MAX_TOKENS: int | None = None
 
 
 class GeneratedFile(BaseModel):
@@ -178,7 +188,7 @@ def validate_generated_content(language: str, content: str) -> str | None:
 async def generate_text_validated(
     prompt: str,
     language: str,
-    max_tokens: int,
+    max_tokens: int | None = None,
     user: Optional[User] = None,
     db: Optional[AsyncSession] = None,
 ) -> tuple[str, str | None]:

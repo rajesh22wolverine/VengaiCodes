@@ -248,6 +248,11 @@ class AdminUserUpdateRequest(BaseModel):
     is_free_extended: Optional[bool] = None
     free_extended_until: Optional[datetime] = None
     projects_limit: Optional[int] = None
+    # Still stored and still audited, but NO LONGER ENFORCED: VengaiCode
+    # imposes no token quota on its users, so nothing reads this column to
+    # refuse a generation (see User.has_ai_quota_remaining). Kept writable
+    # so the number is here if quotas ever come back; treat the admin
+    # panel's field as bookkeeping, not as a working limit.
     ai_tokens_limit: Optional[int] = None
 
 

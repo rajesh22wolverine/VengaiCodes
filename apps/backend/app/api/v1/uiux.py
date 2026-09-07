@@ -211,23 +211,24 @@ Respond with ONLY a JSON object, no markdown, no extra text:
 }}"""
 
 
-# Both UI/UX calls used to omit max_tokens and so silently inherited
-# settings.AI_MAX_TOKENS (4096), which is far too small for the mockup
-# call and left it truncated mid-markup: the reply came back HTTP 200 but
-# json.loads() failed with "Unterminated string starting at: line 2
-# column 11" — column 11 of line 2 is the opening quote of the "html"
-# value, i.e. it was cut off before the markup even got going. The screen
-# then silently fell back to a text-only card.
+# Both UI/UX calls once inherited a 4096-token default, which was far too
+# small for the mockup call and left it truncated mid-markup: the reply
+# came back HTTP 200 but json.loads() failed with "Unterminated string
+# starting at: line 2 column 11" — column 11 of line 2 is the opening
+# quote of the "html" value, i.e. it was cut off before the markup even
+# got going. The screen then silently fell back to a text-only card.
 #
-# A mockup returns a whole HTML page AND its stylesheet, both embedded as
-# JSON strings, so every quote and newline in the markup is escaped and
-# billed. Reasoning models make it tighter still, spending part of the
-# budget thinking before emitting any markup — see
-# REASONING_TOKEN_HEADROOM in the orchestrator, which adds room on top of
-# whatever is requested here rather than replacing the need for a
-# sensible request.
-UIUX_DESIGN_MAX_TOKENS = 6000    # compact JSON: palette, typography, screen list
-UIUX_MOCKUP_MAX_TOKENS = 12000   # a full HTML page + CSS, JSON-escaped
+# Sizing these by hand (6000 / 12000) fixed that but only moved the wall
+# further out: a mockup returns a whole HTML page AND its stylesheet, both
+# embedded as JSON strings, so every quote and newline in the markup is
+# escaped and counted, and a rich enough screen still hit the ceiling.
+#
+# None removes the wall. VengaiCode sets no ceiling of its own on either
+# call; the provider's model maximum is the limit, and a truncated mockup
+# now means the model genuinely ran out of room rather than that we
+# guessed a number too low. See settings.AI_MAX_TOKENS.
+UIUX_DESIGN_MAX_TOKENS: int | None = None   # compact JSON: palette, typography, screens
+UIUX_MOCKUP_MAX_TOKENS: int | None = None   # a full HTML page + CSS, JSON-escaped
 
 
 def parse_ai_json(text: str) -> dict:

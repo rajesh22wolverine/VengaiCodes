@@ -322,20 +322,35 @@ class User(Base):
         return max(0, self.projects_limit - self.projects_used)
 
     def has_ai_quota_remaining(self) -> bool:
-        """Check if user has platform AI tokens left (see ai_tokens_limit).
-        Never gates a user's own BYO/self-hosted AI config — see
-        app.ai.orchestrator.generate_text()."""
-        if self.ai_tokens_limit == -1:
-            return True
-        if self.is_free_extended:
-            return True
-        return self.ai_tokens_used < self.ai_tokens_limit
+        """Always True: VengaiCode imposes no token quota on its users.
+
+        The only ceiling on a generation is the AI provider's own — the
+        plan, credit balance or rate limit attached to whichever key is
+        serving the request. An exhausted provider key surfaces as that
+        provider's error (402/429) through the normal bag walk, which is
+        the correct place for it to come from.
+
+        `ai_tokens_limit` / `ai_tokens_used` are deliberately KEPT and
+        still accumulated by generate_text(), because they are the admin
+        panel's only view of real spend per account. This method is the
+        single place that ever turned that meter into a refusal, so
+        neutering it here removes the restriction without losing the
+        measurement. Restore the old body to re-introduce quotas.
+        """
+        return True
 
     def get_ai_tokens_remaining(self) -> int:
-        """Get number of platform AI tokens user has left this cycle."""
-        if self.ai_tokens_limit == -1:
-            return 999999999  # Effectively unlimited
-        return max(0, self.ai_tokens_limit - self.ai_tokens_used)
+        """Always the unlimited sentinel, to match has_ai_quota_remaining().
+
+        Deliberately ignores `ai_tokens_limit` rather than subtracting from
+        it. Accounts created before quotas were removed still carry a
+        finite limit in the database (200_000 for an old free signup), and
+        reading it here would show those users a dwindling "tokens
+        remaining" figure that nothing in the codebase would ever act on.
+        Answering from the policy instead of the stale column keeps the UI
+        honest without needing a migration to rewrite every row.
+        """
+        return 999999999  # Effectively unlimited
 
     def __repr__(self) -> str:
         return (

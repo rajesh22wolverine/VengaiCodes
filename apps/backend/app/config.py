@@ -209,7 +209,30 @@ class Settings(BaseSettings):
     AI_CRITICAL_RESPONSE_THRESHOLD_MS: int = 10000
 
     # AI Generation Settings
-    AI_MAX_TOKENS: int = 4096
+    #
+    # 0 means VengaiCode imposes NO output ceiling of its own — the only
+    # limit on a generation is the one the provider enforces on the key
+    # being used (its per-model max output, its rate limits, the
+    # subscription or credit balance behind it). On the OpenAI-compatible
+    # path a 0 here omits `max_tokens` from the request entirely, so the
+    # provider applies its own model maximum; see _call_openai_compatible().
+    #
+    # Set a positive number only to deliberately re-introduce a cap.
+    AI_MAX_TOKENS: int = 0
+
+    # Anthropic is the exception that CANNOT be uncapped by omission:
+    # `max_tokens` is a required field on the Messages API, so a number
+    # must always be sent. This is that number — high enough that no
+    # generated file is ever truncated by it, while staying inside what a
+    # NON-STREAMING request can actually deliver before _call_anthropic()'s
+    # timeout. The models accept up to 128000, but a reply that long has
+    # to be streamed; this path is a single blocking POST, so asking for
+    # 128000 buys a timeout rather than a longer file.
+    #
+    # Anthropic bills tokens actually produced, so an unused ceiling is
+    # free — raising this costs nothing until a file genuinely needs it.
+    ANTHROPIC_MAX_OUTPUT_TOKENS: int = 64000
+
     AI_TEMPERATURE: float = 0.1
     AI_CODE_TEMPERATURE: float = 0.05
 
@@ -317,11 +340,18 @@ class Settings(BaseSettings):
 
     # Platform AI token quota per tier — set at signup (free) or by hand
     # via admin on upgrade, same convention as the project limits above
-    # (no auto tier->limit assignment exists in this codebase). Starting
-    # placeholders — tune after watching real usage, not a committed number.
-    PRICING_FREE_AI_TOKENS: int = 200_000
-    PRICING_CREATOR_AI_TOKENS: int = 1_000_000
-    PRICING_PROFESSIONAL_AI_TOKENS: int = 5_000_000
+    # (no auto tier->limit assignment exists in this codebase).
+    #
+    # -1 is the "unlimited" sentinel every one of these now uses on
+    # purpose: VengaiCode does not ration tokens to its users. The only
+    # ceiling on generation is the AI provider's own — the plan, credit
+    # balance or rate limit attached to whichever key is serving the
+    # request. Token counts are still ACCUMULATED into User.ai_tokens_used
+    # so admins keep full visibility of spend; nothing reads them to
+    # refuse a request. See User.has_ai_quota_remaining().
+    PRICING_FREE_AI_TOKENS: int = -1
+    PRICING_CREATOR_AI_TOKENS: int = -1
+    PRICING_PROFESSIONAL_AI_TOKENS: int = -1
     PRICING_STUDIO_AI_TOKENS: int = -1
 
     PRICING_CREATOR_PRICE_INR: float = 1999.0

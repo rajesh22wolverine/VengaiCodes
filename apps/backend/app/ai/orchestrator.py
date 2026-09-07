@@ -26,21 +26,12 @@ class AIError(Exception):
     pass
 
 
-class AIQuotaExceededError(AIError):
-    """Raised when a user has exhausted their plan's platform AI token
-    quota and no BYO/self-hosted config in their bag can serve the
-    request instead. Subclasses AIError so every existing
-    `except AIError: raise HTTPException(503, str(e))` call site across
-    the API already catches and surfaces this correctly."""
-    pass
-
-
-def _quota_exceeded_message(user: User) -> str:
-    return (
-        "You've used all of your plan's AI tokens for now. Upgrade your "
-        "plan, or add your own AI key/self-hosted model in Settings to "
-        "keep generating — Baby Tiger needs more fuel! 🐯⛽"
-    )
+# NOTE: there was an AIQuotaExceededError here, raised when a user ran out
+# of their plan's platform AI tokens. It is gone on purpose — VengaiCode
+# does not ration tokens to its users, so no code path can refuse a
+# generation on a token count any more. Running out is now strictly a
+# matter between the key and its provider, and surfaces as that provider's
+# own 402/429 through the normal bag walk in generate_text().
 
 
 async def _call_ollama(
@@ -199,24 +190,38 @@ async def _call_openai_compatible(
 
     `token_headroom` is added to max_tokens for endpoints that may spend
     part of the budget on reasoning before answering — see
-    REASONING_TOKEN_HEADROOM.
+    REASONING_TOKEN_HEADROOM. It only applies when there IS a cap to add
+    it to; with no cap there is no budget for reasoning to crowd out.
+
+    When neither the caller nor settings.AI_MAX_TOKENS asks for a ceiling,
+    `max_tokens` is omitted from the request entirely rather than sent as
+    some large number. Omission is what makes the PROVIDER's own model
+    maximum the only limit — which is the intent — and it also sidesteps
+    OpenRouter reserving credit against an inflated ceiling it was never
+    going to reach.
     """
     start = time.perf_counter()
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    cap = max_tokens or settings.AI_MAX_TOKENS
+
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": settings.AI_TEMPERATURE,
-        "max_tokens": (max_tokens or settings.AI_MAX_TOKENS) + token_headroom,
+        # No cap -> omit the field; the provider applies its model max.
+        **({"max_tokens": cap + token_headroom} if cap else {}),
         **(
             # Cap the thinking so it can't consume the answer's budget.
             # Only meaningful (and only safe) on OpenRouter — see
-            # REASONING_MAX_TOKENS.
+            # REASONING_MAX_TOKENS. Skipped when uncapped: the failure it
+            # guards against is reasoning eating a SMALL fixed budget, and
+            # with no budget to eat, a hard 2048-token thinking limit would
+            # just be VengaiCode throttling the model's reasoning depth.
             {"reasoning": {"max_tokens": REASONING_MAX_TOKENS}}
-            if OPENROUTER_HOST in base_url
+            if OPENROUTER_HOST in base_url and cap
             else {}
         ),
     }
@@ -265,7 +270,9 @@ async def _call_openai_compatible(
             f"completion_tokens={usage_raw.get('completion_tokens')}, "
             f"reasoning_tokens={reasoning}). If reasoning_tokens is close to "
             f"completion_tokens the model spent its whole max_tokens budget "
-            f"thinking — raise REASONING_TOKEN_HEADROOM."
+            f"thinking. VengaiCode sends no cap of its own by default "
+            f"(AI_MAX_TOKENS=0), so a budget this tight came from the "
+            f"provider or from an explicit max_tokens on this call."
         )
 
     text = content.strip()
@@ -290,14 +297,17 @@ async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, f
 
 # Thinking is ON BY DEFAULT on claude-opus-5, claude-sonnet-5 and the
 # Fable family, and thinking tokens are spent from the SAME max_tokens
-# budget as the reply that follows them. So a caller asking for a
-# 6000-token source file (GROQ_FILE_MAX_TOKENS) actually gets a file
-# truncated by however much the model thought first — which
-# validate_generated_content() then rejects and retries, at double the
-# cost, straight into the same truncation. Give the reply its full
-# requested budget by adding headroom for the thinking in front of it.
+# budget as the reply that follows them. So a caller that DOES pass an
+# explicit cap gets a file truncated by however much the model thought
+# first — which validate_generated_content() then rejects and retries, at
+# double the cost, straight into the same truncation. Give the reply its
+# full requested budget by adding headroom for the thinking in front of it.
 # Anthropic bills tokens actually produced, so headroom that goes
 # unused is free — this is a ceiling, not a reservation.
+#
+# Only reached when a caller passes an explicit max_tokens. The default
+# path sends settings.ANTHROPIC_MAX_OUTPUT_TOKENS, which is already large
+# enough to hold the thinking and the file both.
 ANTHROPIC_THINKING_HEADROOM = 8000
 
 
@@ -315,11 +325,19 @@ async def _call_anthropic(
     (not /chat/completions), and a content[] response array.
 
     The timeout is much longer than the Groq path's: this is a
-    non-streaming request, and a 6000-token file plus the thinking
-    ahead of it is minutes of generation on an Opus-class model, not
-    seconds.
+    non-streaming request, and a long file plus the thinking ahead of it
+    is minutes of generation on an Opus-class model, not seconds.
+
+    `max_tokens` is REQUIRED by the Messages API, so unlike the
+    OpenAI-compatible path this one cannot express "no cap" by omitting
+    the field. Uncapped therefore means sending
+    settings.ANTHROPIC_MAX_OUTPUT_TOKENS — a ceiling set high enough that
+    it never truncates a generated file, and never reached in billing
+    because Anthropic charges for tokens actually produced.
     """
     start = time.perf_counter()
+
+    explicit_cap = max_tokens or settings.AI_MAX_TOKENS
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
@@ -332,7 +350,9 @@ async def _call_anthropic(
             json={
                 "model": model,
                 "max_tokens": (
-                    (max_tokens or settings.AI_MAX_TOKENS) + ANTHROPIC_THINKING_HEADROOM
+                    explicit_cap + ANTHROPIC_THINKING_HEADROOM
+                    if explicit_cap
+                    else settings.ANTHROPIC_MAX_OUTPUT_TOKENS
                 ),
                 # Cache breakpoint at the end of the prompt. Anthropic's
                 # caching is a PREFIX match, so today this buys exactly
@@ -782,10 +802,15 @@ async def generate_text(
     UserAIConfig.task_type. None (the default, used by every caller that
     hasn't opted in) behaves exactly as before this parameter existed.
 
-    Platform-default calls (bag_config.user_id is None) are metered
-    against `user.ai_tokens_used`/`ai_tokens_limit` — a user's own BYO key
-    or self-hosted endpoint is never metered, since VengaiCode isn't
-    paying for that inference. See User.has_ai_quota_remaining().
+    Platform-default calls (bag_config.user_id is None) are METERED into
+    `user.ai_tokens_used` for admin visibility, but never rationed: no
+    token count in this codebase can refuse a generation. The only limit
+    a user can hit is the AI provider's own — its plan, credit balance or
+    rate limit — which arrives as that provider's error through the normal
+    bag walk below. See User.has_ai_quota_remaining().
+
+    A user's own BYO key or self-hosted endpoint is not metered at all,
+    since VengaiCode isn't paying for that inference.
     """
     # ── Walk the effective bag (own config(s), then platform defaults) ──
     if user is not None and db is not None:
@@ -793,15 +818,8 @@ async def generate_text(
 
         if bag:
             errors: list[str] = []
-            any_non_quota_failure = False
             for i, bag_config in enumerate(bag):
                 is_platform = bag_config.user_id is None
-
-                if is_platform and not user.has_ai_quota_remaining():
-                    errors.append(f"{bag_config.label}: platform AI token quota exhausted")
-                    if i + 1 == own_boundary:
-                        raise AIQuotaExceededError(_quota_exceeded_message(user))
-                    continue
 
                 try:
                     text, duration_ms, usage = await _call_user_ai_config(
@@ -819,7 +837,6 @@ async def generate_text(
                         "usage": usage,
                     }
                 except Exception as e:
-                    any_non_quota_failure = True
                     logger.warning(
                         f"AI config '{bag_config.label}' failed: {e} — trying next in the bag"
                     )
@@ -828,18 +845,13 @@ async def generate_text(
                 if i + 1 == own_boundary:
                     # Exhausted the user's own chain without a customized
                     # bag order — stop here rather than silently spending
-                    # platform quota (see docstring).
+                    # the platform key on a request the user deliberately
+                    # routed elsewhere (see docstring).
                     raise AIError(
                         "None of your configured AI models responded (tried in order: "
                         f"{', '.join(errors)}). Check they're running and reachable, or switch "
                         "back to VengaiCode's default AI in Settings."
                     )
-
-            if not any_non_quota_failure and errors:
-                # Every remaining entry was skipped purely for quota
-                # reasons, never a real provider failure — surface the
-                # quota message, not the generic "unavailable" one.
-                raise AIQuotaExceededError(_quota_exceeded_message(user))
 
             raise AIError(
                 "Both local AI (Ollama) and cloud AI (Groq) are unavailable. "
@@ -920,7 +932,15 @@ async def _call_groq_vision(prompt: str, image_base64: str, media_type: str) -> 
                     }
                 ],
                 "temperature": settings.AI_TEMPERATURE,
-                "max_tokens": settings.AI_MAX_TOKENS,
+                # Omitted when AI_MAX_TOKENS is 0 (the default) so Groq
+                # applies its own per-model max — sending a literal 0 here
+                # would be a request for an empty completion, not an
+                # uncapped one.
+                **(
+                    {"max_tokens": settings.AI_MAX_TOKENS}
+                    if settings.AI_MAX_TOKENS
+                    else {}
+                ),
                 # qwen/qwen3.6-27b is a reasoning-capable model — without
                 # this, its <think>...</think> preamble lands in `content`
                 # ahead of the JSON we expect, breaking parse_ai_json().

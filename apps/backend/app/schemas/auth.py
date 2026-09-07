@@ -436,7 +436,15 @@ class UserResponse(BaseModel):
             projects_limit=user.projects_limit,
             projects_remaining=user.get_projects_remaining(),
             ai_tokens_used=user.ai_tokens_used,
-            ai_tokens_limit=user.ai_tokens_limit,
+            # -1 ("unlimited") regardless of what the column holds.
+            # VengaiCode no longer rations tokens, but accounts created
+            # before that carry a real number here — reporting it would
+            # make the desktop/mobile Create tab render "999,999,999 of
+            # 200,000 AI tokens remaining", since those screens only show
+            # the ∞ badge when the limit is exactly -1. The admin panel
+            # reads user.ai_tokens_limit directly and still sees the
+            # stored value, so nothing is hidden from an owner.
+            ai_tokens_limit=-1,
             ai_tokens_remaining=user.get_ai_tokens_remaining(),
             email_verified=user.email_verified,
             mobile_verified=user.mobile_verified,
