@@ -134,15 +134,35 @@ jobs:
           # the same reason as the Windows DLLs: a trimmed set that
           # guesses wrong is a silent runtime load failure in the
           # shipped app, and nobody here can test it on Linux.
-          find "$work" -type f -name '*.so*' -exec cp -P {} "$dest/" \;
+          # -type l as well as -type f: the SONAME entries the linker
+          # actually asks for (libllama-common.so.0) are symlinks to the
+          # versioned real files (libllama-common.so.0.4.0). Matching only
+          # regular files drops every one of them, and linuxdeploy then
+          # fails resolving a dependency whose target is sitting right
+          # there in the same directory — which is how run 34223497497
+          # failed. cp -P keeps them as links rather than fattening the
+          # bundle with a second copy of each library.
+          find "$work" \( -type f -o -type l \) -name '*.so*' -exec cp -P {} "$dest/" \;
 
           libs="$(find "$dest" -maxdepth 1 -name '*.so*' | wc -l)"
           if [ "$libs" -lt 1 ]; then
             echo "::error::no shared libraries copied - archive layout changed"
             exit 1
           fi
+
+          # Asserted separately from the count above: a copy that grabs
+          # every real file but no symlink still reports 28 libraries and
+          # still fails in the bundler. Checking the links explicitly is
+          # what makes that regression fail here, loudly, instead of
+          # three minutes later inside linuxdeploy.
+          links="$(find "$dest" -maxdepth 1 -type l -name '*.so*' | wc -l)"
+          if [ "$links" -lt 1 ]; then
+            echo "::error::no SONAME symlinks copied - the versioned libs will not resolve"
+            exit 1
+          fi
+
           find "$dest" -maxdepth 1 -name "*.so*" -printf "  %f\n" | sort
-          echo "Sidecar ready: llama-server + $libs shared libs (llama.cpp $tag)"
+          echo "Sidecar ready: llama-server + $libs shared libs ($links symlinked, llama.cpp $tag)"
 
       # ── deb succeeds; the AppImage needed the sidecar's libs found ──
       #  linuxdeploy walks the ELF dependencies of everything in the
