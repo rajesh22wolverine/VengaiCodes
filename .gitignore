@@ -17,6 +17,8 @@ build/
 # Database
 *.db
 *.sqlite3
+# Snapshots taken before risky local migrations (local_dev.db.backup-presession)
+*.db.backup-*
 
 # Keys
 keys/

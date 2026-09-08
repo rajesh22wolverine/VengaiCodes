@@ -77,6 +77,71 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # ── Portable AI engine sidecar ───────────────────────────────
+      #  Same hard build dependency as the Windows workflow: tauri.conf
+      #  .json declares "externalBin": ["binaries/llama-server"] for
+      #  every target, and binaries/ is gitignored, so without this step
+      #  `tauri build` dies with "path matching binaries/llama-server-
+      #  x86_64-unknown-linux-gnu not found" before it links anything —
+      #  exactly how the Windows workflow failed on run 34145311478.
+      #
+      #  Tag PINNED to match build-desktop-windows.yml. Both installers
+      #  must ship the same inference engine; letting one drift means a
+      #  bug reproduces on one OS and not the other.
+      #
+      #  The archive is searched rather than indexed by a fixed path:
+      #  upstream does not treat the tarball's internal layout as a
+      #  stable interface (the Windows zip is flat, the ubuntu tarball
+      #  has historically nested under build/bin/), and a hardcoded
+      #  guess here is a silent break on the next tag bump. Both finds
+      #  are asserted, so a layout change fails loudly at this step
+      #  instead of 20 minutes later in the bundler.
+      #
+      #  ubuntu-x64 (not vulkan/rocm/sycl): the sidecar has to start on
+      #  any user's machine without a matching GPU runtime installed.
+      - name: Fetch llama.cpp sidecar (portable AI engine)
+        env:
+          LLAMA_CPP_TAG: b10840
+        run: |
+          set -euo pipefail
+          tag="$LLAMA_CPP_TAG"
+          work="$RUNNER_TEMP/llama"
+          archive="$RUNNER_TEMP/llama.tar.gz"
+          url="https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-bin-ubuntu-x64.tar.gz"
+
+          echo "Downloading $url"
+          curl -fsSL "$url" -o "$archive"
+          mkdir -p "$work"
+          tar -xzf "$archive" -C "$work"
+
+          dest="apps/desktop/src-tauri/binaries"
+          mkdir -p "$dest"
+
+          # Tauri appends the target triple to externalBin at build time,
+          # so the file on disk must already carry it.
+          src="$(find "$work" -type f -name 'llama-server' | head -n 1)"
+          if [ -z "$src" ]; then
+            echo "::error::llama-server not found in $url - archive layout changed"
+            exit 1
+          fi
+          cp "$src" "$dest/llama-server-x86_64-unknown-linux-gnu"
+          chmod +x "$dest/llama-server-x86_64-unknown-linux-gnu"
+
+          # llama-server is a thin launcher; the engine lives in the
+          # shared objects beside it (libllama, libggml-base, and the
+          # ggml-cpu-* variants picked at runtime). Copied wholesale for
+          # the same reason as the Windows DLLs: a trimmed set that
+          # guesses wrong is a silent runtime load failure in the
+          # shipped app, and nobody here can test it on Linux.
+          find "$work" -type f -name '*.so*' -exec cp -P {} "$dest/" \;
+
+          libs="$(find "$dest" -maxdepth 1 -name '*.so*' | wc -l)"
+          if [ "$libs" -lt 1 ]; then
+            echo "::error::no shared libraries copied - archive layout changed"
+            exit 1
+          fi
+          echo "Sidecar ready: llama-server + $libs shared libs (llama.cpp $tag)"
+
       - name: Build Linux app (deb + AppImage)
         env:
           VITE_API_URL: https://vengaicode-backend.onrender.com

@@ -25,18 +25,17 @@
 #  build, not a per-user/per-project action, so nothing in the backend
 #  ever dispatches this automatically.
 #
-#  HONEST STATUS: first real CI run (34145311478, 2026-09-07) failed
-#  after 5m47s — not in Rust, but in the build script, on the missing
-#  llama-server sidecar; see the step that now fetches it. Everything
-#  ahead of that (checkout, pnpm, Rust toolchain, dependency install,
-#  and ~4.5 minutes of crate compilation) passed, so the toolchain
-#  wiring is sound. The link, bundle and upload steps past it are still
-#  unproven. Builds the "msi"/"nsis" (Windows) targets from
-#  tauri.conf.json; see build-desktop-linux.yml for the "deb"/
-#  "appimage" (Linux) targets, which now share this same source tree.
-#  icons/icon.icns is still an empty stub, so macOS bundling isn't
-#  attempted anywhere yet — that would need a real .icns asset added
-#  first.
+#  HONEST STATUS: GREEN end-to-end. Run 34146222964 (2026-09-07)
+#  succeeded in 7m13s and uploaded real installers — a 21.7 MB .msi and
+#  a 12.4 MB NSIS .exe — so link, bundle and upload are now proven, not
+#  just the toolchain wiring. The first attempt (34145311478) died at
+#  5m47s on the missing llama-server sidecar, before linking anything;
+#  the fetch step below is what fixed it. Builds the "msi"/"nsis"
+#  (Windows) targets from tauri.conf.json; see build-desktop-linux.yml
+#  for the "deb"/"appimage" (Linux) targets, which share this same
+#  source tree and the same sidecar requirement. icons/icon.icns is
+#  still an empty stub, so macOS bundling isn't attempted anywhere yet
+#  — that would need a real .icns asset added first.
 # ═══════════════════════════════════════════════════════════════
 
 name: Build Desktop App (Windows)

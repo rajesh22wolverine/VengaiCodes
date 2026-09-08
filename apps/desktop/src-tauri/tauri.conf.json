@@ -37,7 +37,8 @@
         "icons/icon.ico"
       ],
       "resources": {
-        "binaries/*.dll": ""
+        "binaries/*.dll": "",
+        "binaries/*.so*": ""
       },
       "externalBin": ["binaries/llama-server"],
       "copyright": "",
