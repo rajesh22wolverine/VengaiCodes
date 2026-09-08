@@ -125,8 +125,8 @@ Substantially rebuilt since the last update. Current architecture:
 
 | Target | Workflow | Status |
 |---|---|---|
-| Windows desktop `.msi` / `.exe` | `build-desktop-windows.yml` | ✅ **Builds work** — but only ever run **locally**; the workflow has 0 runs |
-| Linux `.deb` / AppImage | `build-desktop-linux.yml` | 🟡 0 runs, untested |
+| Windows desktop `.msi` / `.exe` | `build-desktop-windows.yml` | ✅ **Green on CI** — run 34221067604 produced a 21.7 MB `.msi` + 12.4 MB NSIS `.exe`; the `.msi` was installed and the app confirmed running against the production backend (2026-09-08) |
+| Linux `.deb` / AppImage | `build-desktop-linux.yml` | ✅ **Green on CI** — run 34224202485 produced a 101 MB AppImage + 27 MB `.deb`. Never *executed*: no Linux desktop here, so the bundled llama-server sidecar is unproven at runtime |
 | Own Android APK | `build-android-gradle.yml` | ✅ Builds work — Gradle on the runner, no EAS account needed. Debug-signed, not Play Store-publishable. The EAS workflow (`build-android-apk.yml`) was removed 2026-09-05 |
 
 - **macOS is still blocked** — `apps/desktop/src-tauri/icons/icon.icns` is a 0-byte stub and no code-signing setup exists.

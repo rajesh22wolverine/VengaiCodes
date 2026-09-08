@@ -21,15 +21,21 @@
 #  build, not a per-user/per-project action, so nothing in the backend
 #  ever dispatches this automatically.
 #
-#  HONEST STATUS: the Rust build and the .deb both work. Run 34221071093
-#  compiled the release profile in 2m36s and bundled
-#  vengai-code_1.0.0_amd64.deb, then died bundling the AppImage with
-#  "error running appimage.sh" — see the env vars on the build step.
-#  Earlier runs failed further back, and each fix is recorded where it
-#  lives: the sidecar fetch step (34216456420) and binaries/README.md's
-#  note on the per-platform resource split (34216459894). The AppImage
-#  half is still unproven. macOS isn't attempted anywhere —
-#  icons/icon.icns is an empty stub — that needs a real .icns first.
+#  HONEST STATUS: GREEN. Run 34224202485 produced both targets — a
+#  101 MB vengai-code_1.0.0_amd64.AppImage and a 27 MB
+#  vengai-code_1.0.0_amd64.deb. Getting here took five runs and each fix
+#  is recorded where it lives: the sidecar fetch step (34216456420),
+#  binaries/README.md on the per-platform resource split (34216459894),
+#  and LD_LIBRARY_PATH plus the -type l symlink copy on the steps below
+#  (34222805673, 34223497497).
+#
+#  What is NOT proven: that the bundled llama-server actually starts
+#  inside these packages. Nobody here has a Linux desktop to run them on,
+#  and the ggml-cpu-* variants are dlopen'd by name — invisible to
+#  linuxdeploy's dependency walk — so they ride on bundle.resources
+#  alone. A green build says the libraries are present, not that the
+#  engine runs. macOS isn't attempted anywhere: icons/icon.icns is an
+#  empty stub and needs a real .icns first.
 # ═══════════════════════════════════════════════════════════════
 name: Build Desktop App (Linux)
 run-name: "VengaiCode desktop Linux build — ${{ github.sha }}"
@@ -209,9 +215,12 @@ jobs:
       #  Seconds, not minutes. --bundles appimage narrows it to the one
       #  format that broke; the deb is already built and uploaded.
       #
-      #  Delete this step once the AppImage build is green and staying
-      #  green — it exists to make a silent failure legible, not as
-      #  permanent scaffolding.
+      #  Kept rather than deleted now that the build is green: it is what
+      #  turned "error running appimage.sh" into the two real causes
+      #  (34222805673, 34223497497) after two rounds of guessing had
+      #  produced nothing. It runs only on failure, so it costs a green
+      #  build nothing, and the next person to break the AppImage gets the
+      #  actual error instead of the same dead end.
       - name: Diagnose AppImage failure (verbose re-bundle)
         if: failure()
         working-directory: apps/desktop
