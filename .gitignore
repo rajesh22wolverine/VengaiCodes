@@ -41,6 +41,8 @@ src-tauri/target/
 # locally per apps/desktop/src-tauri/binaries/README.md, not committed.
 apps/desktop/src-tauri/binaries/*.exe
 apps/desktop/src-tauri/binaries/*.dll
+apps/desktop/src-tauri/binaries/*.so*
+apps/desktop/src-tauri/binaries/llama-server-*
 
 # OS
 .DS_Store

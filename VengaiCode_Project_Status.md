@@ -20,7 +20,7 @@
 | **Mobile builds** | **Expo EAS** — org `vengaicode`, project `vengaicode-mobile` | projectId `dd862d0d-90d4-4c15-adfa-3ead014a09b2` |
 | **Dev machine** | Local Windows 11 | Docker/Ollama still will not run here (RAM). Oracle Cloud free tier still blocked on debit-card verification. |
 
-**⚠️ Open infra item:** `gh` CLI is **not logged in** on this machine (the dead `KalRaj2` entry was removed 2026-09-04). Run `gh auth login -h github.com -w` once — until then, CI runs can only be inspected via the unauthenticated public GitHub API, and workflows cannot be dispatched manually.
+**✅ Resolved 2026-09-08:** `gh` CLI is authenticated as `rajesh22wolverine` (scopes `gist`, `read:org`, `repo`, `workflow`), so workflow runs can now be dispatched and inspected directly from here. Note the remaining limit: plain HTTPS from the agent sandbox still fails its certificate-revocation check, so `gh` is the *only* working route to GitHub locally — anything needing a real file download (release archives, installers) has to be verified on CI.
 
 **⚠️ Action on Render:** `GITHUB_REPO` **must be** `rajesh22wolverine/VengaiCodes` — format is `owner/repo`, no `https://`, no `.git`. It is interpolated straight into `https://api.github.com/repos/{GITHUB_REPO}/dispatches`. If an older deployment still holds `KalRaj2/VengaiCodes`, every packaging build is dispatching at a dead repo. Now documented in `env.example`, but **env.example does not configure Render** — set it in the Render dashboard (Service → Environment) and redeploy.
 
@@ -164,7 +164,7 @@ Also written but never run: `docker-compose.prod.yml` (self-hosted Postgres + ba
 2. **Render's `GITHUB_REPO` must be `rajesh22wolverine/VengaiCodes`** — an old `KalRaj2` value would silently break all packaging dispatches. Cannot be verified from here (no Render API key locally); confirm in the Render dashboard.
 3. **AI token quota migration never run against Postgres** — see §4 for the `UPDATE` statement.
 4. **Android release-signing secrets do not exist** — all APKs are debug-signed.
-5. **`gh` CLI is unauthenticated** — cannot dispatch or inspect workflow runs.
+5. **Plain HTTPS is blocked in the agent sandbox** — `curl` dies on `CRYPT_E_REVOCATION_OFFLINE`. `gh` works (it is authenticated as of 2026-09-08), but any step that must download a real file has to be proven on a runner, not locally.
 6. **`apps/desktop/.env` points at localhost** — baked into any locally built installer.
 7. **No payment path anywhere** — quota, pricing tiers, and commission rates are all defined but nothing can be purchased.
 8. **`eslint` is inert** — `.eslintrc.js` is a 0-byte file and fails to parse. `ruff-format` is deliberately not enabled (it would reformat 58 of 78 backend files).
