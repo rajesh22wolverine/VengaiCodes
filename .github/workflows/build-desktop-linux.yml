@@ -165,6 +165,29 @@ jobs:
           NO_STRIP: "true"
         run: pnpm run build:desktop
 
+      # ── Why the AppImage failed ──────────────────────────────────
+      #  "error running appimage.sh" is the whole message Tauri v1 gives
+      #  you: it shells out to linuxdeploy and discards its stdout and
+      #  stderr unless the CLI is verbose. Two runs (34221071093,
+      #  34222255293) failed here with nothing to go on.
+      #
+      #  This only fires on failure, and re-bundles rather than
+      #  rebuilding — target/release is already warm from the step above,
+      #  so tauri skips compilation and goes straight to the bundler.
+      #  Seconds, not minutes. --bundles appimage narrows it to the one
+      #  format that broke; the deb is already built and uploaded.
+      #
+      #  Delete this step once the AppImage build is green and staying
+      #  green — it exists to make a silent failure legible, not as
+      #  permanent scaffolding.
+      - name: Diagnose AppImage failure (verbose re-bundle)
+        if: failure()
+        working-directory: apps/desktop
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
+        run: pnpm exec tauri build --verbose --bundles appimage 2>&1 | tail -120
+
       # always(): the deb bundles before the AppImage does, so when only
       # the AppImage step fails the deb is sitting there complete. Without
       # this the job throws away a working package on its way out. The job
