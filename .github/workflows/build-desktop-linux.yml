@@ -21,15 +21,16 @@
 #  build, not a per-user/per-project action, so nothing in the backend
 #  ever dispatches this automatically.
 #
-#  HONEST STATUS: written but UNTESTED end-to-end — no Rust/Tauri
-#  toolchain available in this dev environment to live-verify a real
-#  build. "deb"/"appimage" targets now have real PNG icons (extracted
-#  from the existing icon.ico, which already embedded a 256x256 frame)
-#  wired into tauri.conf.json alongside the Windows msi/nsis targets.
-#  macOS still isn't attempted here — icons/icon.icns is still an
-#  empty stub — that would need a real .icns asset added first.
+#  HONEST STATUS: the Rust build and the .deb both work. Run 34221071093
+#  compiled the release profile in 2m36s and bundled
+#  vengai-code_1.0.0_amd64.deb, then died bundling the AppImage with
+#  "error running appimage.sh" — see the env vars on the build step.
+#  Earlier runs failed further back, and each fix is recorded where it
+#  lives: the sidecar fetch step (34216456420) and binaries/README.md's
+#  note on the per-platform resource split (34216459894). The AppImage
+#  half is still unproven. macOS isn't attempted anywhere —
+#  icons/icon.icns is an empty stub — that needs a real .icns first.
 # ═══════════════════════════════════════════════════════════════
-
 name: Build Desktop App (Linux)
 run-name: "VengaiCode desktop Linux build — ${{ github.sha }}"
 
@@ -142,12 +143,34 @@ jobs:
           fi
           echo "Sidecar ready: llama-server + $libs shared libs (llama.cpp $tag)"
 
+      # ── deb succeeds, AppImage is the fragile one ────────────────
+      #  Tauri v1's appimage.sh shells out to linuxdeploy and swallows
+      #  its output, so a failure here surfaces only as the useless
+      #  "error running appimage.sh" (run 34221071093). Two runner facts
+      #  cause it, and both are set rather than diagnosed because the
+      #  script gives you nothing to diagnose with:
+      #
+      #  APPIMAGE_EXTRACT_AND_RUN — linuxdeploy and appimagetool are
+      #  themselves AppImages, and mounting one needs FUSE, which GitHub
+      #  runners don't provide. This makes them self-extract instead.
+      #
+      #  NO_STRIP — linuxdeploy strips every ELF it bundles, and it trips
+      #  over the llama.cpp shared objects the sidecar step just added.
+      #  Skipping the strip costs some size in a binary that already
+      #  ships a ~40 MB inference engine.
       - name: Build Linux app (deb + AppImage)
         env:
           VITE_API_URL: https://vengaicode-backend.onrender.com
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
         run: pnpm run build:desktop
 
+      # always(): the deb bundles before the AppImage does, so when only
+      # the AppImage step fails the deb is sitting there complete. Without
+      # this the job throws away a working package on its way out. The job
+      # still reports failure — this only salvages the artifact.
       - name: Upload .deb artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vengaicode-desktop-linux-deb
