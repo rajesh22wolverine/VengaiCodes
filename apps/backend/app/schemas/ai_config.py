@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ProviderType = Literal["groq", "openai", "anthropic", "xai", "custom", "portable"]
 # Platform defaults can additionally be "ollama" — a user's own BYO config
@@ -38,6 +38,40 @@ PROVIDERS_REQUIRING_KEY = {"groq", "openai", "anthropic", "xai"}
 
 
 # ───────────────────────────────────────────────
+#  Model-id validation
+# ───────────────────────────────────────────────
+# `model_name` is passed VERBATIM to the provider (see
+# orchestrator._call_anthropic's `"model": model`), so it has to be the
+# provider's exact id string — never a display name. Nothing downstream
+# checks it, and a bad id doesn't surface until generation time: the row
+# still saves, still renders "Active · key set" in the admin screen, and
+# only then 404s as model_not_found. That is how a platform default was
+# stored as "opus 5" instead of "claude-opus-5" and sat there looking
+# healthy at the bottom of the fallback chain — the position where a
+# silent failure is least likely to be noticed and most likely to matter.
+#
+# Whitespace is the one rule safe to enforce across every provider: no
+# model id in any of them contains a space. Everything else that varies
+# between providers — slashes (openai/gpt-oss-120b), colons
+# (qwen2.5-coder:7b), dots, @ — is deliberately left alone.
+def _validate_model_id(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("Model id cannot be blank.")
+    if any(ch.isspace() for ch in cleaned):
+        suggestion = "-".join(cleaned.split())
+        raise ValueError(
+            f"Model id {cleaned!r} contains a space. This must be the "
+            f"provider's exact model id, not a display name — you probably "
+            f"want {suggestion!r} (Anthropic ids look like 'claude-opus-5', "
+            f"Groq's like 'openai/gpt-oss-120b')."
+        )
+    return cleaned
+
+
+# ───────────────────────────────────────────────
 #  Create / Update
 # ───────────────────────────────────────────────
 class AIConfigCreate(BaseModel):
@@ -49,6 +83,7 @@ class AIConfigCreate(BaseModel):
     api_key: Optional[str] = Field(None, max_length=500)
     # Plaintext in the request only — encrypted before it touches the DB.
     model_name: str = Field(..., min_length=1, max_length=255)
+    _check_model_name = field_validator("model_name")(_validate_model_id)
     label: str = Field(..., min_length=1, max_length=100)
     is_active: bool = False
     priority: Optional[PriorityTier] = None
@@ -62,6 +97,7 @@ class AIConfigUpdate(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = Field(None, max_length=500)
     model_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    _check_model_name = field_validator("model_name")(_validate_model_id)
     label: Optional[str] = Field(None, min_length=1, max_length=100)
     is_active: Optional[bool] = None
     priority: Optional[PriorityTier] = None
@@ -180,6 +216,7 @@ class AdminAIConfigCreate(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = Field(None, max_length=500)
     model_name: str = Field(..., min_length=1, max_length=255)
+    _check_model_name = field_validator("model_name")(_validate_model_id)
     label: str = Field(..., min_length=1, max_length=100)
     is_active: bool = True
     order_index: Optional[int] = None
@@ -192,6 +229,7 @@ class AdminAIConfigUpdate(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = Field(None, max_length=500)
     model_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    _check_model_name = field_validator("model_name")(_validate_model_id)
     label: Optional[str] = Field(None, min_length=1, max_length=100)
     is_active: Optional[bool] = None
     order_index: Optional[int] = None
