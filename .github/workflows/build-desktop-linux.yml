@@ -141,28 +141,40 @@ jobs:
             echo "::error::no shared libraries copied - archive layout changed"
             exit 1
           fi
+          find "$dest" -maxdepth 1 -name "*.so*" -printf "  %f\n" | sort
           echo "Sidecar ready: llama-server + $libs shared libs (llama.cpp $tag)"
 
-      # ── deb succeeds, AppImage is the fragile one ────────────────
-      #  Tauri v1's appimage.sh shells out to linuxdeploy and swallows
-      #  its output, so a failure here surfaces only as the useless
-      #  "error running appimage.sh" (run 34221071093). Two runner facts
-      #  cause it, and both are set rather than diagnosed because the
-      #  script gives you nothing to diagnose with:
+      # ── deb succeeds; the AppImage needed the sidecar's libs found ──
+      #  linuxdeploy walks the ELF dependencies of everything in the
+      #  AppDir. llama-server is a thin launcher linked against
+      #  libllama-server-impl.so, and Tauri puts externalBin in
+      #  AppDir/usr/bin but resources in a separate resource dir — so
+      #  linuxdeploy saw the launcher, went looking for its library, and
+      #  failed with "Could not find dependency: libllama-server-impl.so"
+      #  (runs 34221071093, 34222255293, 34222805673).
       #
-      #  APPIMAGE_EXTRACT_AND_RUN — linuxdeploy and appimagetool are
-      #  themselves AppImages, and mounting one needs FUSE, which GitHub
-      #  runners don't provide. This makes them self-extract instead.
+      #  LD_LIBRARY_PATH points it at the staging dir the sidecar step
+      #  filled. linuxdeploy then resolves those libraries and deploys
+      #  them into AppDir/usr/lib, which is on the AppImage's runtime
+      #  search path — so this fixes the build and the runtime lookup
+      #  together, rather than just silencing the bundler.
       #
-      #  NO_STRIP — linuxdeploy strips every ELF it bundles, and it trips
-      #  over the llama.cpp shared objects the sidecar step just added.
-      #  Skipping the strip costs some size in a binary that already
-      #  ships a ~40 MB inference engine.
+      #  Caveat worth knowing: this only covers libraries llama-server is
+      #  LINKED against. The ggml-cpu-* variants are dlopen'd by name at
+      #  runtime, so linuxdeploy cannot see them; those ride along via
+      #  bundle.resources in tauri.linux.conf.json. Nobody here can run a
+      #  Linux desktop to confirm the sidecar actually starts inside the
+      #  finished AppImage — a green build is not that proof.
+      #
+      #  APPIMAGE_EXTRACT_AND_RUN / NO_STRIP were set while diagnosing
+      #  this and kept: linuxdeploy and appimagetool are AppImages
+      #  themselves and runners have no FUSE to mount them.
       - name: Build Linux app (deb + AppImage)
         env:
           VITE_API_URL: https://vengaicode-backend.onrender.com
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
+          LD_LIBRARY_PATH: ${{ github.workspace }}/apps/desktop/src-tauri/binaries
         run: pnpm run build:desktop
 
       # ── Why the AppImage failed ──────────────────────────────────
@@ -186,6 +198,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
+          LD_LIBRARY_PATH: ${{ github.workspace }}/apps/desktop/src-tauri/binaries
         run: pnpm exec tauri build --verbose --bundles appimage 2>&1 | tail -120
 
       # always(): the deb bundles before the AppImage does, so when only
