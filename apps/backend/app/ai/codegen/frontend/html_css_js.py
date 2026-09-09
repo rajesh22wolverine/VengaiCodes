@@ -40,10 +40,8 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     )
     reference_block = build_reference_design_block(ctx.screen)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real vanilla JavaScript ES module implementing the "{screen_name}" screen of this app — no framework, plain DOM APIs.
+    prompt = f"""Write ONE complete, real vanilla JavaScript ES module implementing the "{screen_name}" screen of this app — no framework, plain DOM APIs.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
@@ -74,7 +72,10 @@ Requirements:
 
 Return ONLY the raw JavaScript module content. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     if issue is None and not _exports_render(content):
         # Cheap structural check the generic brace/TODO heuristic can't
         # catch: this adapter's wiring (main.js) does

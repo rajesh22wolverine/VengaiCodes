@@ -46,10 +46,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
     class_name = _pascal(table_name)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real ActiveRecord model class for the "{table_name}" table of this app.
+    prompt = f"""Write ONE complete, real ActiveRecord model class for the "{table_name}" table of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Table purpose: {ctx.table.get('purpose', '')}
 Fields (already defined as DB columns by a migration — do NOT redeclare them, just use them):
 {', '.join(ctx.table.get('key_fields', []))}
@@ -64,7 +62,10 @@ Requirements:
 
 Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "ruby", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "ruby", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"backend/app/models/{_slug(table_name)}.rb",
         language="ruby",
@@ -81,10 +82,8 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     )
     models_text = ", ".join(_pascal(t.get("name", "Item")) for t in ctx.tables)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Rails controller implementing every API endpoint below for this app.
+    prompt = f"""Write ONE complete, real Rails controller implementing every API endpoint below for this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Available ActiveRecord models to use: {models_text}
 
 API endpoints to implement (use the EXACT method name given for each — config/routes.rb
@@ -103,7 +102,10 @@ Requirements:
 
 Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "ruby", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "ruby", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [(
         GeneratedFile(
             path="backend/app/controllers/api_controller.rb",

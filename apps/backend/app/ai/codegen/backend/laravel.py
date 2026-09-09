@@ -46,10 +46,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     class_name = _pascal(table_name)
     fields = ctx.table.get("key_fields", []) or []
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Eloquent model class for the "{table_name}" table of this app.
+    prompt = f"""Write ONE complete, real Eloquent model class for the "{table_name}" table of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Table purpose: {ctx.table.get('purpose', '')}
 Fields (already defined as DB columns by a migration — do NOT redeclare them as properties):
 {', '.join(fields)}
@@ -65,7 +63,10 @@ Requirements:
 Return ONLY the raw PHP code for this one file (including `<?php` and `namespace App\\Models;`).
 No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "php", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "php", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"backend/app/Models/{class_name}.php",
         language="php",
@@ -82,10 +83,8 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     )
     models_text = ", ".join(_pascal(t.get("name", "Item")) for t in ctx.tables)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Laravel controller implementing every API endpoint below for this app.
+    prompt = f"""Write ONE complete, real Laravel controller implementing every API endpoint below for this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Available Eloquent models to use (import from App\\Models): {models_text}
 
 API endpoints to implement (use the EXACT method name given for each — routes/api.php
@@ -107,7 +106,10 @@ Requirements:
 Return ONLY the raw PHP code for this one file (including `<?php` and the namespace declaration).
 No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "php", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "php", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [(
         GeneratedFile(
             path="backend/app/Http/Controllers/ApiController.php",

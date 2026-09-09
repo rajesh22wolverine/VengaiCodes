@@ -20,10 +20,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
     class_name = _pascal(table_name)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real TypeORM entity file for the "{table_name}" table of this app.
+    prompt = f"""Write ONE complete, real TypeORM entity file for the "{table_name}" table of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Table purpose: {ctx.table.get('purpose', '')}
 Fields: {', '.join(ctx.table.get('key_fields', []))}
 
@@ -37,7 +35,10 @@ Requirements:
 
 Return ONLY the raw TypeScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"backend/src/{_slug(table_name)}/{_slug(table_name)}.entity.ts",
         language="typescript",
@@ -55,10 +56,8 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
         for t in ctx.tables
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real NestJS controller file implementing every API endpoint below for this app.
+    prompt = f"""Write ONE complete, real NestJS controller file implementing every API endpoint below for this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Available entities to import and use:
 {entity_imports}
 
@@ -83,7 +82,10 @@ Requirements:
 
 Return ONLY the raw TypeScript code for this one file (imports + the @Controller class). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [(
         GeneratedFile(
             path="backend/src/api/api.controller.ts",
@@ -141,10 +143,7 @@ service ApiService {{
         f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. A .proto file (below) has ALREADY been generated deterministically for this app's gRPC service — do not change its message/rpc names. Write the NestJS gRPC service IMPLEMENTATION file that implements every rpc method declared in it.
-
-App: {ctx.project_name}
-{ctx.requirements_text}
+    prompt = f"""A .proto file (below) has ALREADY been generated deterministically for this app's gRPC service — do not change its message/rpc names. Write the NestJS gRPC service IMPLEMENTATION file that implements every rpc method declared in it.
 
 Already-generated .proto contract (implement EXACTLY these rpc method names, request/response types):
 {proto_skeleton}
@@ -162,7 +161,10 @@ Requirements:
 Return ONLY the raw TypeScript code for this one file (imports + a service class with one
 @GrpcMethod per rpc). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [
         (GeneratedFile(path="backend/src/api/api.proto", language="text", content=proto_skeleton, description="gRPC service contract (deterministic)"), None),
         (GeneratedFile(path="backend/src/api/api.grpc.service.ts", language="typescript", content=content, description="gRPC service implementation"), issue),

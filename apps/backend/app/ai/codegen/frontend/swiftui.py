@@ -46,10 +46,8 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         ctx.design_style, ctx.color_palette, ctx.typography, ctx.screen.get("modules")
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real SwiftUI View struct implementing the "{screen_name}" screen of this app.
+    prompt = f"""Write ONE complete, real SwiftUI View struct implementing the "{screen_name}" screen of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
@@ -73,7 +71,10 @@ Requirements:
 Return ONLY the raw Swift code for this one file (imports + the Decodable model(s) it needs +
 the View struct). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "swift", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "swift", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"frontend/{struct_name}.swift",
         language="swift",

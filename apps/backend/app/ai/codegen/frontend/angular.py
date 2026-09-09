@@ -50,10 +50,8 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     )
     reference_block = build_reference_design_block(ctx.screen)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Angular STANDALONE component (Angular 17+ style — `standalone: true`, inline `template` and `styles`, NO separate .html/.css files, NO NgModule) for the "{screen_name}" screen of this app.
+    prompt = f"""Write ONE complete, real Angular STANDALONE component (Angular 17+ style — `standalone: true`, inline `template` and `styles`, NO separate .html/.css files, NO NgModule) for the "{screen_name}" screen of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
@@ -75,7 +73,10 @@ Requirements:
 
 Return ONLY the raw TypeScript file content (imports + @Component decorator + class). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "typescript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"frontend/src/app/screens/{kebab}.component.ts",
         language="typescript",

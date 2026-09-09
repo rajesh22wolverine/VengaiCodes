@@ -75,10 +75,8 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         ctx.design_style, ctx.color_palette, ctx.typography, ctx.screen.get("modules")
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Jetpack Compose composable function implementing the "{screen_name}" screen of this app.
+    prompt = f"""Write ONE complete, real Jetpack Compose composable function implementing the "{screen_name}" screen of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
@@ -103,7 +101,10 @@ Requirements:
 Return ONLY the raw Kotlin code for this one file (package line + imports + the composable
 function). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "kotlin", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "kotlin", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"frontend/app/src/main/java/{_package_path(package_name)}/screens/{class_name}.kt",
         language="kotlin",

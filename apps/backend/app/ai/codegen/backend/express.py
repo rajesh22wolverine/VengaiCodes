@@ -13,10 +13,8 @@ from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, 
 async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Mongoose schema/model file for the "{table_name}" collection of this app.
+    prompt = f"""Write ONE complete, real Mongoose schema/model file for the "{table_name}" collection of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Collection purpose: {ctx.table.get('purpose', '')}
 Fields: {', '.join(ctx.table.get('key_fields', []))}
 
@@ -30,7 +28,10 @@ Requirements:
 
 Return ONLY the raw JavaScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"backend/models/{_slug(table_name)}.js",
         language="javascript",
@@ -48,10 +49,8 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
         for t in ctx.tables
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Express routes file implementing every API endpoint below for this app.
+    prompt = f"""Write ONE complete, real Express routes file implementing every API endpoint below for this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Available models to import and use (via `require`):
 {model_imports}
 
@@ -69,7 +68,10 @@ Requirements:
 
 Return ONLY the raw JavaScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [(
         GeneratedFile(
             path="backend/routes/api.js",

@@ -31,10 +31,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     class_name = _pascal(table_name)
     package_name = _package_name(ctx.project_name)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Spring Data JPA entity class for the "{table_name}" table of this app.
+    prompt = f"""Write ONE complete, real Spring Data JPA entity class for the "{table_name}" table of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Table purpose: {ctx.table.get('purpose', '')}
 Fields: {', '.join(ctx.table.get('key_fields', []))}
 
@@ -50,7 +48,10 @@ Requirements:
 
 Return ONLY the raw Java code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "java", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "java", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"backend/src/main/java/{_package_path(package_name)}/{class_name}.java",
         language="java",
@@ -75,10 +76,8 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
         for t in ctx.tables
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Spring Boot REST controller implementing every API endpoint below for this app.
+    prompt = f"""Write ONE complete, real Spring Boot REST controller implementing every API endpoint below for this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Repository interfaces already available (autowire these, do not redefine them):
 {repos_text}
 
@@ -101,7 +100,10 @@ Requirements:
 
 Return ONLY the raw Java code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "java", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "java", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [(
         GeneratedFile(
             path=f"backend/src/main/java/{_package_path(package_name)}/ApiController.java",

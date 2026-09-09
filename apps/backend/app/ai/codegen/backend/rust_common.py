@@ -15,10 +15,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
     struct_name = _pascal(table_name)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Rust struct for the "{table_name}" table of this app.
+    prompt = f"""Write ONE complete, real Rust struct for the "{table_name}" table of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Table purpose: {ctx.table.get('purpose', '')}
 Fields: {', '.join(ctx.table.get('key_fields', []))}
 
@@ -37,7 +35,10 @@ Requirements:
 
 Return ONLY the raw Rust code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "rust", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "rust", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"backend/src/models/{_slug(table_name)}.rs",
         language="rust",

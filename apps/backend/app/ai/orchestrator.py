@@ -310,6 +310,64 @@ async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, f
 # enough to hold the thinking and the file both.
 ANTHROPIC_THINKING_HEADROOM = 8000
 
+# The values output_config.effort accepts. Anything else would be a 400
+# on every call, so a typo in ANTHROPIC_EFFORT is dropped (with a log
+# line) rather than taking generation down.
+ANTHROPIC_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _anthropic_output_config() -> dict:
+    """output_config for an Anthropic call, from settings.ANTHROPIC_EFFORT.
+
+    Effort is where the money goes on Opus 5: thinking is on by default,
+    its tokens bill as output, and at the model default ("high") the
+    thinking ahead of a generated file is routinely several times the
+    file. See the setting's comment in config.py for the numbers."""
+    effort = (settings.ANTHROPIC_EFFORT or "").strip().lower()
+    if not effort:
+        return {}
+    if effort not in ANTHROPIC_EFFORT_LEVELS:
+        logger.warning(
+            f"ANTHROPIC_EFFORT={settings.ANTHROPIC_EFFORT!r} is not one of "
+            f"{ANTHROPIC_EFFORT_LEVELS}; sending no effort (model default)"
+        )
+        return {}
+    return {"output_config": {"effort": effort}}
+
+
+def _anthropic_content(prompt: str, context: Optional[str]) -> list[dict]:
+    """The user turn, laid out so the prompt cache can actually hit.
+
+    Anthropic's cache keys on whole content blocks up to a breakpoint,
+    not on arbitrary substrings — so a project's shared preamble only
+    gets reused across files when it is its OWN block, marked, ahead of
+    the per-file block. With `context` (every codegen adapter passes
+    the project's requirements as it), the first file writes that
+    block at 1.25x input and every later file in the run — and the
+    retry of any file — reads it at 0.1x.
+
+    Without `context` the single block is still marked: that buys just
+    generate_text_validated()'s retry, which re-sends the same prompt
+    with the rejection appended. A miss costs nothing beyond the 1.25x
+    write, and a block under the model's minimum cacheable length is
+    ignored silently."""
+    if context:
+        return [
+            {
+                "type": "text",
+                "text": context,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": prompt},
+        ]
+    return [
+        {
+            "type": "text",
+            "text": prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
 
 async def _call_anthropic(
     base_url: str,
@@ -318,6 +376,7 @@ async def _call_anthropic(
     prompt: str,
     max_tokens: int | None = None,
     timeout: float = 420.0,
+    context: Optional[str] = None,
 ) -> tuple[str, float, dict]:
     """
     Call Anthropic's Messages API — a different shape from the OpenAI-
@@ -334,6 +393,10 @@ async def _call_anthropic(
     settings.ANTHROPIC_MAX_OUTPUT_TOKENS — a ceiling set high enough that
     it never truncates a generated file, and never reached in billing
     because Anthropic charges for tokens actually produced.
+
+    `context` is the part of the prompt shared by every call in a run
+    (a project's requirements); it goes in its own cached block ahead
+    of `prompt` — see _anthropic_content().
     """
     start = time.perf_counter()
 
@@ -354,38 +417,9 @@ async def _call_anthropic(
                     if explicit_cap
                     else settings.ANTHROPIC_MAX_OUTPUT_TOKENS
                 ),
-                # Cache breakpoint at the end of the prompt. Anthropic's
-                # caching is a PREFIX match, so today this buys exactly
-                # one thing: generate_text_validated()'s retry re-sends
-                # this prompt verbatim with the rejection appended — a
-                # strict prefix extension — so the retry reads the whole
-                # original prompt back at ~0.1x instead of paying full
-                # price for it a second time.
-                #
-                # It is NOT the big win yet. requirements_text is shared
-                # by every file in a project, but each adapter puts its
-                # per-file instruction line AHEAD of it, so the prefix
-                # diverges within ~15 tokens and that shared block never
-                # matches across files. Moving the stable preamble to the
-                # front of the adapter prompts is what unlocks that, and
-                # this breakpoint starts paying for it the day they move.
-                #
-                # A miss is cheap and bounded: cache writes bill at 1.25x
-                # input, and input is the cheap side of a codegen call
-                # (~2% of spend on a 6k-token file). Under the model's
-                # minimum cacheable length the breakpoint is ignored
-                # silently — no write, no charge.
+                **_anthropic_output_config(),
                 "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt,
-                                "cache_control": {"type": "ephemeral"},
-                            }
-                        ],
-                    }
+                    {"role": "user", "content": _anthropic_content(prompt, context)}
                 ],
             },
         )
@@ -420,20 +454,36 @@ async def _call_anthropic(
     return text, duration_ms, usage
 
 
+def _join_context(prompt: str, context: Optional[str]) -> str:
+    """For providers with no prompt cache to place it in, the shared
+    context is simply the front of the prompt — the same text Anthropic
+    sees, in the same order, as one string."""
+    return f"{context}\n\n{prompt}" if context else prompt
+
+
 async def _call_user_ai_config(
-    config: UserAIConfig, prompt: str, max_tokens: int | None = None
+    config: UserAIConfig,
+    prompt: str,
+    max_tokens: int | None = None,
+    context: Optional[str] = None,
 ) -> tuple[str, float, dict]:
     """Call one bag entry — a platform default (config.user_id is None) or
     a user's own saved BYO config (their key, or their custom endpoint)."""
     if config.provider_type == "ollama":
-        return await _call_ollama(prompt, config.model_name, base_url=config.base_url)
+        return await _call_ollama(
+            _join_context(prompt, context), config.model_name, base_url=config.base_url
+        )
 
     api_key = decrypt_secret(config.api_key_encrypted) if config.api_key_encrypted else None
 
     if config.provider_type == "anthropic":
         if not api_key:
             raise AIError("Anthropic requires an API key")
-        return await _call_anthropic(config.base_url, api_key, config.model_name, prompt, max_tokens)
+        return await _call_anthropic(
+            config.base_url, api_key, config.model_name, prompt, max_tokens, context=context
+        )
+
+    prompt = _join_context(prompt, context)
 
     # "custom" is where the aggregators and reasoning models live
     # (OpenRouter, DeepSeek, Moonshot, ...), and they bill only what they
@@ -766,6 +816,31 @@ async def backfill_legacy_bag_orders() -> None:
             logger.info(f"✅ Backfilled ai_bag_order for {backfilled} user(s) with a pre-bag AI config")
 
 
+def _log_usage(
+    source: str, model: str | None, task_type: Optional[str], duration_ms: float, usage: dict
+) -> None:
+    """One line per AI call saying what it cost in tokens.
+
+    Before this, the only trace of spend was user.ai_tokens_used — a
+    single running total with no split, so a $5 credit could vanish
+    without the logs saying which calls, or whether it went to input,
+    output, or thinking (which Anthropic bills inside output_tokens).
+    The cache columns are what proves the prompt-cache layout works: a
+    cache_read that stays 0 across a run means the shared block isn't
+    matching."""
+    logger.info(
+        "AI call %s model=%s task=%s in=%s out=%s cache_read=%s cache_write=%s %.0fms",
+        source,
+        model,
+        task_type or "-",
+        usage.get("prompt_tokens"),
+        usage.get("completion_tokens"),
+        usage.get("cache_read_input_tokens", 0),
+        usage.get("cache_creation_input_tokens", 0),
+        duration_ms,
+    )
+
+
 async def generate_text(
     prompt: str,
     model: str | None = None,
@@ -773,6 +848,7 @@ async def generate_text(
     user: Optional[User] = None,
     db: Optional[AsyncSession] = None,
     task_type: Optional[str] = None,
+    context: Optional[str] = None,
 ) -> dict:
     """
     Generate text by walking the caller's effective AI model "bag" — see
@@ -811,6 +887,12 @@ async def generate_text(
 
     A user's own BYO key or self-hosted endpoint is not metered at all,
     since VengaiCode isn't paying for that inference.
+
+    `context` is text shared by many calls in one run (a project's
+    requirements, sent ahead of every generated file). Anthropic gets
+    it as a separately cached block so later calls read it at 0.1x;
+    every other provider gets it joined onto the front of the prompt.
+    None (the default) is a plain single-string prompt, as before.
     """
     # ── Walk the effective bag (own config(s), then platform defaults) ──
     if user is not None and db is not None:
@@ -823,12 +905,19 @@ async def generate_text(
 
                 try:
                     text, duration_ms, usage = await _call_user_ai_config(
-                        bag_config, prompt, max_tokens
+                        bag_config, prompt, max_tokens, context=context
                     )
                     if is_platform and usage.get("total_tokens") is not None:
                         user.ai_tokens_used += usage["total_tokens"]
                         await db.commit()
                     source = "byo" if bag_config.user_id is not None else "platform"
+                    _log_usage(
+                        f"{source}:{bag_config.provider_type}",
+                        bag_config.model_name,
+                        task_type,
+                        duration_ms,
+                        usage,
+                    )
                     return {
                         "text": text,
                         "source": f"{source}:{bag_config.provider_type}",
@@ -860,8 +949,10 @@ async def generate_text(
             )
 
     # ── Try Ollama first ──
+    prompt = _join_context(prompt, context)
     try:
         text, duration_ms, usage = await _call_ollama(prompt, model)
+        _log_usage("ollama", model or settings.OLLAMA_CHAT_MODEL, task_type, duration_ms, usage)
         return {
             "text": text,
             "source": "ollama",
@@ -876,6 +967,7 @@ async def generate_text(
     # ── Fallback to Groq ──
     try:
         text, duration_ms, usage = await _call_groq(prompt, max_tokens)
+        _log_usage("groq", settings.GROQ_DEFAULT_MODEL, task_type, duration_ms, usage)
         return {
             "text": text,
             "source": "groq",

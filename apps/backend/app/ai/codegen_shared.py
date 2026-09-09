@@ -185,12 +185,29 @@ def validate_generated_content(language: str, content: str) -> str | None:
     return VALIDATORS.get(language, _validate_brace_heuristic)(content)
 
 
+def build_project_context(project_name: str, requirements_text: str, label: str = "App") -> str:
+    """The part of every codegen prompt that is the same for every file
+    in a project: who the model is, which app, and its requirements.
+
+    Kept apart from the per-file prompt (see generate_text's `context`)
+    so a provider with a prompt cache can serve it from cache on every
+    file after the first — the adapters used to inline this after their
+    per-file opening line, which put the varying text first and made
+    the shared block unmatchable. `label` is "Game" for the engine
+    targets, whose prompts have always said so."""
+    return (
+        f"You are Baby Tiger 🐯, VengaiCode's AI code generation assistant.\n\n"
+        f"{label}: {project_name}\n{requirements_text}"
+    )
+
+
 async def generate_text_validated(
     prompt: str,
     language: str,
     max_tokens: int | None = None,
     user: Optional[User] = None,
     db: Optional[AsyncSession] = None,
+    context: Optional[str] = None,
 ) -> tuple[str, str | None]:
     """Call generate_text(), validate the result, and retry once with the
     specific problem appended to the prompt if validation fails.
@@ -198,9 +215,13 @@ async def generate_text_validated(
     user/db are threaded straight through to generate_text() so a caller's
     BYO/portable AI config (Settings -> AI Model) is honored here too —
     every codegen adapter calls this instead of generate_text() directly.
+
+    `context` is the project's shared preamble (build_project_context());
+    it rides along unchanged on the retry, which is exactly the cache
+    hit the retry was always meant to get.
     """
     result = await generate_text(
-        prompt, max_tokens=max_tokens, user=user, db=db, task_type="codegen"
+        prompt, max_tokens=max_tokens, user=user, db=db, task_type="codegen", context=context
     )
     content = strip_code_fences(result["text"])
     issue = validate_generated_content(language, content)
@@ -212,7 +233,12 @@ async def generate_text_validated(
             f"no markdown fences, no explanation."
         )
         result = await generate_text(
-            retry_prompt, max_tokens=max_tokens, user=user, db=db, task_type="codegen"
+            retry_prompt,
+            max_tokens=max_tokens,
+            user=user,
+            db=db,
+            task_type="codegen",
+            context=context,
         )
         content = strip_code_fences(result["text"])
         issue = validate_generated_content(language, content)

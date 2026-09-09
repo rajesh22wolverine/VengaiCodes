@@ -36,10 +36,8 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     )
     reference_block = build_reference_design_block(ctx.screen)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Svelte component (classic Svelte 4 syntax, NOT Svelte 5 runes) for the "{screen_name}" screen of this app.
+    prompt = f"""Write ONE complete, real Svelte component (classic Svelte 4 syntax, NOT Svelte 5 runes) for the "{screen_name}" screen of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
@@ -58,7 +56,10 @@ Requirements:
 
 Return ONLY the raw .svelte file content. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "javascript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"frontend/src/screens/{component_name}.svelte",
         language="javascript",

@@ -233,6 +233,20 @@ class Settings(BaseSettings):
     # free — raising this costs nothing until a file genuinely needs it.
     ANTHROPIC_MAX_OUTPUT_TOKENS: int = 64000
 
+    # How hard Claude thinks before it answers — "low" | "medium" | "high"
+    # | "xhigh" | "max". Sent as output_config.effort on every Anthropic
+    # call; blank sends nothing, which on claude-opus-5 means "high".
+    #
+    # This is the lever that decides what a build costs. Thinking is on
+    # by default on Opus 5 and its tokens bill as OUTPUT ($25/M), so at
+    # the default effort the thinking in front of a generated file is
+    # routinely several times the size of the file itself — a music-
+    # player app of ~11 files cost ~$4 at "high". Each file is generated
+    # from a fully specified prompt (the table, the endpoints, the
+    # approved mockup), so "low" loses little and cuts the bill 3-4x.
+    # Raise it per deployment if quality on a stack turns out to need it.
+    ANTHROPIC_EFFORT: str = "low"
+
     AI_TEMPERATURE: float = 0.1
     AI_CODE_TEMPERATURE: float = 0.05
 

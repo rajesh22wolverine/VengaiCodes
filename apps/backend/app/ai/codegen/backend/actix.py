@@ -21,10 +21,8 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
         for t in ctx.tables
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real actix-web handlers file implementing every API endpoint below for this app.
+    prompt = f"""Write ONE complete, real actix-web handlers file implementing every API endpoint below for this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Already-generated data structs to import and use:
 {model_imports}
 
@@ -50,7 +48,10 @@ Return ONLY the raw Rust code for this one file (imports + `use actix_web::{{get
 delete, web, HttpResponse, Responder}};` + each `#[route_macro]` handler function). No markdown
 fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "rust", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "rust", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [(
         GeneratedFile(
             path="backend/src/handlers.rs",

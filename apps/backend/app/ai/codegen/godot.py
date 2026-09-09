@@ -82,10 +82,8 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
         ctx.design_style, ctx.color_palette, ctx.typography, ctx.screen.get("modules")
     )
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Godot 4 GDScript file implementing the "{screen_name}" scene of this game.
+    prompt = f"""Write ONE complete, real Godot 4 GDScript file implementing the "{screen_name}" scene of this game.
 
-Game: {ctx.project_name}
-{ctx.requirements_text}
 Scene purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this scene can call:
@@ -118,7 +116,10 @@ Requirements:
 
 Return ONLY the raw GDScript code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "gdscript", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "gdscript", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(label="Game"),
+    )
     return GeneratedFile(
         path=f"frontend/scenes/{class_name}.gd",
         language="gdscript",

@@ -34,10 +34,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
     struct_name = _pascal(table_name)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Go GORM model struct for the "{table_name}" table of this app.
+    prompt = f"""Write ONE complete, real Go GORM model struct for the "{table_name}" table of this app.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Table purpose: {ctx.table.get('purpose', '')}
 Fields: {', '.join(ctx.table.get('key_fields', []))}
 
@@ -53,7 +51,10 @@ Requirements:
 
 Return ONLY the raw Go code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "go", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "go", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return GeneratedFile(
         path=f"backend/models/{_slug(table_name)}.go",
         language="go",
@@ -71,10 +72,8 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     )
     models_text = ", ".join(_pascal(t.get("name", "Item")) for t in ctx.tables)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real Go file implementing every API endpoint below for this app, as Gin handler factory functions.
+    prompt = f"""Write ONE complete, real Go file implementing every API endpoint below for this app, as Gin handler factory functions.
 
-App: {ctx.project_name}
-{ctx.requirements_text}
 Available GORM models to use (import "{module_name}/models"): {models_text}
 
 API endpoints to implement (use the EXACT function name given for each — main.go registers
@@ -97,7 +96,10 @@ Requirements:
 Return ONLY the raw Go code for this one file (package decl + imports + each handler factory
 function). No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "go", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "go", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
     return [(
         GeneratedFile(
             path="backend/handlers/api.go",

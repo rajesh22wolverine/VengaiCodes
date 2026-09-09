@@ -17,15 +17,29 @@ from typing import Awaitable, Callable, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.codegen_shared import GeneratedFile
+from app.ai.codegen_shared import GeneratedFile, build_project_context
 from app.models.user import User
 
 # (file, validation_issue) — issue is None when the file looked OK.
 FileResult = tuple[GeneratedFile, str | None]
 
 
+class _PromptCtx:
+    """What every generation context can hand to generate_text_validated()
+    as `context`: the project preamble shared by all of its files, kept
+    out of the per-file prompt so a provider's prompt cache can reuse it.
+    Subclasses are dataclasses that all carry project_name and
+    requirements_text."""
+
+    project_name: str
+    requirements_text: str
+
+    def shared_context(self, label: str = "App") -> str:
+        return build_project_context(self.project_name, self.requirements_text, label)
+
+
 @dataclass
-class ModelCtx:
+class ModelCtx(_PromptCtx):
     project_name: str
     table: dict
     requirements_text: str
@@ -41,7 +55,7 @@ class ModelCtx:
 
 
 @dataclass
-class RoutesCtx:
+class RoutesCtx(_PromptCtx):
     project_name: str
     endpoints: list[dict]
     tables: list[dict]
@@ -53,7 +67,7 @@ class RoutesCtx:
 
 
 @dataclass
-class ScreenCtx:
+class ScreenCtx(_PromptCtx):
     project_name: str
     screen: dict
     endpoints: list[dict]

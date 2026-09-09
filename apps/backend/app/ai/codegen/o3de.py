@@ -99,10 +99,8 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     script_table_name = f"{_pascal(screen_name)}Behavior"
     file_slug = _slug(screen_name)
 
-    prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI code generation assistant. Write ONE complete, real O3DE (Open 3D Engine) Lua component script implementing the game logic for the "{screen_name}" feature of this game.
+    prompt = f"""Write ONE complete, real O3DE (Open 3D Engine) Lua component script implementing the game logic for the "{screen_name}" feature of this game.
 
-Game: {ctx.project_name}
-{ctx.requirements_text}
 Feature purpose: {ctx.screen.get('purpose', '')}
 
 Requirements — follow O3DE's REAL Lua component script structure exactly, nothing invented:
@@ -143,7 +141,10 @@ Requirements — follow O3DE's REAL Lua component script structure exactly, noth
 
 Return ONLY the raw Lua code for this one file. No markdown fences, no explanation, no JSON."""
 
-    content, issue = await generate_text_validated(prompt, "lua", GROQ_FILE_MAX_TOKENS, user=ctx.user, db=ctx.db)
+    content, issue = await generate_text_validated(
+        prompt, "lua", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(label="Game"),
+    )
     return GeneratedFile(
         path=f"frontend/Scripts/{file_slug}.lua",
         language="lua",
