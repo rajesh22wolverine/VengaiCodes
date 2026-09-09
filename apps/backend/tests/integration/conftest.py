@@ -9,6 +9,7 @@ test that uses this.
 import asyncio
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import pytest
@@ -119,6 +120,19 @@ def api(tmp_path, monkeypatch):
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_current_active_user] = lambda: user
+
+    # Entering TestClient runs the app's lifespan, whose init_db() and
+    # seeding hit the REAL engine (settings.DATABASE_URL). That passed
+    # on a dev machine only because .env points at SQLite; on CI there
+    # is no .env, the default is Postgres on localhost, and every test
+    # errored in setup with "Connect call failed 127.0.0.1:5432". These
+    # tests bring their own database above and need nothing from the
+    # lifespan, so it's replaced for the duration of the fixture.
+    @asynccontextmanager
+    async def no_lifespan(_app):
+        yield
+
+    monkeypatch.setattr(app.router, "lifespan_context", no_lifespan)
 
     with TestClient(app) as client:
         yield Api(client=client, project_id=project.id, sessions=sessions)
