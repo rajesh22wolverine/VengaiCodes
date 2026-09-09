@@ -15,7 +15,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.orchestrator import AIError, generate_text, generate_vision, transcribe_audio
+from app.ai import uiux_runner
+from app.ai.orchestrator import AIError, generate_vision, transcribe_audio
+from app.ai.uiux_prompts import build_design_to_code_prompt, parse_ai_json
 from app.api.v1.auth import get_current_active_user
 from app.api.v1.figma import get_figma_token
 from app.core.database import get_db
@@ -24,8 +26,11 @@ from app.schemas.figma import ImportFigmaRequest
 from app.core.storage import (
     StorageError, fetch_bytes, upload_design_image, upload_voice_note,
 )
+from app.models.generation_job import JOB_CANCELLED, JOB_SUCCEEDED
 from app.models.project import Project, SDLCPhase
 from app.models.user import User
+from app.schemas.uiux import UIUXDesign
+from app.services import generation_jobs
 
 logger = logging.getLogger("vengaicode.uiux")
 router = APIRouter()
@@ -39,33 +44,6 @@ ALLOWED_AUDIO_TYPES = {
 # ─── Schemas ───
 class GenerateUIUXRequest(BaseModel):
     project_id: str
-
-
-class ScreenDefinition(BaseModel):
-    id: str = ""
-    name: str
-    purpose: str
-    key_elements: list[str]
-    generated_html: Optional[str] = None
-    generated_css: Optional[str] = None
-    modules: list[str] = []
-
-
-class ColorPalette(BaseModel):
-    primary: str
-    secondary: str
-    accent: str
-    background: str
-    text: str
-
-
-class UIUXDesign(BaseModel):
-    design_style: str
-    color_palette: ColorPalette
-    typography: str
-    screens: list[ScreenDefinition]
-    components: list[str]
-    navigation_pattern: str
 
 
 class GenerateUIUXResponse(BaseModel):
@@ -96,149 +74,106 @@ class SavePagesRequest(BaseModel):
     page_order: list[str]
 
 
-# ─── Prompt builder ───
-def build_uiux_prompt(project_name: str, requirements: dict) -> str:
-    features = ", ".join(requirements.get("key_features", []))
-    platforms = ", ".join(requirements.get("platforms", []))
-
-    return f"""You are Baby Tiger 🐯, VengaiCode's AI design assistant. Based on this app's approved requirements, design a UI/UX system.
-
-App: {project_name}
-Overview: {requirements.get('overview', '')}
-Key features: {features}
-Platforms: {platforms}
-Target users: {requirements.get('target_users', '')}
-
-Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
-{{
-  "design_style": "1 sentence describing the visual style (e.g. 'clean and minimal with rounded corners, energetic accent colors')",
-  "color_palette": {{
-    "primary": "#hexcode",
-    "secondary": "#hexcode",
-    "accent": "#hexcode",
-    "background": "#hexcode",
-    "text": "#hexcode"
-  }},
-  "typography": "1 sentence on font choice and why it fits (e.g. 'Inter for a modern, friendly, highly readable feel')",
-  "screens": [
-    {{"name": "Screen Name", "purpose": "1 sentence what this screen does", "key_elements": ["element1", "element2", "element3"]}}
-  ],
-  "components": ["reusable component 1", "reusable component 2", "reusable component 3"],
-  "navigation_pattern": "1 sentence describing how users move between screens (e.g. 'bottom tab bar with 4 main sections')"
-}}
-
-Generate 4-6 screens covering the core user journey. Pick colors that suit the app's purpose and target users. Choose real, valid hex codes.
-
-Respond with ONLY the JSON object, nothing else."""
-
-
-def build_design_to_code_prompt(page_name: str, voice_instructions: Optional[str] = None) -> str:
-    voice_section = ""
-    if voice_instructions:
-        voice_section = f"""
-
-The user also recorded a voice note with additional instructions — \
-follow these along with what you see in the image:
-"{voice_instructions}\""""
-
-    return f"""You are Baby Tiger 🐯, VengaiCode's AI design-to-code assistant. \
-Look at the attached page design image (for a page called "{page_name}") and \
-recreate it as HTML + CSS as faithfully as you can — layout, spacing, colors, \
-typography, and visible text/labels.{voice_section}
-
-Rules:
-- Use plain semantic HTML5 (no framework, no Tailwind classes) with a single \
-  matching CSS stylesheet — this needs to be readable and directly editable
-  by the user afterward, not a build pipeline.
-- Match colors (as hex), approximate spacing/sizing, and text content as
-  closely as you can infer from the image.
-- Use placeholder text/images only where the design shows content you can't
-  read clearly.
-- Wrap each distinct structural section you identify in its own top-level
-  container element carrying a `data-veng-module="<name>"` attribute, where
-  `<name>` exactly matches one entry of the "modules" array you return below
-  (e.g. `<header data-veng-module="Header nav">...</header>`). This is what
-  lets the editor move/reorder whole sections later — every module you
-  report must correspond to exactly one real, addressable element.
-
-Respond with ONLY a JSON object, no markdown, no extra text:
-{{
-  "html": "<the full HTML markup for this page's body content, as a string>",
-  "css": "<the full CSS, as a string>",
-  "notes": "1 sentence on anything you weren't confident about",
-  "modules": ["3 to 6 short names for the distinct structural sections/components you see, e.g. 'Header nav', 'Hero banner', 'Pricing cards', 'Footer'"]
-}}"""
-
-
-def build_screen_to_code_prompt(
-    screen: dict, design_style: str, color_palette: dict, typography: str
-) -> str:
-    key_elements = ", ".join(screen.get("key_elements", []))
-    palette_text = ", ".join(f"{k}: {v}" for k, v in color_palette.items())
-
-    return f"""You are Baby Tiger 🐯, VengaiCode's AI design assistant. Design a single \
-page mockup, as HTML + CSS, for the "{screen.get('name', 'Screen')}" screen of this app.
-
-Screen purpose: {screen.get('purpose', '')}
-Key elements this screen needs: {key_elements}
-
-Match the app's design system:
-- Style: {design_style}
-- Color palette: {palette_text}
-- Typography: {typography}
-
-Rules:
-- Use plain semantic HTML5 (no framework, no Tailwind classes) with a single \
-  matching CSS stylesheet — this needs to be readable and directly editable
-  by the user afterward, not a build pipeline.
-- Use real hex colors from the palette above, and reflect the stated style
-  and typography choice.
-- Use realistic placeholder text/labels appropriate to the screen's purpose
-  and key elements — no lorem ipsum.
-- Wrap each distinct structural section you create in its own top-level
-  container element carrying a `data-veng-module="<name>"` attribute, where
-  `<name>` exactly matches one entry of the "modules" array you return below
-  (e.g. `<header data-veng-module="Header nav">...</header>`). This is what
-  lets the editor move/reorder whole sections later — every module you
-  report must correspond to exactly one real, addressable element.
-
-Respond with ONLY a JSON object, no markdown, no extra text:
-{{
-  "html": "<the full HTML markup for this page's body content, as a string>",
-  "css": "<the full CSS, as a string>",
-  "notes": "1 sentence on anything you weren't confident about",
-  "modules": ["3 to 6 short names for the distinct structural sections you created, e.g. 'Header nav', 'Hero banner', 'Pricing cards', 'Footer'"]
-}}"""
-
-
-# Both UI/UX calls once inherited a 4096-token default, which was far too
-# small for the mockup call and left it truncated mid-markup: the reply
-# came back HTTP 200 but json.loads() failed with "Unterminated string
-# starting at: line 2 column 11" — column 11 of line 2 is the opening
-# quote of the "html" value, i.e. it was cut off before the markup even
-# got going. The screen then silently fell back to a text-only card.
+# ───────────────────────────────────────────────
+#  Design generation
 #
-# Sizing these by hand (6000 / 12000) fixed that but only moved the wall
-# further out: a mockup returns a whole HTML page AND its stylesheet, both
-# embedded as JSON strings, so every quote and newline in the markup is
-# escaped and counted, and a rich enough screen still hit the ceiling.
-#
-# None removes the wall. VengaiCode sets no ceiling of its own on either
-# call; the provider's model maximum is the limit, and a truncated mockup
-# now means the model genuinely ran out of room rather than that we
-# guessed a number too low. See settings.AI_MAX_TOKENS.
-UIUX_DESIGN_MAX_TOKENS: int | None = None   # compact JSON: palette, typography, screens
-UIUX_MOCKUP_MAX_TOKENS: int | None = None   # a full HTML page + CSS, JSON-escaped
+#  The run lives in ai/uiux_runner.py and happens in a background job
+#  (services/generation_jobs.py). It has to: the design system is one
+#  AI call, but every screen's mockup is another, so the run's wall
+#  time grows with the app while an HTTP timeout is a constant — and
+#  the old inline version threw away every finished mockup when the
+#  request died.
+# ───────────────────────────────────────────────
+async def _get_project(db: AsyncSession, user: User, project_id: str) -> Project:
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    return project
 
 
-def parse_ai_json(text: str) -> dict:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("```")[1]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-    cleaned = cleaned.strip()
-    return json.loads(cleaned)
+async def _get_designable_project(
+    db: AsyncSession, user: User, project_id: str
+) -> Project:
+    project = await _get_project(db, user, project_id)
+
+    if not project.requirements_data or not project.requirements_data.get("user_approved"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requirements must be approved before generating UI/UX design.",
+        )
+
+    return project
+
+
+@router.post(
+    "/start",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start (or rejoin) a UI/UX design run and return immediately",
+)
+async def start_uiux(
+    payload: GenerateUIUXRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Idempotent: called while a run is already going, it returns that run
+    rather than starting a second one; called after one died partway, it
+    resumes from the last finished screen instead of paying again for
+    the mockups already generated.
+    """
+    project = await _get_designable_project(db, user, payload.project_id)
+    job = await generation_jobs.start_or_resume(db, project, user, uiux_runner.RUNNER)
+    return {"success": True, "job": generation_jobs.job_payload(job)}
+
+
+@router.get(
+    "/{project_id}/job",
+    summary="Progress of this project's UI/UX design run",
+)
+async def get_uiux_job(
+    project_id: str,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cheap to poll — no AI call, just the job row."""
+    project = await _get_project(db, user, project_id)
+    job = await generation_jobs.get_latest_job(db, project.id, uiux_runner.PHASE)
+    return {"success": True, "job": generation_jobs.job_payload(job)}
+
+
+@router.post(
+    "/cancel",
+    summary="Ask this project's UI/UX design run to stop",
+)
+async def cancel_uiux(
+    payload: GenerateUIUXRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stops after the screen currently being designed finishes — an AI
+    call already in flight is paid for either way, so it's kept.
+    Everything generated so far stays saved and a restart resumes.
+    """
+    project = await _get_project(db, user, payload.project_id)
+    job = await generation_jobs.get_latest_job(db, project.id, uiux_runner.PHASE)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No UI/UX design run to cancel.",
+        )
+
+    job = await generation_jobs.request_cancel(db, job)
+    return {"success": True, "job": generation_jobs.job_payload(job)}
 
 
 @router.post(
@@ -252,98 +187,36 @@ async def generate_uiux(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Takes the approved requirements document and generates a UI/UX
-    design system — colors, typography, screens, components.
+    Start the run and wait for it, returning the finished design system.
+
+    Kept for clients that predate /start + /{id}/job polling. If this
+    request times out the run still finishes and saves — the client
+    picks it up from GET /uiux/{project_id} instead of losing it.
     """
-    result = await db.execute(
-        select(Project).where(
-            Project.id == payload.project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
+    project = await _get_designable_project(db, user, payload.project_id)
+    job = await generation_jobs.start_or_resume(db, project, user, uiux_runner.RUNNER)
 
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    finished = await generation_jobs.wait_for_completion(job.id)
 
-    if not project.requirements_data or not project.requirements_data.get("user_approved"):
+    if finished is None or generation_jobs.is_stale(finished):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Requirements must be approved before generating UI/UX design.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Your design is still being generated. Reopen this screen to check on it.",
         )
-
-    frd = project.requirements_data.get("frd", {})
-
-    try:
-        prompt = build_uiux_prompt(project.name, frd)
-        ai_result = await generate_text(
-            prompt, max_tokens=UIUX_DESIGN_MAX_TOKENS, user=user, db=db
-        )
-        parsed = parse_ai_json(ai_result["text"])
-    except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
-    except (json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.error(f"Failed to parse AI UI/UX response: {e}")
+    if finished.status == JOB_CANCELLED:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Baby Tiger had trouble designing your app. Please try again! 🐯",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Design generation was cancelled.",
+        )
+    if finished.status != JOB_SUCCEEDED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=finished.error or "Design generation failed.",
         )
 
-    design = UIUXDesign(**parsed)
-
-    for screen in design.screens:
-        screen.id = uuid.uuid4().hex
-
-    palette_dict = design.color_palette.model_dump()
-
-    async def _mockup_for(screen: ScreenDefinition) -> None:
-        try:
-            screen_prompt = build_screen_to_code_prompt(
-                screen.model_dump(), design.design_style, palette_dict, design.typography
-            )
-            screen_result = await generate_text(
-                screen_prompt, max_tokens=UIUX_MOCKUP_MAX_TOKENS, user=user, db=db
-            )
-            screen_parsed = parse_ai_json(screen_result["text"])
-            screen.generated_html = screen_parsed.get("html")
-            screen.generated_css = screen_parsed.get("css")
-            modules = screen_parsed.get("modules")
-            screen.modules = modules if isinstance(modules, list) else []
-        except (AIError, json.JSONDecodeError, KeyError, IndexError) as e:
-            # Non-fatal — the design system itself already succeeded. The
-            # screen just falls back to a text-only card until the user
-            # regenerates or uploads their own mockup for it.
-            logger.warning(f"Auto mockup generation failed for screen '{screen.name}': {e}")
-
-    # Sequential, NOT asyncio.gather(). Every _mockup_for() call reaches
-    # generate_text(user=..., db=...), which uses this request's single
-    # AsyncSession — it queries the model bag and, for platform-default
-    # configs, does `user.ai_tokens_used += ...; await db.commit()`.
-    # Fanning that out concurrently broke three ways at once:
-    #   1. AsyncSession is not safe for concurrent use. Two screens
-    #      touching it at the same time raised
-    #      "IllegalStateChangeError: Method 'close()' can't be called
-    #      here; method '_connection_for_bind()' is already in progress"
-    #      in production.
-    #   2. ai_tokens_used is a read-modify-write, so parallel screens lost
-    #      each other's updates and the platform quota under-counted.
-    #   3. N screens hit the provider simultaneously against a per-minute
-    #      token ceiling (Groq's free tier is 8k TPM), so the burst just
-    #      turned into 429s and retry backoff — no real speedup anyway.
-    # Making these concurrent again needs generate_text() split into
-    # "resolve the bag" (one DB hit up front) and "call the provider"
-    # (no session), with token metering summed once at the end.
-    for screen in design.screens:
-        await _mockup_for(screen)
-
-    project.uiux_data = {
-        "design": design.model_dump(),
-        "user_approved": False,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.commit()
-
-    return GenerateUIUXResponse(design=design)
+    await db.refresh(project)
+    design = (project.uiux_data or {}).get("design", {})
+    return GenerateUIUXResponse(design=UIUXDesign(**design))
 
 
 @router.get(

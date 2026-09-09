@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { AlertTriangle, ArrowLeft, BookOpen, Download, FileCode2, ThumbsUp } from "lucide-react-native";
 
 import apiClient from "@/lib/api";
+import {
+  GenerationCancelled,
+  GenerationJob,
+  cancelGenerationJob,
+  runGenerationJob,
+} from "@/lib/generationJob";
 import { downloadAndShareFile } from "@/lib/download";
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/theme/useTheme";
@@ -50,12 +56,22 @@ export default function CodeGenScreen() {
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [job, setJob] = useState<GenerationJob | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
 
+  // Generation runs on the server, not here — leaving the screen stops
+  // us watching it, it doesn't stop the run.
+  const abandoned = useRef(false);
+
   useEffect(() => {
+    abandoned.current = false;
     loadOrGenerate();
+    return () => {
+      abandoned.current = true;
+    };
   }, [projectId]);
 
   const loadOrGenerate = async () => {
@@ -69,19 +85,51 @@ export default function CodeGenScreen() {
     }
   };
 
+  // One AI call per model, routes file and screen, so this takes as long
+  // as the project is big — far longer than any request could stay open
+  // on a phone connection. It runs as a background job we follow, and
+  // resumes from the last finished file if anything interrupts it.
   const generate = async () => {
     setIsGenerating(true);
     setIsLoading(false);
     try {
-      const { data } = await apiClient.post("/codegen/generate", { project_id: projectId });
+      await runGenerationJob({
+        phase: "codegen",
+        projectId: projectId!,
+        onProgress: setJob,
+        isAbandoned: () => abandoned.current,
+      });
+      if (abandoned.current) return;
+
+      const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
       showToast("Your code is ready! 💻🐯");
     } catch (error: any) {
-      showToast(error.message || "Failed to generate code.", "error");
+      if (abandoned.current) return;
+      if (error instanceof GenerationCancelled) {
+        showToast("Stopped. The files already written are saved 🐯");
+      } else {
+        showToast(error.message || "Failed to generate code.", "error");
+      }
       router.replace(`/(app)/project/${projectId}/architecture` as any);
     } finally {
-      setIsGenerating(false);
+      if (!abandoned.current) {
+        setIsGenerating(false);
+        setJob(null);
+      }
+    }
+  };
+
+  const handleCancelGeneration = async () => {
+    setIsCancelling(true);
+    try {
+      const cancelled = await cancelGenerationJob("codegen", projectId!);
+      if (cancelled) setJob(cancelled);
+    } catch (error: any) {
+      showToast(error.message || "Couldn't stop the run.", "error");
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -123,7 +171,14 @@ export default function CodeGenScreen() {
   };
 
   if (isLoading || isGenerating) {
-    return <PhaseLoading message={isGenerating ? "Baby Tiger is writing your code... 💻🐯" : "Loading..."} />;
+    return (
+      <PhaseLoading
+        message={isGenerating ? "Baby Tiger is writing your code... 💻🐯" : "Loading..."}
+        job={isGenerating ? job : null}
+        onCancel={isGenerating ? handleCancelGeneration : undefined}
+        isCancelling={isCancelling}
+      />
+    );
   }
 
   if (!codegen) return null;

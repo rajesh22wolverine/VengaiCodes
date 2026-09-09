@@ -21,12 +21,18 @@ const API_V1_PREFIX = "/api/v1";
 
 // apiClient's default timeout (below) is fine for ordinary CRUD calls, but
 // endpoints that trigger an AI generation call (wizard chat, requirements/
-// uiux/architecture/codegen/testing generate, custom-module, auto-fix) can
-// legitimately take minutes — especially with a BYO fallback chain of slow
-// local/portable models, where the backend itself may wait up to a few
-// minutes per config before falling through to the next one. Pass this as
-// the `timeout` in that call's axios config so it isn't cut off by the
-// much shorter default meant for normal requests.
+// architecture/testing generate, custom-module, auto-fix) can legitimately
+// take minutes — especially with a BYO fallback chain of slow local/
+// portable models, where the backend itself may wait up to a few minutes
+// per config before falling through to the next one. Pass this as the
+// `timeout` in that call's axios config so it isn't cut off by the much
+// shorter default meant for normal requests.
+//
+// This only works because each of those endpoints is a FIXED number of AI
+// calls, so a bigger timeout really does buy enough headroom. UI/UX and
+// code generation are not: they make one call per screen (and per table),
+// so their run time grows with the project and no constant timeout can
+// cover it. They run as background jobs instead — see lib/generationJob.ts.
 export const AI_REQUEST_TIMEOUT_MS = 600_000; // 10 minutes
 
 export const apiClient: AxiosInstance = axios.create({

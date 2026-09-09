@@ -1,14 +1,27 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — Code Generation API Routes (Sprint 6, updated)
-#  api/v1/codegen.py — Generate a REAL, working implementation from
-#  approved architecture — one dedicated AI call per model/route/
-#  screen file (each gets its own full token budget instead of many
-#  files sharing one small JSON response), then a final wiring pass
-#  (main.py, App.jsx, package.json, etc.) that stitches them into an
-#  installable, startable project.
+#  VengaiCode — Code Generation API Routes
+#  api/v1/codegen.py — Turn approved architecture into a real, working
+#  implementation: one dedicated AI call per model/route/screen file
+#  (each gets its own full token budget instead of many files sharing
+#  one small JSON response), then a deterministic wiring pass that
+#  stitches them into an installable, startable project.
+#
+#  The generation itself lives in ai/codegen_runner.py and runs as a
+#  background job (services/generation_jobs.py). It has to: the run
+#  makes one AI call per database table and per screen, so its wall
+#  time grows with the project while an HTTP timeout is a constant —
+#  a big enough project could never finish inside one request, and the
+#  old inline version threw away every finished file when the request
+#  died.
+#
+#  Endpoints:
+#    POST /generate      — start/resume, then wait for the result
+#                          (kept for already-installed clients)
+#    POST /start         — start/resume and return immediately
+#    GET  /{id}/job      — progress of the current run
+#    POST /cancel        — ask the current run to stop
 # ═══════════════════════════════════════════════════════════════
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -17,33 +30,14 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.codegen import godot, o3de
-from app.ai.codegen.backend import BACKEND_ADAPTERS
-from app.ai.codegen.frontend import FRONTEND_ADAPTERS
-from app.ai.codegen.readme import build_readme_setup
-from app.ai.codegen.types import ModelCtx, RoutesCtx, ScreenCtx, WiringCtx
-from app.ai.codegen_shared import (
-    GeneratedFile,
-    apply_package_json_name,
-    detect_native_capabilities,
-    get_ordered_pages,
-)
-from app.ai.orchestrator import AIError
-from app.ai.stack_matrix import get_project_stack
+from app.ai import codegen_runner
+from app.ai.codegen_shared import GeneratedFile
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
+from app.models.generation_job import JOB_CANCELLED, JOB_SUCCEEDED
 from app.models.project import Project, SDLCPhase
 from app.models.user import User
-
-# Backend-specific setup caveats that don't belong in any one adapter's
-# deterministic setup_commands() (those are literal shell commands, not
-# prose) but are still worth surfacing in README_SETUP.md.
-_BACKEND_SETUP_NOTES: dict[str, list[str]] = {
-    "express": [
-        "Requires a local or hosted MongoDB instance — set MONGODB_URI in a .env file "
-        "(defaults to mongodb://localhost:27017/app)."
-    ],
-}
+from app.services import generation_jobs
 
 logger = logging.getLogger("vengaicode.codegen")
 router = APIRouter()
@@ -76,26 +70,116 @@ class ApproveCodeRequest(BaseModel):
     approved: bool = True
 
 
-def _requirements_context(requirements: dict) -> str:
-    frd = requirements.get("frd", {}) if requirements else {}
-    if not frd:
-        return ""
+# ───────────────────────────────────────────────
+#  Shared helpers
+# ───────────────────────────────────────────────
+async def _get_project(db: AsyncSession, user: User, project_id: str) -> Project:
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
 
-    features = frd.get("key_features", [])
-    stories = frd.get("user_stories", [])
-    features_text = "\n".join(f"- {f}" for f in features)
-    stories_text = "\n".join(f"- {s}" for s in stories)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
-    return f"""
-Problem this app solves: {frd.get('problem_statement', '')}
-Target users: {frd.get('target_users', '')}
+    return project
 
-Key features (implement the REAL logic for each of these — not a stub):
-{features_text}
 
-User stories (the code must actually satisfy these, not just render placeholder UI):
-{stories_text}
-"""
+async def _get_generatable_project(
+    db: AsyncSession, user: User, project_id: str
+) -> Project:
+    project = await _get_project(db, user, project_id)
+
+    if not project.architecture_data or not project.architecture_data.get("user_approved"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Architecture must be approved before generating code.",
+        )
+
+    return project
+
+
+def _saved_result(project: Project) -> GenerateCodeResponse:
+    data = project.codegen_data or {}
+    # Projects generated before stack_used was recorded have none saved;
+    # resolving the stack is deterministic, so recompute rather than 500.
+    stack_used = data.get("stack_used") or codegen_runner.build_context(project)["stack_info"]
+    return GenerateCodeResponse(
+        codegen=CodeGenResult(**data.get("codegen", {"summary": "", "files": []})),
+        stack_used=StackUsed(**stack_used),
+    )
+
+
+# ───────────────────────────────────────────────
+#  Generation
+# ───────────────────────────────────────────────
+@router.post(
+    "/start",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start (or rejoin) a code generation run and return immediately",
+)
+async def start_code_generation(
+    payload: GenerateCodeRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Kicks the run off in the background and answers straight away with a
+    job to poll — no request is held open for the length of a build.
+
+    Idempotent: called while a run is already going, it returns that run
+    rather than starting a second one. Called after a run died partway
+    (a redeploy, a provider outage), it resumes from the last finished
+    file instead of paying for those files again.
+    """
+    project = await _get_generatable_project(db, user, payload.project_id)
+    job = await generation_jobs.start_or_resume(db, project, user, codegen_runner.RUNNER)
+    return {"success": True, "job": generation_jobs.job_payload(job)}
+
+
+@router.get(
+    "/{project_id}/job",
+    summary="Progress of this project's code generation run",
+)
+async def get_code_generation_job(
+    project_id: str,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cheap to poll — no AI call, just the job row."""
+    project = await _get_project(db, user, project_id)
+    job = await generation_jobs.get_latest_job(db, project.id, codegen_runner.PHASE)
+    return {"success": True, "job": generation_jobs.job_payload(job)}
+
+
+@router.post(
+    "/cancel",
+    summary="Ask this project's code generation run to stop",
+)
+async def cancel_code_generation(
+    payload: GenerateCodeRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stops after the file currently being written finishes — an AI call
+    already in flight is paid for either way, so it's kept. Everything
+    generated so far stays saved, and starting again resumes from there.
+    """
+    project = await _get_project(db, user, payload.project_id)
+    job = await generation_jobs.get_latest_job(db, project.id, codegen_runner.PHASE)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No code generation run to cancel.",
+        )
+
+    job = await generation_jobs.request_cancel(db, job)
+    return {"success": True, "job": generation_jobs.job_payload(job)}
 
 
 @router.post(
@@ -109,244 +193,42 @@ async def generate_code(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Takes the approved architecture, UI/UX design, and original requirements
-    and generates a real implementation — one dedicated AI call per model,
-    routes file, and screen (each with the full requirements context and its
-    own token budget), then a final wiring pass that stitches everything into
-    an installable, startable project.
+    Start the run and wait for it, returning the finished code.
+
+    Kept for clients that predate /start + /{id}/job polling. It is no
+    longer where the work happens: the run is the same background job,
+    and this only sits on it. If this request times out, the run keeps
+    going and saves — the client just picks the result up from
+    GET /codegen/{project_id} next time, instead of losing everything.
     """
-    result = await db.execute(
-        select(Project).where(
-            Project.id == payload.project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
+    project = await _get_generatable_project(db, user, payload.project_id)
+    job = await generation_jobs.start_or_resume(db, project, user, codegen_runner.RUNNER)
 
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    finished = await generation_jobs.wait_for_completion(job.id)
 
-    if not project.architecture_data or not project.architecture_data.get("user_approved"):
+    if finished is None or generation_jobs.is_stale(finished):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Architecture must be approved before generating code.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Code generation is still running. Reopen this screen to check on it.",
         )
-
-    architecture = (project.architecture_data or {}).get("architecture", {})
-    uiux = (project.uiux_data or {}).get("design", {})
-    requirements = project.requirements_data or {}
-    requirements_text = _requirements_context(requirements)
-
-    tables = architecture.get("database_tables", [])
-    endpoints = architecture.get("api_endpoints", [])
-    screens = get_ordered_pages(project.uiux_data) or [{"name": "Home", "purpose": "Landing screen"}]
-    design_style = uiux.get("design_style")
-    color_palette = uiux.get("color_palette")
-    typography = uiux.get("typography")
-
-    stack_info = get_project_stack(project)
-    is_o3de = stack_info["frontend_framework"] == "o3de"
-    is_godot = stack_info["frontend_framework"] == "godot"
-
-    frd = requirements.get("frd", {}) or {}
-    native_capabilities = detect_native_capabilities(
-        " ".join(frd.get("key_features", []) or []) + " " + " ".join(frd.get("user_stories", []) or [])
-    ) if not (is_o3de or is_godot) else []
-
-    validation_warnings: list[dict] = []
-
-    def _track(file_and_issue: tuple[GeneratedFile, str | None]) -> GeneratedFile:
-        file, issue = file_and_issue
-        if issue:
-            validation_warnings.append({"path": file.path, "reason": issue})
-        return file
-
-    try:
-        if is_o3de:
-            # O3DE has no separate backend (stack_matrix's "none" sentinel)
-            # and isn't part of the frontend/backend adapter registries —
-            # see app/ai/codegen/o3de.py for why.
-            model_files: list[GeneratedFile] = []
-            routes_files: list[GeneratedFile] = []
-            screen_files = [
-                _track(await o3de.generate_screen(ScreenCtx(
-                    project_name=project.name,
-                    screen=screen,
-                    endpoints=endpoints,
-                    requirements_text=requirements_text,
-                    native_capabilities=[],
-                    language="lua",
-                    user=user,
-                    db=db,
-                    design_style=design_style,
-                    color_palette=color_palette,
-                    typography=typography,
-                )))
-                for screen in screens
-            ]
-
-            # Deterministic wiring — no AI call, same reasoning as Godot's
-            # branch below: project.json/the level prefab are real O3DE
-            # formats that a freeform AI JSON call can't be trusted to
-            # reproduce correctly (see o3de.py's header for what changed).
-            wiring_files = o3de.manifest_files(project.name, screen_files)
-            wiring_files.append(build_readme_setup(
-                project.name, None, o3de.setup_commands(project.name), None,
-            ))
-            real_files = screen_files
-            generated_files = [f.model_dump() for f in real_files + wiring_files]
-            summary = f"Generated {len(real_files)} real O3DE Lua behavior scripts plus project/level wiring."
-        elif is_godot:
-            # Godot has no separate backend either (same "none" sentinel as
-            # O3DE), but unlike O3DE its wiring/manifest files are built
-            # deterministically (no AI call) — see godot.py's manifest_files/
-            # entry_point_files, same pattern as the Compose/Flutter adapters.
-            model_files = []
-            routes_files = []
-            screen_files = [
-                _track(await godot.generate_screen(ScreenCtx(
-                    project_name=project.name,
-                    screen=screen,
-                    endpoints=endpoints,
-                    requirements_text=requirements_text,
-                    native_capabilities=[],
-                    language="gdscript",
-                    user=user,
-                    db=db,
-                    design_style=design_style,
-                    color_palette=color_palette,
-                    typography=typography,
-                )))
-                for screen in screens
-            ]
-
-            wiring_files = godot.manifest_files(project.name) + godot.entry_point_files(screen_files)
-            wiring_files.append(build_readme_setup(
-                project.name, None, godot.setup_commands(project.name), None,
-            ))
-            real_files = screen_files
-            generated_files = [f.model_dump() for f in real_files + wiring_files]
-            summary = f"Generated {len(real_files)} real Godot scene files plus wiring/config."
-        else:
-            frontend_adapter = FRONTEND_ADAPTERS[stack_info["frontend_framework"]]
-            backend_adapter = BACKEND_ADAPTERS[stack_info["backend_framework"]]
-
-            model_files = [
-                _track(await backend_adapter.generate_model(ModelCtx(
-                    project_name=project.name,
-                    table=table,
-                    requirements_text=requirements_text,
-                    language=stack_info["backend_language"],
-                    user=user,
-                    db=db,
-                )))
-                for table in tables
-            ]
-
-            routes_files = []
-            if endpoints:
-                routes_results = await backend_adapter.generate_routes(RoutesCtx(
-                    project_name=project.name,
-                    endpoints=endpoints,
-                    tables=tables,
-                    requirements_text=requirements_text,
-                    api_style=stack_info["api_style"],
-                    language=stack_info["backend_language"],
-                    user=user,
-                    db=db,
-                ))
-                routes_files = [_track(r) for r in routes_results]
-
-            screen_files = [
-                _track(await frontend_adapter.generate_screen(ScreenCtx(
-                    project_name=project.name,
-                    screen=screen,
-                    endpoints=endpoints,
-                    requirements_text=requirements_text,
-                    native_capabilities=native_capabilities,
-                    language=stack_info["frontend_language"],
-                    user=user,
-                    db=db,
-                    design_style=design_style,
-                    color_palette=color_palette,
-                    typography=typography,
-                )))
-                for screen in screens
-            ]
-
-            # Deterministic wiring — no AI call. See manifests/ and each
-            # adapter's manifest_files/entry_point_files: known-good,
-            # version-pinned templates can't produce invalid manifest
-            # syntax the way asking an LLM to freehand one can.
-            wiring_ctx = WiringCtx(
-                project_name=project.name,
-                model_files=model_files,
-                routes_files=routes_files,
-                screen_files=screen_files,
-                endpoints=endpoints,
-                tables=tables,
-            )
-            wiring_files: list[GeneratedFile] = []
-            for adapter in (backend_adapter, frontend_adapter):
-                if adapter.manifest_files:
-                    wiring_files += adapter.manifest_files(wiring_ctx)
-                if adapter.entry_point_files:
-                    wiring_files += adapter.entry_point_files(wiring_ctx)
-
-            backend_commands = backend_adapter.setup_commands(project.name) if backend_adapter.setup_commands else None
-            frontend_commands = frontend_adapter.setup_commands(project.name) if frontend_adapter.setup_commands else None
-            wiring_files.append(build_readme_setup(
-                project.name,
-                backend_commands,
-                frontend_commands,
-                _BACKEND_SETUP_NOTES.get(stack_info["backend_framework"]),
-            ))
-
-            # Deliberately NOT adding native-capability helper files here —
-            # see the comment on NATIVE_CAPABILITY_DESCRIPTIONS in
-            # codegen_shared.py. Each packaging workflow writes its own
-            # platform-appropriate implementation of frontend/src/native/*.js
-            # at build time instead.
-            real_files = model_files + routes_files + screen_files
-            generated_files = [f.model_dump() for f in real_files + wiring_files]
-            summary = f"Generated {len(real_files)} real implementation files plus wiring/config."
-
-        parsed = {"summary": summary, "files": generated_files}
-        apply_package_json_name(parsed["files"], project.name)
-        print("===== GENERATED FILES =====")
-        for f in parsed.get("files", []):
-            print(f["path"])
-        if validation_warnings:
-            print(f"===== VALIDATION WARNINGS ({len(validation_warnings)}) =====")
-            for w in validation_warnings:
-                print(f"{w['path']}: {w['reason']}")
-        print("===========================")
-    except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
-    except (json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.error(f"Failed to parse AI codegen response: {e}")
+    if finished.status == JOB_CANCELLED:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Baby Tiger had trouble writing your code. Please try again! 🐯",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Code generation was cancelled.",
+        )
+    if finished.status != JOB_SUCCEEDED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=finished.error or "Code generation failed.",
         )
 
-    codegen_result = CodeGenResult(**parsed)
-    stack_used = StackUsed(**stack_info)
-
-    project.codegen_data = {
-        "codegen": codegen_result.model_dump(),
-        "files_generated": len(codegen_result.files),
-        "native_capabilities": native_capabilities,
-        "validation_warnings": validation_warnings,
-        "stack_used": stack_used.model_dump(),
-        "user_approved": False,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.commit()
-
-    return GenerateCodeResponse(codegen=codegen_result, stack_used=stack_used)
+    await db.refresh(project)
+    return _saved_result(project)
 
 
+# ───────────────────────────────────────────────
+#  Results
+# ───────────────────────────────────────────────
 @router.get(
     "/{project_id}",
     summary="Get saved generated code",
@@ -357,16 +239,7 @@ async def get_code(
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve previously generated code files."""
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_project(db, user, project_id)
 
     if not project.codegen_data:
         raise HTTPException(
@@ -393,16 +266,7 @@ async def approve_code(
     db: AsyncSession = Depends(get_db),
 ):
     """User approves the generated code. Marks phase complete."""
-    result = await db.execute(
-        select(Project).where(
-            Project.id == payload.project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_project(db, user, payload.project_id)
 
     if not project.codegen_data:
         raise HTTPException(

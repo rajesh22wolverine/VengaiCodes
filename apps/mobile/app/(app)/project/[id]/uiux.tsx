@@ -11,6 +11,12 @@ import {
 } from "lucide-react-native";
 
 import apiClient from "@/lib/api";
+import {
+  GenerationCancelled,
+  GenerationJob,
+  cancelGenerationJob,
+  runGenerationJob,
+} from "@/lib/generationJob";
 import { downloadAndShareFile } from "@/lib/download";
 import { useToast } from "@/components/ui/Toast";
 import { useTheme } from "@/theme/useTheme";
@@ -136,6 +142,8 @@ export default function UIUXScreen() {
   const [design, setDesign] = useState<UIUXDesign | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [job, setJob] = useState<GenerationJob | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
 
@@ -169,8 +177,16 @@ export default function UIUXScreen() {
   const webViewRef = useRef<WebView>(null);
   const skipNextRebuildRef = useRef(false);
 
+  // Generation runs on the server, not here — leaving the screen stops
+  // us watching it, it doesn't stop the run.
+  const abandoned = useRef(false);
+
   useEffect(() => {
+    abandoned.current = false;
     loadOrGenerate();
+    return () => {
+      abandoned.current = true;
+    };
   }, [projectId]);
 
   const loadOrGenerate = async () => {
@@ -186,19 +202,51 @@ export default function UIUXScreen() {
     }
   };
 
+  // The design system is one AI call, but each screen's mockup is
+  // another — so this grows with the app and runs as a background job we
+  // follow. It survives the screen closing, and resumes from the last
+  // finished screen instead of redesigning the ones already done.
   const generate = async () => {
     setIsGenerating(true);
     setIsLoading(false);
     try {
-      const { data } = await apiClient.post("/uiux/generate", { project_id: projectId });
+      await runGenerationJob({
+        phase: "uiux",
+        projectId: projectId!,
+        onProgress: setJob,
+        isAbandoned: () => abandoned.current,
+      });
+      if (abandoned.current) return;
+
+      const { data } = await apiClient.get(`/uiux/${projectId}`);
       setDesign(data.design);
       setPageOrder(computePageOrder(data.design, []));
       showToast("Your design system is ready! 🎨🐯");
     } catch (error: any) {
-      showToast(error.message || "Failed to generate design.", "error");
+      if (abandoned.current) return;
+      if (error instanceof GenerationCancelled) {
+        showToast("Stopped. The screens already designed are saved 🐯");
+      } else {
+        showToast(error.message || "Failed to generate design.", "error");
+      }
       router.replace(`/(app)/project/${projectId}/requirements` as any);
     } finally {
-      setIsGenerating(false);
+      if (!abandoned.current) {
+        setIsGenerating(false);
+        setJob(null);
+      }
+    }
+  };
+
+  const handleCancelGeneration = async () => {
+    setIsCancelling(true);
+    try {
+      const cancelled = await cancelGenerationJob("uiux", projectId!);
+      if (cancelled) setJob(cancelled);
+    } catch (error: any) {
+      showToast(error.message || "Couldn't stop the run.", "error");
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -574,7 +622,14 @@ export default function UIUXScreen() {
   };
 
   if (isLoading || isGenerating) {
-    return <PhaseLoading message={isGenerating ? "Baby Tiger is designing your app... 🎨🐯" : "Loading..."} />;
+    return (
+      <PhaseLoading
+        message={isGenerating ? "Baby Tiger is designing your app... 🎨🐯" : "Loading..."}
+        job={isGenerating ? job : null}
+        onCancel={isGenerating ? handleCancelGeneration : undefined}
+        isCancelling={isCancelling}
+      />
+    );
   }
 
   if (!design) return null;

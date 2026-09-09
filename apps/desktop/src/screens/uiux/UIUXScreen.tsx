@@ -14,8 +14,15 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
+import apiClient from "@/lib/api";
+import {
+  GenerationCancelled,
+  GenerationJob,
+  cancelGenerationJob,
+  runGenerationJob,
+} from "@/lib/generationJob";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import GenerationProgress from "@/components/generation/GenerationProgress";
 import ChatPanel from "@/components/chat/ChatPanel";
 import { buildPreviewDocument, sendEditorCommand, type PreviewSelection } from "@/lib/designPreview";
 import DesignStudio from "@/components/design-studio/DesignStudio";
@@ -127,6 +134,8 @@ export default function UIUXScreen() {
   const [design, setDesign] = useState<UIUXDesign | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [job, setJob] = useState<GenerationJob | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
 
@@ -168,8 +177,16 @@ export default function UIUXScreen() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  // Generation runs on the server, not here — leaving the screen stops
+  // us watching it, it doesn't stop the run.
+  const abandoned = useRef(false);
+
   useEffect(() => {
+    abandoned.current = false;
     loadOrGenerate();
+    return () => {
+      abandoned.current = true;
+    };
   }, [projectId]);
 
   useEffect(() => {
@@ -292,21 +309,51 @@ export default function UIUXScreen() {
     }
   };
 
+  // The design system is one AI call, but each screen's mockup is
+  // another — so this grows with the app and runs as a background job we
+  // follow. The run survives this screen closing, and resumes from the
+  // last finished screen rather than regenerating the ones already done.
   const generate = async () => {
     setIsGenerating(true);
     setIsLoading(false);
     try {
-      const { data } = await apiClient.post("/uiux/generate", {
-        project_id: projectId,
-      }, { timeout: AI_REQUEST_TIMEOUT_MS });
+      await runGenerationJob({
+        phase: "uiux",
+        projectId: projectId!,
+        onProgress: setJob,
+        isAbandoned: () => abandoned.current,
+      });
+      if (abandoned.current) return;
+
+      const { data } = await apiClient.get(`/uiux/${projectId}`);
       setDesign(data.design);
       setPageOrder(computePageOrder(data.design, []));
       toast.success("Your design system is ready! 🎨🐯");
     } catch (error: any) {
-      toast.error(error.message || "Failed to generate design.");
+      if (abandoned.current) return;
+      if (error instanceof GenerationCancelled) {
+        toast("Stopped. The screens already designed are saved 🐯");
+      } else {
+        toast.error(error.message || "Failed to generate design.");
+      }
       navigate(`/project/${projectId}/requirements`);
     } finally {
-      setIsGenerating(false);
+      if (!abandoned.current) {
+        setIsGenerating(false);
+        setJob(null);
+      }
+    }
+  };
+
+  const handleCancelGeneration = async () => {
+    setIsCancelling(true);
+    try {
+      const cancelled = await cancelGenerationJob("uiux", projectId!);
+      if (cancelled) setJob(cancelled);
+    } catch (error: any) {
+      toast.error(error.message || "Couldn't stop the run.");
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -634,14 +681,14 @@ export default function UIUXScreen() {
 
   if (isLoading || isGenerating) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]">
-        <BabyTiger size={100} expression="thinking" />
-        <p className="text-[var(--color-text-secondary)] text-sm">
-          {isGenerating
-            ? "Baby Tiger is designing your app... 🎨🐯"
-            : "Loading..."}
-        </p>
-      </div>
+      <GenerationProgress
+        message={
+          isGenerating ? "Baby Tiger is designing your app... 🎨🐯" : "Loading..."
+        }
+        job={isGenerating ? job : null}
+        onCancel={isGenerating ? handleCancelGeneration : undefined}
+        isCancelling={isCancelling}
+      />
     );
   }
 

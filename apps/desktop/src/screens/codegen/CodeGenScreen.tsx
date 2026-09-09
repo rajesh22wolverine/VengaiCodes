@@ -1,12 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree, Download, BookOpen, AlertTriangle
 } from "lucide-react";
 import toast from "react-hot-toast";
-import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
+import apiClient from "@/lib/api";
+import {
+  GenerationCancelled,
+  GenerationJob,
+  cancelGenerationJob,
+  runGenerationJob,
+} from "@/lib/generationJob";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
+import GenerationProgress from "@/components/generation/GenerationProgress";
 import ChatPanel from "@/components/chat/ChatPanel";
 
 interface GeneratedFile {
@@ -45,12 +52,22 @@ export default function CodeGenScreen() {
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [job, setJob] = useState<GenerationJob | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
 
+  // Generation runs on the server, not here — leaving the screen stops
+  // us watching it, it doesn't stop the run.
+  const abandoned = useRef(false);
+
   useEffect(() => {
+    abandoned.current = false;
     loadOrGenerate();
+    return () => {
+      abandoned.current = true;
+    };
   }, [projectId]);
 
   const loadOrGenerate = async () => {
@@ -65,22 +82,52 @@ export default function CodeGenScreen() {
     }
   };
 
+  // One AI call per model, routes file and screen, so this takes as long
+  // as the project is big. It runs as a background job we follow: the
+  // run survives this screen closing, a dropped connection, even a
+  // backend restart, and picks up from the last finished file.
   const generate = async () => {
     setIsGenerating(true);
     setIsLoading(false);
     try {
-      const { data } = await apiClient.post("/codegen/generate", {
-        project_id: projectId,
-      }, { timeout: AI_REQUEST_TIMEOUT_MS });
+      await runGenerationJob({
+        phase: "codegen",
+        projectId: projectId!,
+        onProgress: setJob,
+        isAbandoned: () => abandoned.current,
+      });
+      if (abandoned.current) return;
+
+      const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
       setSelectedFile(data.codegen.files?.[0] || null);
       toast.success("Your code is ready! 💻🐯");
     } catch (error: any) {
-      toast.error(error.message || "Failed to generate code.");
+      if (abandoned.current) return;
+      if (error instanceof GenerationCancelled) {
+        toast("Stopped. The files already written are saved 🐯");
+      } else {
+        toast.error(error.message || "Failed to generate code.");
+      }
       navigate(`/project/${projectId}/architecture`);
     } finally {
-      setIsGenerating(false);
+      if (!abandoned.current) {
+        setIsGenerating(false);
+        setJob(null);
+      }
+    }
+  };
+
+  const handleCancelGeneration = async () => {
+    setIsCancelling(true);
+    try {
+      const cancelled = await cancelGenerationJob("codegen", projectId!);
+      if (cancelled) setJob(cancelled);
+    } catch (error: any) {
+      toast.error(error.message || "Couldn't stop the run.");
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -149,14 +196,15 @@ export default function CodeGenScreen() {
 
   if (isLoading || isGenerating) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]">
-        <BabyTiger size={100} expression="coding" />
-        <p className="text-[var(--color-text-secondary)] text-sm">
-          {isGenerating
-            ? "Baby Tiger is writing your code... 💻🐯"
-            : "Loading..."}
-        </p>
-      </div>
+      <GenerationProgress
+        expression="coding"
+        message={
+          isGenerating ? "Baby Tiger is writing your code... 💻🐯" : "Loading..."
+        }
+        job={isGenerating ? job : null}
+        onCancel={isGenerating ? handleCancelGeneration : undefined}
+        isCancelling={isCancelling}
+      />
     );
   }
 
