@@ -90,7 +90,7 @@ jobs:
             "$BACKEND_URL/api/v1/testing/$PROJECT_ID/files" \
             -o project_test_files.json
           echo "Fetched project_test_files.json"
-          cat project_test_files.json | head -c 500
+          head -c 500 project_test_files.json
 
       - name: Write project files + prepare test runner config
         id: write_files

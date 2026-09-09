@@ -73,7 +73,7 @@ jobs:
             "$BACKEND_URL/api/v1/packaging/$PROJECT_ID/files" \
             -o project_files.json
           echo "Fetched project_files.json"
-          cat project_files.json | head -c 500
+          head -c 500 project_files.json
 
       - name: Copy Tauri template into build directory
         shell: bash
