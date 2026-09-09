@@ -333,9 +333,15 @@ class Settings(BaseSettings):
     # ───────────────────────────────────────────
     #  Pricing Tiers
     # ───────────────────────────────────────────
-    PRICING_FREE_PROJECTS: int = 1
-    PRICING_CREATOR_PROJECTS: int = 5
-    PRICING_PROFESSIONAL_PROJECTS: int = 15
+    # -1 is the "unlimited" sentinel on every tier, on the same policy as
+    # the AI token grants below: VengaiCode does not cap how much its
+    # users build. Only new signups read these (auth.py sets
+    # projects_limit from PRICING_FREE_PROJECTS); the column is still
+    # written and still shown in admin, but nothing reads it to refuse a
+    # project. See User.can_create_project().
+    PRICING_FREE_PROJECTS: int = -1
+    PRICING_CREATOR_PROJECTS: int = -1
+    PRICING_PROFESSIONAL_PROJECTS: int = -1
     PRICING_STUDIO_PROJECTS: int = -1
 
     # Platform AI token quota per tier — set at signup (free) or by hand

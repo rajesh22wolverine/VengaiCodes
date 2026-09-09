@@ -433,7 +433,14 @@ class UserResponse(BaseModel):
             is_admin=user.is_admin,
             is_vip=user.is_vip,
             projects_used=user.projects_used,
-            projects_limit=user.projects_limit,
+            # -1 ("unlimited"), on the same reasoning as ai_tokens_limit
+            # below: VengaiCode no longer caps projects, but accounts
+            # created before that carry a real number here, and the
+            # Create tab only shows its ∞ badge when the limit is exactly
+            # -1 — reporting the column would render "999999 of 1
+            # projects remaining". Admin reads user.projects_limit
+            # directly and still sees the stored value.
+            projects_limit=-1,
             projects_remaining=user.get_projects_remaining(),
             ai_tokens_used=user.ai_tokens_used,
             # -1 ("unlimited") regardless of what the column holds.

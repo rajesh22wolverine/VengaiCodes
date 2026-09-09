@@ -69,18 +69,12 @@ async def create_project(
 ):
     """
     Create a new project in DRAFT status, starting at the
-    Requirements phase. Enforces the user's project tier limit.
-    """
-    if not user.can_create_project():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"You've used all {user.projects_limit} project(s) on your "
-                f"{user.tier.value if hasattr(user.tier, 'value') else user.tier} plan. "
-                "Upgrade to create more! 🐯"
-            ),
-        )
+    Requirements phase.
 
+    No project cap is enforced — see User.can_create_project(). The 403
+    documented on this route now comes only from get_current_active_user,
+    which rejects a suspended or banned account.
+    """
     project = Project(
         user_id=user.id,
         name=payload.name,
@@ -102,9 +96,11 @@ async def create_project(
     )
     db.add(project)
 
-    # Increment user's project usage count (unless admin-extended/unlimited)
-    if user.projects_limit != -1 and not user.is_free_extended:
-        user.projects_used += 1
+    # Always counted, never enforced. The conditional this replaces
+    # existed to avoid metering accounts that couldn't be blocked
+    # anyway; now that nobody is blocked, skipping it would just leave
+    # the admin panel's per-account figure permanently at zero.
+    user.projects_used += 1
 
     await db.commit()
     await db.refresh(project)

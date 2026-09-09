@@ -284,12 +284,19 @@ class User(Base):
 
     # ── Helper Methods ──
     def can_create_project(self) -> bool:
-        """Check if user can create a new project based on tier limits."""
-        if self.projects_limit == -1:
-            return True  # Unlimited
-        if self.is_free_extended:
-            return True  # Admin extended their free tier
-        return self.projects_used < self.projects_limit
+        """Always True: VengaiCode imposes no project cap on its users.
+
+        Mirrors has_ai_quota_remaining() below — this was the single
+        place a project count ever became a refusal, so neutering it
+        here removes the restriction everywhere without touching the
+        columns behind it.
+
+        `projects_used` / `projects_limit` are deliberately KEPT and
+        still maintained by create_project(), because they are the admin
+        panel's only view of how much each account actually builds.
+        Restore the old body to re-introduce tier caps.
+        """
+        return True
 
     def is_fully_verified(self) -> bool:
         """Check if user has completed all verification layers."""
@@ -316,10 +323,17 @@ class User(Base):
         return self.is_seller and self.seller_verified and self.revenue_sharing_agreed
 
     def get_projects_remaining(self) -> int:
-        """Get number of projects user can still create."""
-        if self.projects_limit == -1:
-            return 999999  # Effectively unlimited
-        return max(0, self.projects_limit - self.projects_used)
+        """Always the unlimited sentinel, to match can_create_project().
+
+        Deliberately ignores `projects_limit` rather than subtracting
+        from it, for the same reason get_ai_tokens_remaining() ignores
+        `ai_tokens_limit`: accounts created before caps were removed
+        still carry a finite number in the database (1 for an old free
+        signup), and reading it here would show those users a dwindling
+        "projects remaining" figure that nothing in the codebase would
+        ever act on.
+        """
+        return 999999  # Effectively unlimited
 
     def has_ai_quota_remaining(self) -> bool:
         """Always True: VengaiCode imposes no token quota on its users.
