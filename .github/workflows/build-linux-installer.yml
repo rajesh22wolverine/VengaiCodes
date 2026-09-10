@@ -75,6 +75,41 @@ jobs:
           echo "Fetched project_files.json"
           head -c 500 project_files.json
 
+      - name: Determine backend framework
+        id: backend_framework
+        shell: bash
+        run: |
+          FRAMEWORK=$(python3 -c "import json; print(json.load(open('project_files.json')).get('backend_framework') or '')")
+          echo "framework=$FRAMEWORK" >> "$GITHUB_OUTPUT"
+          echo "Backend framework: $FRAMEWORK"
+
+      # Only FastAPI is bundled as a real sidecar process so far — see
+      # extract_backend_files.py's header. Flask/Django/Node/etc. backends
+      # still lose their backend entirely at packaging time.
+      - name: Extract backend files for sidecar bundling
+        if: steps.backend_framework.outputs.framework == 'fastapi'
+        shell: bash
+        run: |
+          python3 .github/scripts/extract_backend_files.py
+
+      - name: Set up Python for backend sidecar
+        if: steps.backend_framework.outputs.framework == 'fastapi'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build backend sidecar executable
+        if: steps.backend_framework.outputs.framework == 'fastapi'
+        shell: bash
+        run: |
+          cd backend_src
+          python3 -m venv sidecar_venv
+          VENV_PY=sidecar_venv/bin/python
+          "$VENV_PY" -m pip install --quiet -r requirements.txt pyinstaller
+          "$VENV_PY" -m PyInstaller --onefile --name backend --distpath dist --workpath pybuild --specpath spec _sidecar_run.py
+          echo "PyInstaller output:"
+          ls -la dist
+
       - name: Copy Tauri template into build directory
         shell: bash
         run: |
@@ -119,6 +154,13 @@ jobs:
         shell: bash
         run: |
           python3 ../.github/scripts/apply_tauri_native_capabilities.py
+
+      - name: Install backend sidecar into Tauri template
+        if: steps.backend_framework.outputs.framework == 'fastapi'
+        working-directory: build
+        shell: bash
+        run: |
+          python3 ../.github/scripts/install_backend_sidecar.py
 
       - name: Verify injected frontend
         working-directory: build

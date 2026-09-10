@@ -31,6 +31,7 @@ PLUGIN_VERSIONS = {
     "geolocation": ("@capacitor/geolocation", "^5.0.0"),
     "offline_storage": ("@capacitor/preferences", "^5.0.0"),
     "share": ("@capacitor/share", "^5.0.0"),
+    "filesystem": ("@capacitor/filesystem", "^5.0.0"),
 }
 
 # Same function names/signatures as the Tauri/Windows/Linux implementation
@@ -98,6 +99,43 @@ export async function setLocal(key, value) {
 
 export async function shareContent({ title, text, url }) {
   await Share.share({ title, text, url });
+}
+""",
+    ),
+    "filesystem": (
+        "filesystem.js",
+        """import { Filesystem, Directory } from '@capacitor/filesystem';
+
+// HONEST LIMITATION: Android's scoped storage (API 30+) blocks browsing
+// arbitrary folders without the Storage Access Framework, which no bundled
+// Capacitor plugin exposes here — so there is no real native folder picker
+// on this platform. pickFolder() returns the shared external-storage root
+// instead of prompting the user; listFiles() recurses from there (or from
+// whatever path it's given) via Directory.ExternalStorage. This works on
+// legacy-storage devices; on a scoped-storage device the readdir call
+// below throws, and callers should catch that and point the user at the
+// Windows/Linux build instead, where the OS folder picker works.
+export async function pickFolder() {
+  return '';
+}
+
+async function collect(path, extensions) {
+  const wanted = extensions.map((ext) => ext.toLowerCase());
+  const { files } = await Filesystem.readdir({ path, directory: Directory.ExternalStorage });
+  let matches = [];
+  for (const entry of files) {
+    const entryPath = path ? `${path}/${entry.name}` : entry.name;
+    if (entry.type === 'directory') {
+      matches = matches.concat(await collect(entryPath, extensions));
+    } else if (!wanted.length || wanted.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
+      matches.push({ name: entry.name, path: entryPath });
+    }
+  }
+  return matches;
+}
+
+export async function listFiles(folderPath, extensions = []) {
+  return collect(folderPath || '', extensions);
 }
 """,
     ),

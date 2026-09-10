@@ -129,6 +129,10 @@ async def get_build_files(
         "project_name": project.name,
         "files": project.codegen_data.get("codegen", {}).get("files", []),
         "native_capabilities": project.codegen_data.get("native_capabilities", []),
+        # Lets build_backend_sidecar.py decide whether/how to bundle a real
+        # backend process into the desktop build — see that script's header
+        # for why this can't just be inferred from file paths alone.
+        "backend_framework": get_project_stack(project).get("backend_framework"),
     }
 
 

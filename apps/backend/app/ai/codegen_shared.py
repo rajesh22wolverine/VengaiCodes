@@ -259,6 +259,19 @@ NATIVE_CAPABILITY_KEYWORDS: dict[str, list[str]] = {
     "geolocation": ["location", "gps", "map", "nearby", "distance from", "current position"],
     "offline_storage": ["offline", "without internet", "local storage", "works without", "sync later"],
     "share": ["share to", "share this", "share with", "social share", "invite a friend"],
+    # Scanning a user-chosen folder on THEIR OWN disk (a music/photo library
+    # importer, a local log viewer, ...) — distinct from "scan a" above,
+    # which is camera-based document scanning. Without this, codegen has no
+    # native primitive for local file access and falls back to a Python
+    # backend that a desktop (Tauri) build silently discards at packaging
+    # time (see inject_frontend_files.py: only frontend/ survives), so the
+    # generated feature compiles fine but can never actually reach the
+    # filesystem once installed.
+    "filesystem": [
+        "select a folder", "pick a folder", "choose a folder", "browse for files",
+        "scan a folder", "scan your files", "scan your computer", "local files",
+        "local library", "import from your computer", "select a directory",
+    ],
 }
 
 # Interface only — the actual per-capability implementation (Capacitor on
@@ -277,6 +290,7 @@ NATIVE_CAPABILITY_DESCRIPTIONS: dict[str, str] = {
     "geolocation": "Geolocation: import { getCurrentPosition } from '../native/geolocation'; await getCurrentPosition() returns { latitude, longitude } — use this for any location/nearby/distance user story.",
     "offline_storage": "Offline storage: import { getLocal, setLocal } from '../native/offlineStorage'; use these to persist data locally so the screen still works without a network connection.",
     "share": "Share: import { shareContent } from '../native/share'; await shareContent({ title, text, url }) shares/copies the content — use this for any 'share to' / 'invite a friend' user story.",
+    "filesystem": "Filesystem: import { pickFolder, listFiles } from '../native/filesystem'; const folderPath = await pickFolder() opens the OS folder picker and returns the chosen path (or null if cancelled); await listFiles(folderPath, ['.mp3', '.flac']) recursively lists matching files as { name, path }. Use this for any 'scan/import files from my computer' user story instead of sending the path to a backend — there is no backend at runtime on a packaged desktop build.",
 }
 
 

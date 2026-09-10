@@ -30,14 +30,28 @@ NATIVE_DIR = "src/native"
 TAURI_CONF_PATH = "src-tauri/tauri.conf.json"
 CARGO_TOML_PATH = "src-tauri/Cargo.toml"
 
-# capability -> (allowlist key, allowlist value, cargo feature) — None means
-# no Tauri-side config change needed (pure browser API).
+# capability -> list of (allowlist key, allowlist value, cargo feature) —
+# None/empty means no Tauri-side config change needed (pure browser API). A
+# list (not a single tuple) because "filesystem" below needs BOTH a "dialog"
+# and an "fs" entry, and because two capabilities can both touch the same
+# allowlist key ("fs", shared with offline_storage) — see the merge in the
+# main loop below, which unions rather than overwrites.
 CAPABILITY_TAURI_CONFIG = {
-    "camera": None,
-    "geolocation": None,
-    "push_notifications": ("notification", {"all": True}, "notification-all"),
-    "offline_storage": ("fs", {"all": True, "scope": ["$APPDATA/*", "$APPDATA/**"]}, "fs-all"),
-    "share": ("clipboard", {"all": True}, "clipboard-all"),
+    "camera": [],
+    "geolocation": [],
+    "push_notifications": [("notification", {"all": True}, "notification-all")],
+    "offline_storage": [("fs", {"all": True, "scope": ["$APPDATA/*", "$APPDATA/**"]}, "fs-all")],
+    "share": [("clipboard", {"all": True}, "clipboard-all")],
+    # Arbitrary user-chosen folders (a music library import, a local log
+    # viewer, ...) live anywhere on disk, not under a fixed app-owned
+    # directory like offline_storage's $APPDATA — so the fs scope has to be
+    # wide open rather than anchored to a path variable. "dialog-open" is
+    # the native OS folder picker; without it there is no way for the
+    # generated app to ask the user for a path at all on desktop.
+    "filesystem": [
+        ("dialog", {"open": True}, "dialog-open"),
+        ("fs", {"all": True, "scope": ["**"]}, "fs-all"),
+    ],
 }
 
 # Same function names/signatures as the Capacitor implementation in
@@ -142,6 +156,41 @@ export async function shareContent({ title, text, url }) {
 }
 """,
     ),
+    "filesystem": (
+        "filesystem.js",
+        """// Desktop builds ship the frontend only (see inject_frontend_files.py —
+// nothing under backend/ survives packaging), so scanning a user-chosen
+// folder has to happen entirely through Tauri's own dialog + fs APIs, not
+// a backend call. Requires the "dialog" + "fs" allowlist entries and the
+// "dialog-open" + "fs-all" Cargo features.
+import { open } from '@tauri-apps/api/dialog';
+import { readDir } from '@tauri-apps/api/fs';
+
+export async function pickFolder() {
+  const selected = await open({ directory: true, multiple: false });
+  return selected ?? null;
+}
+
+export async function listFiles(folderPath, extensions = []) {
+  const wanted = extensions.map((ext) => ext.toLowerCase());
+  const matches = (name) =>
+    !wanted.length || wanted.some((ext) => name?.toLowerCase().endsWith(ext));
+
+  const files = [];
+  const walk = (entries) => {
+    for (const entry of entries) {
+      if (entry.children) {
+        walk(entry.children);
+      } else if (matches(entry.name)) {
+        files.push({ name: entry.name, path: entry.path });
+      }
+    }
+  };
+  walk(await readDir(folderPath, { recursive: true }));
+  return files;
+}
+""",
+    ),
 }
 
 
@@ -199,11 +248,21 @@ for capability in capabilities:
             f.write(content)
         written_files.append(filename)
 
-    tauri_config = CAPABILITY_TAURI_CONFIG.get(capability)
-    if tauri_config:
-        allowlist_key, allowlist_value, cargo_feature = tauri_config
-        needed_allowlist[allowlist_key] = allowlist_value
-        needed_features.append(cargo_feature)
+    for allowlist_key, allowlist_value, cargo_feature in CAPABILITY_TAURI_CONFIG.get(capability) or []:
+        existing = needed_allowlist.get(allowlist_key)
+        if isinstance(existing, dict) and isinstance(allowlist_value, dict):
+            # Two capabilities sharing an allowlist key (e.g. "fs" for both
+            # offline_storage and filesystem) must union, not overwrite —
+            # otherwise whichever capability is processed last silently
+            # drops the other's scope/flags.
+            merged = {**existing, **allowlist_value}
+            if isinstance(existing.get("scope"), list) and isinstance(allowlist_value.get("scope"), list):
+                merged["scope"] = sorted(set(existing["scope"]) | set(allowlist_value["scope"]))
+            needed_allowlist[allowlist_key] = merged
+        else:
+            needed_allowlist[allowlist_key] = allowlist_value
+        if cargo_feature not in needed_features:
+            needed_features.append(cargo_feature)
 
 patch_tauri_conf(needed_allowlist)
 patch_cargo_toml(needed_features)
