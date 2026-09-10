@@ -73,7 +73,7 @@ jobs:
         id: backend_framework
         shell: bash
         run: |
-          FRAMEWORK=$(python -c "import json; print(json.load(open('project_files.json')).get('backend_framework') or '')")
+          FRAMEWORK=$(python -c "import json; print(json.load(open('project_files.json', encoding='utf-8')).get('backend_framework') or '')")
           echo "framework=$FRAMEWORK" >> "$GITHUB_OUTPUT"
           echo "Backend framework: $FRAMEWORK"
 
