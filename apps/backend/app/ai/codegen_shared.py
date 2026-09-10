@@ -303,6 +303,74 @@ def detect_native_capabilities(text: str) -> list[str]:
     ]
 
 
+# ─── App-domain concepts — proven real-world architecture baked into the
+# prompt when the app being generated matches a known domain, instead of
+# every project reinventing (or missing) patterns real, mature apps in
+# that space already settled. Keyword-matched against the SAME
+# key_features + user_stories text as native capabilities, for the same
+# reason: only apps that actually asked for this get it.
+#
+# Keep the guidance language/framework-agnostic — it reaches model,
+# routes, AND screen prompts across every backend/frontend adapter (see
+# _requirements_context() in codegen_runner.py), so it can never assume
+# one specific language's library exists. DOMAIN_BACKEND_EXTRAS below is
+# the deliberate exception: a backend-specific addendum, appended ONLY
+# for backends whose manifest_files() actually ships the dependency it
+# names (see e.g. codegen/backend/fastapi.py adding mutagen) — naming a
+# library the prompt can't actually guarantee is present would generate
+# code with a guaranteed-broken import.
+DOMAIN_KEYWORDS: dict[str, list[str]] = {
+    "music_player": [
+        "music player", "music library", "audio library", "playlist",
+        "mp3", "album", "music streaming", "audio track", "song library",
+    ],
+}
+
+DOMAIN_GUIDANCE: dict[str, str] = {
+    "music_player": (
+        "This app is a music/audio library player. Build it using the same proven "
+        "patterns real music players (Strawberry, Clementine, VLC, foobar2000, "
+        "Musicolet) use, not a generic CRUD app:\n"
+        "- Library storage: persist one real row per track/artist/album/playlist in "
+        "the database — never re-scan the filesystem on every screen load.\n"
+        "- Organization: tracks belong to an album, albums belong to an artist, and "
+        "playlists are an ordered many-to-many join to tracks — model these as real "
+        "relationships, not flat/duplicated fields.\n"
+        "- Playback: use the browser's native HTML5 <audio> element for actual "
+        "play/pause/seek/volume/next/previous — read its 'loadedmetadata' event for "
+        "duration rather than guessing. This needs no backend library and works "
+        "identically in the packaged desktop and Android WebView.\n"
+        "- Scanning: if a filesystem-scanning screen exists, call scanDevice(extensions) "
+        "for an automatic whole-device scan, or pickFolder()+listFiles(folderPath, "
+        "extensions) for a manual 'choose a folder' flow (see the Filesystem capability "
+        "below if listed) — real desktop players (iTunes, Windows Media Player) offer "
+        "both, never a raw path typed by the user."
+    ),
+}
+
+# (domain, backend_framework) -> addendum. Only add an entry here in the
+# SAME change that adds the matching dependency to that backend's
+# manifest_files() — see fastapi.py's mutagen addition.
+DOMAIN_BACKEND_EXTRAS: dict[tuple[str, str], str] = {
+    ("music_player", "fastapi"): (
+        "\n- Real tag metadata: mutagen is already in this project's requirements.txt "
+        "— import it (e.g. `from mutagen import File as MutagenFile`) to read each "
+        "audio file's real title/artist/album/track-number tags when scanning, "
+        "instead of guessing from the filename."
+    ),
+}
+
+
+def detect_domain_guidance(text: str, backend_framework: Optional[str] = None) -> str:
+    lowered = text.lower()
+    blocks = []
+    for domain, keywords in DOMAIN_KEYWORDS.items():
+        if any(keyword in lowered for keyword in keywords):
+            extra = DOMAIN_BACKEND_EXTRAS.get((domain, backend_framework or ""), "")
+            blocks.append(DOMAIN_GUIDANCE[domain] + extra)
+    return "\n\n".join(blocks)
+
+
 # ─── Unified, ordered page list (wizard screens + uploaded designs) ───
 #
 # api/v1/uiux.py stores two historically separate things on Project.uiux_data:

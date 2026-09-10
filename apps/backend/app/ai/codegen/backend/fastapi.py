@@ -162,6 +162,16 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         "aiosqlite==0.19.0",
         "pydantic==2.6.1",
         "python-multipart==0.0.7",
+        # Pure-Python, zero dependencies, no C extension (verified: PyPI
+        # ships it as a single py3-none-any wheel) — safe to include
+        # unconditionally rather than threading a domain flag into
+        # WiringCtx, which is deliberately domain-blind (see its
+        # docstring in codegen/types.py). Lets DOMAIN_BACKEND_EXTRAS in
+        # codegen_shared.py tell a music-player app's model/routes
+        # prompts to read real ID3/audio tags via mutagen instead of
+        # guessing from the filename, without gambling on an import that
+        # was never actually added to the manifest.
+        "mutagen==1.48.1",
     ])
     return [GeneratedFile(path="backend/requirements.txt", language="text", content=content, description="Backend Python dependencies")]
 

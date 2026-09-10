@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from app.ai.codegen import godot, o3de
 from app.ai.codegen.backend import BACKEND_ADAPTERS
@@ -28,6 +29,7 @@ from app.ai.codegen.types import ModelCtx, RoutesCtx, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
     GeneratedFile,
     apply_package_json_name,
+    detect_domain_guidance,
     detect_native_capabilities,
     get_ordered_pages,
 )
@@ -59,7 +61,7 @@ class CodegenError(RuntimeError):
     """A failure with a message meant for the user, not a stack trace."""
 
 
-def _requirements_context(requirements: dict) -> str:
+def _requirements_context(requirements: dict, backend_framework: Optional[str] = None) -> str:
     frd = requirements.get("frd", {}) if requirements else {}
     if not frd:
         return ""
@@ -68,6 +70,9 @@ def _requirements_context(requirements: dict) -> str:
     stories = frd.get("user_stories", [])
     features_text = "\n".join(f"- {f}" for f in features)
     stories_text = "\n".join(f"- {s}" for s in stories)
+
+    domain_guidance = detect_domain_guidance(f"{features_text} {stories_text}", backend_framework)
+    domain_block = f"\n\nDomain-specific guidance for this app:\n{domain_guidance}\n" if domain_guidance else ""
 
     return f"""
 Problem this app solves: {frd.get('problem_statement', '')}
@@ -78,7 +83,7 @@ Key features (implement the REAL logic for each of these — not a stub):
 
 User stories (the code must actually satisfy these, not just render placeholder UI):
 {stories_text}
-"""
+{domain_block}"""
 
 
 def build_context(project: Project) -> dict:
@@ -113,7 +118,7 @@ def build_context(project: Project) -> dict:
         "endpoints": architecture.get("api_endpoints", []),
         "screens": get_ordered_pages(project.uiux_data)
         or [{"name": "Home", "purpose": "Landing screen"}],
-        "requirements_text": _requirements_context(requirements),
+        "requirements_text": _requirements_context(requirements, stack_info.get("backend_framework")),
         "design_style": uiux.get("design_style"),
         "color_palette": uiux.get("color_palette"),
         "typography": uiux.get("typography"),
