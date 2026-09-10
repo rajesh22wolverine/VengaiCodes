@@ -137,6 +137,28 @@ async function collect(path, extensions) {
 export async function listFiles(folderPath, extensions = []) {
   return collect(folderPath || '', extensions);
 }
+
+// Same HONEST LIMITATION as pickFolder() above: there is no MediaStore
+// query wired up here (the proper Android API for "find every audio/
+// video/image file on the device", but a materially bigger change than
+// this plugin set covers), so this is scoped to the common top-level
+// media folder names under external storage — Music, Download, Movies,
+// Pictures, DCIM, Documents — not a real device-wide scan. On a scoped-
+// storage device (API 30+) every one of these will typically throw, in
+// which case this returns whatever it found before the first failure
+// (often nothing) rather than crash the caller.
+export async function scanDevice(extensions = []) {
+  const commonFolders = ['Music', 'Download', 'Movies', 'Pictures', 'DCIM', 'Documents'];
+  let allFiles = [];
+  for (const folder of commonFolders) {
+    try {
+      allFiles = allFiles.concat(await collect(folder, extensions));
+    } catch {
+      // scoped storage or the folder doesn't exist — skip, keep going
+    }
+  }
+  return allFiles;
+}
 """,
     ),
 }

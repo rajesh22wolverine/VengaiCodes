@@ -48,9 +48,13 @@ CAPABILITY_TAURI_CONFIG = {
     # wide open rather than anchored to a path variable. "dialog-open" is
     # the native OS folder picker; without it there is no way for the
     # generated app to ask the user for a path at all on desktop.
+    # "path" (audioDir/documentDir/etc.) resolves the OS-standard media
+    # folders scanDevice() checks on the system drive — see HELPER_FILES
+    # below.
     "filesystem": [
         ("dialog", {"open": True}, "dialog-open"),
         ("fs", {"all": True, "scope": ["**"]}, "fs-all"),
+        ("path", {"all": True}, "path-all"),
     ],
 }
 
@@ -159,19 +163,21 @@ export async function shareContent({ title, text, url }) {
     "filesystem": (
         "filesystem.js",
         """// Desktop builds ship the frontend only (see inject_frontend_files.py —
-// nothing under backend/ survives packaging), so scanning a user-chosen
-// folder has to happen entirely through Tauri's own dialog + fs APIs, not
-// a backend call. Requires the "dialog" + "fs" allowlist entries and the
-// "dialog-open" + "fs-all" Cargo features.
+// nothing under backend/ survives packaging), so scanning either a
+// user-chosen folder or the whole device has to happen entirely through
+// Tauri's own dialog + fs + path APIs, not a backend call. Requires the
+// "dialog" + "fs" + "path" allowlist entries and the "dialog-open" +
+// "fs-all" + "path-all" Cargo features.
 import { open } from '@tauri-apps/api/dialog';
-import { readDir } from '@tauri-apps/api/fs';
+import { exists, readDir } from '@tauri-apps/api/fs';
+import { audioDir, documentDir, downloadDir, pictureDir, videoDir, homeDir } from '@tauri-apps/api/path';
 
 export async function pickFolder() {
   const selected = await open({ directory: true, multiple: false });
   return selected ?? null;
 }
 
-export async function listFiles(folderPath, extensions = []) {
+async function listFilesAt(folderPath, extensions) {
   const wanted = extensions.map((ext) => ext.toLowerCase());
   const matches = (name) =>
     !wanted.length || wanted.some((ext) => name?.toLowerCase().endsWith(ext));
@@ -188,6 +194,103 @@ export async function listFiles(folderPath, extensions = []) {
   };
   walk(await readDir(folderPath, { recursive: true }));
   return files;
+}
+
+export async function listFiles(folderPath, extensions = []) {
+  return listFilesAt(folderPath, extensions);
+}
+
+// Scans every OS-standard media folder on the system drive, PLUS the
+// same-named folders on every other drive/mount it finds — NOT a full
+// recursive walk of every directory on every drive. That would take
+// minutes to hours on a real disk and hit permission-denied errors
+// constantly on system folders (C:\\Windows, C:\\Program Files, /proc,
+// /sys) — this is deliberately scoped the way real desktop media apps
+// (iTunes, Windows Media Player) scope a "scan my computer" feature,
+// not an exhaustive filesystem crawl.
+//
+// The drive-letter and /media,/mnt checks below are unconditional on
+// both platforms rather than OS-detected: on Linux, "D:\\" etc. simply
+// never exists() and the checks no-op; on Windows, /media and /mnt
+// simply fail to readDir() and get caught below. That is simpler and
+// more robust than trying to sniff the OS first.
+export async function scanDevice(extensions = []) {
+  const roots = new Set();
+
+  for (const dirFn of [audioDir, documentDir, downloadDir, videoDir, pictureDir, homeDir]) {
+    try {
+      roots.add(await dirFn());
+    } catch {
+      // not resolvable on this OS/config — skip
+    }
+  }
+
+  // Other Windows drives — same-named media folders only, never the
+  // drive root itself (that would reintroduce the exhaustive-scan
+  // problem this function exists to avoid).
+  for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+    const drive = `${letter}:\\\\`;
+    let driveExists = false;
+    try {
+      driveExists = await exists(drive);
+    } catch {
+      driveExists = false;
+    }
+    if (!driveExists) continue;
+    for (const folder of ['Music', 'Videos', 'Documents', 'Downloads', 'Pictures']) {
+      const candidate = `${drive}${folder}`;
+      try {
+        if (await exists(candidate)) roots.add(candidate);
+      } catch {
+        // inaccessible — skip
+      }
+    }
+  }
+
+  // Linux externally-mounted volumes commonly show up as one level of
+  // subdirectories under /media/<user> or /mnt — add each mount point
+  // found there as its own root (scanned recursively below), rather
+  // than assuming a media-folder naming convention that removable
+  // drives rarely follow.
+  for (const base of ['/media', '/mnt']) {
+    try {
+      const entries = await readDir(base, { recursive: false });
+      for (const entry of entries) {
+        if (entry.path) roots.add(entry.path);
+        if (entry.children) {
+          for (const nested of entry.children) {
+            if (nested.path) roots.add(nested.path);
+          }
+        }
+      }
+    } catch {
+      // not present on this OS — skip
+    }
+  }
+
+  const seenPaths = new Set();
+  const allFiles = [];
+  for (const root of roots) {
+    let rootExists = false;
+    try {
+      rootExists = await exists(root);
+    } catch {
+      rootExists = false;
+    }
+    if (!rootExists) continue;
+
+    try {
+      for (const file of await listFilesAt(root, extensions)) {
+        if (!seenPaths.has(file.path)) {
+          seenPaths.add(file.path);
+          allFiles.push(file);
+        }
+      }
+    } catch {
+      // permission denied or transient — skip this root, keep going
+    }
+  }
+  return allFiles;
 }
 """,
     ),
