@@ -82,24 +82,34 @@ jobs:
           FRAMEWORK=$(python3 -c "import json; print(json.load(open('project_files.json', encoding='utf-8')).get('backend_framework') or '')")
           echo "framework=$FRAMEWORK" >> "$GITHUB_OUTPUT"
           echo "Backend framework: $FRAMEWORK"
+          case "$FRAMEWORK" in
+            fastapi|flask|django) echo "sidecar_kind=python" >> "$GITHUB_OUTPUT" ;;
+            actix|axum) echo "sidecar_kind=rust" >> "$GITHUB_OUTPUT" ;;
+            gin) echo "sidecar_kind=go" >> "$GITHUB_OUTPUT" ;;
+            *) echo "sidecar_kind=none" >> "$GITHUB_OUTPUT" ;;
+          esac
 
-      # Only FastAPI is bundled as a real sidecar process so far — see
-      # extract_backend_files.py's header. Flask/Django/Node/etc. backends
-      # still lose their backend entirely at packaging time.
+      # Wired up so far: fastapi/flask/django (PyInstaller), actix/axum
+      # (cargo build — main.rs already serves requests itself), gin (go
+      # build — main.go already serves requests itself). Node
+      # (express/nestjs) and the remaining JVM/.NET/Ruby/PHP backends
+      # still lose their backend entirely at packaging time — see
+      # extract_backend_files.py's header for why each needs its own
+      # bundling story.
       - name: Extract backend files for sidecar bundling
-        if: steps.backend_framework.outputs.framework == 'fastapi'
+        if: steps.backend_framework.outputs.sidecar_kind != 'none'
         shell: bash
         run: |
           python3 .github/scripts/extract_backend_files.py
 
       - name: Set up Python for backend sidecar
-        if: steps.backend_framework.outputs.framework == 'fastapi'
+        if: steps.backend_framework.outputs.sidecar_kind == 'python'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Build backend sidecar executable
-        if: steps.backend_framework.outputs.framework == 'fastapi'
+      - name: Build Python backend sidecar executable (fastapi/flask/django)
+        if: steps.backend_framework.outputs.sidecar_kind == 'python'
         shell: bash
         run: |
           cd backend_src
@@ -109,6 +119,36 @@ jobs:
           "$VENV_PY" -m PyInstaller --onefile --name backend --distpath dist --workpath pybuild --specpath spec _sidecar_run.py
           echo "PyInstaller output:"
           ls -la dist
+
+      # cargo is already on PATH from the "Setup Rust" step above (it's
+      # needed for the Tauri shell itself) — actix-web/axum's own main.rs
+      # is a real server already, no wrapper script needed.
+      - name: Build Rust backend sidecar executable (actix/axum)
+        if: steps.backend_framework.outputs.sidecar_kind == 'rust'
+        shell: bash
+        run: |
+          cd backend_src
+          cargo build --release
+          echo "Cargo build output:"
+          ls -la target/release
+
+      - name: Set up Go for backend sidecar
+        if: steps.backend_framework.outputs.sidecar_kind == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      # main.go is a real server already (r.Run(":8080")) — no wrapper
+      # script needed, unlike the Python frameworks.
+      - name: Build Go backend sidecar executable (gin)
+        if: steps.backend_framework.outputs.sidecar_kind == 'go'
+        shell: bash
+        run: |
+          cd backend_src
+          go mod tidy
+          go build -o dist_go/backend main.go
+          echo "Go build output:"
+          ls -la dist_go
 
       - name: Copy Tauri template into build directory
         shell: bash
@@ -156,9 +196,11 @@ jobs:
           python3 ../.github/scripts/apply_tauri_native_capabilities.py
 
       - name: Install backend sidecar into Tauri template
-        if: steps.backend_framework.outputs.framework == 'fastapi'
+        if: steps.backend_framework.outputs.sidecar_kind != 'none'
         working-directory: build
         shell: bash
+        env:
+          BACKEND_FRAMEWORK: ${{ steps.backend_framework.outputs.framework }}
         run: |
           python3 ../.github/scripts/install_backend_sidecar.py
 
