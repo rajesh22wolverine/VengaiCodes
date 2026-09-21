@@ -7,6 +7,23 @@
 #  same style as codegen_shared.py's NATIVE_CAPABILITY_KEYWORDS) so the
 #  AI call is scoped to what's actually business logic: validations,
 #  associations, and controller behavior.
+#
+#  2026-09-21: added a real "graphql" api_style using graphql-ruby
+#  (the "graphql" gem, currently 2.6.10 on rubygems.org — confirmed live
+#  while writing this, not guessed). The base Types::*/Mutations::Base*
+#  scaffold classes, GraphqlController, and the `post "/graphql"` route
+#  below are transcribed VERBATIM from graphql-ruby's own real installer
+#  generator templates (lib/generators/graphql/templates/*.erb on
+#  rmosolgo/graphql-ruby), not freehanded — that's the exact scaffold
+#  `rails g graphql:install` produces. QueryType/MutationType are built
+#  deterministically (one query + one full CRUD mutation set per table)
+#  and handed to the AI as an exact contract, same reasoning as every
+#  other backend's deterministic-schema-for-statically-bound-languages
+#  pattern (see spring_boot.py/nestjs.py) — Ruby is dynamic, so this
+#  isn't strictly required the way Java's reflection binding is, but
+#  keeping the schema deterministic here too avoids the AI inventing
+#  a MutationType.rb that doesn't attach the exact mutation classes it
+#  wrote in the other file.
 # ═══════════════════════════════════════════════════════════════
 
 import re
@@ -117,11 +134,153 @@ Return ONLY the raw Ruby code for this one file. No markdown fences, no explanat
     )]
 
 
-ROUTES_BUILDERS = {"rest": _rest_routes}
+def _graphql_type_field(field_name: str) -> str:
+    graphql_type = {
+        "boolean": "Boolean",
+        "datetime": "GraphQL::Types::ISO8601DateTime",
+        "decimal": "Float",
+        "integer": "Integer",
+    }.get(_infer_column_type(field_name), "String")
+    return f'    field :{_slug(field_name)}, {graphql_type}'
+
+
+def _table_type_rb(table: dict) -> str:
+    name = _pascal(table.get("name", "Item"))
+    fields = table.get("key_fields", []) or []
+    field_lines = "\n".join(_graphql_type_field(f) for f in fields)
+    return f"""module Types
+  class {name}Type < Types::BaseObject
+    field :id, ID, null: false
+{field_lines}
+  end
+end
+"""
+
+
+async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
+    """graphql-ruby's dynamic-language field-based style doesn't need
+    exact reflection-based name binding the way Java/C# do, but the
+    schema is still split the same way as every other backend's
+    deterministic-contract + AI-implementation design: {Table}Type
+    wrapping is pure field-list boilerplate (built here, mirroring the
+    REST migration's own column-type inference), so the AI's two calls
+    are scoped to what's actually business logic — real query filtering
+    and real mutation validation/persistence."""
+    models_text = ", ".join(_pascal(t.get("name", "Item")) for t in ctx.tables)
+    types_text = "\n".join(
+        f"- Types::{_pascal(t.get('name', 'Item'))}Type wraps the {_pascal(t.get('name', 'Item'))} model "
+        f"(fields: {', '.join(_slug(f) for f in (t.get('key_fields', []) or []))})"
+        for t in ctx.tables
+    )
+    endpoints_text = "\n".join(
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+    )
+
+    query_prompt = f"""Write ONE complete, real graphql-ruby QueryType class for this app.
+
+Available ActiveRecord models: {models_text}
+Available GraphQL object types (already generated, import nothing — same Types module):
+{types_text}
+
+The real-world capabilities this app needs (use this to inform REAL query behavior — filtering,
+ordering, scoping — not just a bare "return everything" where the app's purpose implies more):
+{endpoints_text}
+
+Requirements:
+- `module Types\\n  class QueryType < Types::BaseObject\\n    ...\\n  end\\nend`
+- For each model above, define a real `field :xs, [Types::XType], null: false` (list) field and a
+  `field :x, Types::XType, null: true do argument :id, ID, required: true end` (single-record)
+  field, each with a real `def xs; ...; end` / `def x(id:); ...; end` resolver method doing a real
+  ActiveRecord query (`Model.all`, `Model.find_by(id: id)`, etc.) — never hardcoded/fake data.
+- Field/argument names use graphql-ruby's snake_case Ruby convention (graphql-ruby camelizes them
+  automatically for the wire protocol) — do not camelCase them yourself.
+- Implement the actual behavior implied by the key features and user stories above.
+- No placeholders or TODOs — every field's resolver must be fully implemented.
+
+Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
+
+    query_content, query_issue = await generate_text_validated(
+        query_prompt, "ruby", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
+
+    mutation_prompt = f"""Write ONE complete, real graphql-ruby MutationType class for this app.
+
+Available ActiveRecord models: {models_text}
+Available GraphQL object types (already generated, import nothing — same Types module):
+{types_text}
+
+The real-world capabilities this app needs (use this to inform REAL mutation behavior —
+validation, defaults — not just a bare passthrough where the app's purpose implies more):
+{endpoints_text}
+
+Requirements:
+- `module Types\\n  class MutationType < Types::BaseObject\\n    ...\\n  end\\nend`
+- For each model above, define real `create_x`, `update_x`, `delete_x` fields using graphql-ruby's
+  inline field-resolver style (NOT separate Mutation classes): `field :create_x, Types::XType,
+  null: false do argument :field1, String, required: true; argument :field2, ..., required: false
+  ...; end` with a matching `def create_x(field1:, field2: nil, ...); ...; end` method doing a
+  real `Model.create!(...)`. Same pattern for `update_x` (id + optional fields, real
+  `Model.find(id).update!(...)`) and `delete_x` (id argument, real `Model.find(id).destroy!`,
+  returns `Types::XType` for create/update, `Boolean` for delete).
+- Field/argument names use graphql-ruby's snake_case Ruby convention.
+- Raise a real `GraphQL::ExecutionError.new("...")` with a clear message for not-found/invalid
+  cases — never let an unhandled exception leak a raw stack trace.
+- Implement the actual behavior implied by the key features and user stories above.
+- No placeholders or TODOs — every field's resolver must be fully implemented.
+
+Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
+
+    mutation_content, mutation_issue = await generate_text_validated(
+        mutation_prompt, "ruby", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
+
+    results: list[FileResult] = [
+        (
+            GeneratedFile(
+                path=f"backend/app/graphql/types/{_slug(t.get('name', 'item'))}_type.rb",
+                language="ruby",
+                content=_table_type_rb(t),
+                description=f"GraphQL object type wrapping {t.get('name', 'Item')} (deterministic)",
+            ),
+            None,
+        )
+        for t in ctx.tables
+    ]
+    results.append((
+        GeneratedFile(
+            path=_GRAPHQL_QUERY_TYPE_PATH,
+            language="ruby",
+            content=query_content,
+            description="GraphQL Query type implementing every read capability against the real models",
+        ),
+        query_issue,
+    ))
+    results.append((
+        GeneratedFile(
+            path="backend/app/graphql/types/mutation_type.rb",
+            language="ruby",
+            content=mutation_content,
+            description="GraphQL Mutation type implementing every write capability against the real models",
+        ),
+        mutation_issue,
+    ))
+    return results
+
+
+ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes}
 
 
 async def generate_routes(ctx: RoutesCtx) -> list[FileResult]:
     return await ROUTES_BUILDERS[ctx.api_style](ctx)
+
+
+_GRAPHQL_QUERY_TYPE_PATH = "backend/app/graphql/types/query_type.rb"
+
+
+def _is_graphql(ctx: WiringCtx) -> bool:
+    return any(f.path == _GRAPHQL_QUERY_TYPE_PATH for f in ctx.routes_files)
 
 
 def _build_migration_rb(index: int, table: dict) -> tuple[str, str]:
@@ -222,13 +381,14 @@ production:
 """
 
 
-def _gemfile(project_name: str) -> str:
-    return """source 'https://rubygems.org'
+def _gemfile(project_name: str, graphql: bool) -> str:
+    graphql_gem = "\ngem 'graphql', '~> 2.6'" if graphql else ""
+    return f"""source 'https://rubygems.org'
 
 gem 'rails', '~> 7.1'
 gem 'sqlite3', '~> 1.4'
 gem 'puma', '~> 6.0'
-gem 'rack-cors'
+gem 'rack-cors'{graphql_gem}
 """
 
 
@@ -241,14 +401,116 @@ end
 """
 
 
+# Every file below is transcribed verbatim from graphql-ruby's own real
+# installer generator templates (lib/generators/graphql/templates/*.erb,
+# rmosolgo/graphql-ruby — fetched and confirmed while writing this, not
+# freehanded) — the exact scaffold `rails g graphql:install` produces.
+_BASE_ARGUMENT_RB = """module Types
+  class BaseArgument < GraphQL::Schema::Argument
+  end
+end
+"""
+
+_BASE_FIELD_RB = """module Types
+  class BaseField < GraphQL::Schema::Field
+    argument_class Types::BaseArgument
+  end
+end
+"""
+
+_BASE_INPUT_OBJECT_RB = """module Types
+  class BaseInputObject < GraphQL::Schema::InputObject
+    argument_class Types::BaseArgument
+  end
+end
+"""
+
+_BASE_OBJECT_RB = """module Types
+  class BaseObject < GraphQL::Schema::Object
+    field_class Types::BaseField
+  end
+end
+"""
+
+
+def _graphql_controller_rb(schema_name: str) -> str:
+    return f"""class GraphqlController < ApplicationController
+  def execute
+    variables = prepare_variables(params[:variables])
+    query = params[:query]
+    operation_name = params[:operationName]
+    context = {{
+      # Query context goes here, for example:
+      # current_user: current_user,
+    }}
+    result = {schema_name}.execute(query, variables: variables, context: context, operation_name: operation_name)
+    render json: result
+  rescue StandardError => e
+    raise e unless Rails.env.development?
+    handle_error_in_development(e)
+  end
+
+  private
+
+  # Handle variables in form data, JSON body, or a blank value
+  def prepare_variables(variables_param)
+    case variables_param
+    when String
+      if variables_param.present?
+        JSON.parse(variables_param) || {{}}
+      else
+        {{}}
+      end
+    when Hash
+      variables_param
+    when ActionController::Parameters
+      variables_param.to_unsafe_hash
+    when nil
+      {{}}
+    else
+      raise ArgumentError, "Unexpected parameter: #{{variables_param}}"
+    end
+  end
+
+  def handle_error_in_development(e)
+    logger.error e.message
+    logger.error e.backtrace.join("\\n")
+
+    render json: {{ errors: [{{ message: e.message, backtrace: e.backtrace }}], data: {{}} }}, status: 500
+  end
+end
+"""
+
+
+def _graphql_schema_rb(schema_name: str) -> str:
+    return f"""class {schema_name} < GraphQL::Schema
+  query(Types::QueryType)
+  mutation(Types::MutationType)
+
+  use GraphQL::Dataloader
+
+  max_depth(15)
+  max_query_string_tokens(5000)
+  validate_max_errors(100)
+end
+"""
+
+
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+    graphql = _is_graphql(ctx)
     return [
-        GeneratedFile(path="backend/Gemfile", language="text", content=_gemfile(ctx.project_name), description="Ruby gem dependencies"),
+        GeneratedFile(path="backend/Gemfile", language="text", content=_gemfile(ctx.project_name, graphql), description="Ruby gem dependencies"),
         GeneratedFile(path="backend/config/database.yml", language="yaml", content=_database_yml(), description="Database config (SQLite, zero external setup)"),
     ]
 
 
+def _schema_name(project_name: str) -> str:
+    module_name = "".join(ch for ch in project_name.title() if ch.isalnum()) or "GeneratedApp"
+    return f"{module_name}Schema"
+
+
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+    graphql = _is_graphql(ctx)
     files = [
         GeneratedFile(path="backend/config/boot.rb", language="ruby", content=_boot_rb(), description="Rails boot file"),
         GeneratedFile(path="backend/config/application.rb", language="ruby", content=_application_rb(ctx.project_name), description="Rails application config (API-only mode)"),
@@ -257,7 +519,18 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
         GeneratedFile(path="backend/app/models/application_record.rb", language="ruby", content=_APPLICATION_RECORD_RB, description="Base ActiveRecord class"),
         GeneratedFile(path="backend/app/controllers/application_controller.rb", language="ruby", content=_APPLICATION_CONTROLLER_RB, description="Base controller class (API-only)"),
     ]
-    if ctx.endpoints:
+    if graphql:
+        schema_name = _schema_name(ctx.project_name)
+        files += [
+            GeneratedFile(path="backend/app/graphql/types/base_argument.rb", language="ruby", content=_BASE_ARGUMENT_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
+            GeneratedFile(path="backend/app/graphql/types/base_field.rb", language="ruby", content=_BASE_FIELD_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
+            GeneratedFile(path="backend/app/graphql/types/base_input_object.rb", language="ruby", content=_BASE_INPUT_OBJECT_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
+            GeneratedFile(path="backend/app/graphql/types/base_object.rb", language="ruby", content=_BASE_OBJECT_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
+            GeneratedFile(path="backend/app/controllers/graphql_controller.rb", language="ruby", content=_graphql_controller_rb(schema_name), description="GraphQL HTTP entry point (verbatim from the real installer generator)"),
+            GeneratedFile(path=f"backend/app/graphql/{_slug(schema_name)}.rb", language="ruby", content=_graphql_schema_rb(schema_name), description="GraphQL schema — wires QueryType + MutationType"),
+            GeneratedFile(path="backend/config/routes.rb", language="ruby", content='Rails.application.routes.draw do\n  post "/graphql", to: "graphql#execute"\nend\n', description="Real graphql-ruby route (verbatim from the real installer generator)"),
+        ]
+    elif ctx.endpoints:
         files.append(GeneratedFile(
             path="backend/config/routes.rb",
             language="ruby",

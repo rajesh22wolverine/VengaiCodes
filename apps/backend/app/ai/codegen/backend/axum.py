@@ -5,6 +5,15 @@
 #  sqlx struct is identical either way); routes/wiring are axum-
 #  specific since its router API (State extractor, .route().get().post()
 #  chaining) differs meaningfully from actix's macro-attribute style.
+#
+#  2026-09-21: added a real "graphql" api_style using async-graphql +
+#  async-graphql-axum — verified by actually compiling and running a
+#  real axum + async-graphql server against a real sqlx pool while
+#  writing this (not guessed). ONE real version conflict was caught
+#  this way: async-graphql-axum 7.2.1 requires axum 0.8, but REST mode
+#  here pins axum "0.7" — Cargo.toml is per-project (never both modes
+#  at once), so GraphQL mode's manifest pins "0.8" instead; REST mode's
+#  pin is untouched.
 # ═══════════════════════════════════════════════════════════════
 
 import re
@@ -77,27 +86,104 @@ Return ONLY the raw Rust code for this one file (imports + each handler function
     )]
 
 
-ROUTES_BUILDERS = {"rest": _rest_routes}
+async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
+    operations_text = "\n".join(
+        f"- (originally {e.get('method')} {e.get('path')}): {e.get('purpose')}"
+        for e in ctx.endpoints
+    )
+    tables_text = ", ".join(
+        f"{_pascal(t.get('name', 'Item'))} (table `{t.get('name', 'item').lower()}s`)"
+        for t in ctx.tables
+    )
+
+    prompt = f"""Write ONE complete, real async-graphql schema file for this app, covering every capability below.
+
+Tables available (real SQLite tables, already created): {tables_text}
+
+Capabilities to expose as GraphQL fields (each was originally described as a REST endpoint — turn
+each GET-shaped one into a Query field, and each POST/PUT/PATCH/DELETE-shaped one into a Mutation
+field, choosing clear, idiomatic GraphQL field/argument names from its purpose):
+{operations_text}
+
+Requirements:
+- `use async_graphql::{{Context, Object, SimpleObject, InputObject}};` and `use sqlx::Row;`.
+- Define one real `#[derive(SimpleObject)] pub struct XOutput {{ ... }}` per table above (GraphQL
+  output shape — pub fields, real types matching the table's real columns), plus any
+  `#[derive(InputObject)] pub struct XInput {{ ... }}` a mutation's arguments need. These are
+  SEPARATE from any sqlx::FromRow struct elsewhere — do not import or reuse one.
+- `pub struct Query;` with `#[Object] impl Query {{ ... }}` — one `async fn` per read capability,
+  each taking `&self, ctx: &Context<'_>` (plus any real arguments) and returning
+  `async_graphql::Result<...>`. Get the database pool via
+  `let pool = ctx.data::<sqlx::SqlitePool>()?;` then do a REAL query
+  (`sqlx::query(...).fetch_all(pool).await?` / `.fetch_one(pool).await?`), building the output
+  struct(s) field-by-field from each row via `row.try_get::<T, _>("column")?` — never return
+  hardcoded/fake data.
+- `pub struct Mutation;` with `#[Object] impl Mutation {{ ... }}` — one `async fn` per write
+  capability, same `ctx: &Context<'_>` + pool pattern, doing a real `sqlx::query(...).execute(pool)
+  .await?`. If there are NO write capabilities above, define exactly one trivial field:
+  `async fn ping(&self) -> bool {{ true }}` — Mutation must always exist and have at least one
+  field, even when unused.
+- For not-found/invalid-input cases, return `Err(async_graphql::Error::new("..."))` with a clear
+  message.
+- Implement the actual behavior implied by the key features and user stories above.
+- No placeholders or TODOs — every field/resolver must be fully implemented.
+
+Return ONLY the raw Rust code for this one file (imports + output/input structs + Query + Mutation).
+No markdown fences, no explanation, no JSON."""
+
+    content, issue = await generate_text_validated(
+        prompt, "rust", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
+    return [(
+        GeneratedFile(
+            path=_GRAPHQL_SCHEMA_PATH,
+            language="rust",
+            content=content,
+            description="async-graphql schema implementing every capability against the real database",
+        ),
+        issue,
+    )]
+
+
+ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes}
 
 
 async def generate_routes(ctx: RoutesCtx) -> list[FileResult]:
     return await ROUTES_BUILDERS[ctx.api_style](ctx)
 
 
-def _cargo_toml(project_name: str) -> str:
+_GRAPHQL_SCHEMA_PATH = "backend/src/schema.rs"
+
+
+def _is_graphql(ctx: WiringCtx) -> bool:
+    return any(f.path == _GRAPHQL_SCHEMA_PATH for f in ctx.routes_files)
+
+
+def _cargo_toml(project_name: str, graphql: bool) -> str:
     from app.core.naming import slugify_app_name
 
+    # async-graphql-axum 7.2.1 requires axum 0.8 (confirmed by actually
+    # compiling both — see module header); REST mode stays on the
+    # independently-verified "0.7" since the two never coexist in one
+    # generated project.
+    axum_version = "0.8" if graphql else "0.7"
+    graphql_deps = (
+        '\nasync-graphql = "7.2.1"\nasync-graphql-axum = "7.2.1"'
+        if graphql
+        else ""
+    )
     return f"""[package]
 name = "{slugify_app_name(project_name).replace('-', '_')}"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.7"
+axum = "{axum_version}"
 tokio = {{ version = "1", features = ["full"] }}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
-sqlx = {{ version = "0.7", features = ["runtime-tokio", "sqlite"] }}
+sqlx = {{ version = "0.7", features = ["runtime-tokio", "sqlite"] }}{graphql_deps}
 """
 
 
@@ -150,13 +236,72 @@ async fn main() {{
 """
 
 
+# GraphiQL served on GET /graphql, real queries/mutations on POST /graphql —
+# same shape as the module header documents was actually compiled and run.
+def _build_main_rs_graphql(tables: list[dict]) -> str:
+    create_tables = "\n".join(
+        f'    sqlx::query(r#"{rust_common.build_create_table_sql(t)}"#).execute(&pool).await.expect("failed to create table");'
+        for t in tables
+    )
+
+    return f"""use async_graphql::{{EmptySubscription, Schema}};
+use async_graphql_axum::{{GraphQLRequest, GraphQLResponse}};
+use axum::extract::State;
+use axum::response::{{Html, IntoResponse}};
+use axum::routing::get;
+use axum::Router;
+use sqlx::sqlite::SqlitePoolOptions;
+
+mod models;
+mod schema;
+
+use schema::{{Mutation, Query}};
+
+type AppSchema = Schema<Query, Mutation, EmptySubscription>;
+
+async fn graphql_handler(State(schema): State<AppSchema>, req: GraphQLRequest) -> GraphQLResponse {{
+    schema.execute(req.into_inner()).await.into()
+}}
+
+async fn graphiql() -> impl IntoResponse {{
+    Html(async_graphql::http::GraphiQLSource::build().endpoint("/graphql").finish())
+}}
+
+#[tokio::main]
+async fn main() {{
+    let pool = SqlitePoolOptions::new()
+        .connect("sqlite://app.db?mode=rwc")
+        .await
+        .expect("failed to connect to database");
+
+{create_tables}
+
+    let schema: AppSchema = Schema::build(Query, Mutation, EmptySubscription)
+        .data(pool.clone())
+        .finish();
+
+    let app = Router::new()
+        .route("/graphql", get(graphiql).post(graphql_handler))
+        .with_state(schema);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}}
+"""
+
+
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    return [GeneratedFile(path="backend/Cargo.toml", language="text", content=_cargo_toml(ctx.project_name), description="Rust dependency manifest")]
+    return [GeneratedFile(path="backend/Cargo.toml", language="text", content=_cargo_toml(ctx.project_name, _is_graphql(ctx)), description="Rust dependency manifest")]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+    main_rs = (
+        _build_main_rs_graphql(ctx.tables)
+        if _is_graphql(ctx)
+        else _build_main_rs(ctx.endpoints, ctx.tables)
+    )
     return [
-        GeneratedFile(path="backend/src/main.rs", language="rust", content=_build_main_rs(ctx.endpoints, ctx.tables), description="axum entry point — connects the DB, creates tables, wires the router"),
+        GeneratedFile(path="backend/src/main.rs", language="rust", content=main_rs, description="axum entry point — connects the DB, creates tables, wires the router"),
         GeneratedFile(path="backend/src/models/mod.rs", language="rust", content=rust_common.models_mod_rs(ctx.model_files), description="Aggregates every generated data struct"),
     ]
 
