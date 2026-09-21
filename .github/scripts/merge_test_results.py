@@ -17,27 +17,11 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
-passed = 0
-failed = 0
-total = 0
-failures = []
-
-BACKEND_RECIPE = os.environ.get("BACKEND_RECIPE", "")
-FRONTEND_RECIPE = os.environ.get("FRONTEND_RECIPE", "")
-
 # Keep in sync with app.ai.testing_recipes.py's TestRecipe.result_format —
 # duplicated as plain strings here since this script can't import the
 # backend app (no dependencies installed in this minimal CI job).
 JSON_RESULT_RECIPES = {"pytest", "unittest", "pytest_django"}
 JEST_RESULT_RECIPES = {"jest_rtl", "vitest_rtl", "vitest_vtu", "vitest_svelte", "vitest_jsdom", "jest_supertest", "jest_nestjs"}
-
-
-def add(p, f, t, fails):
-    global passed, failed, total
-    passed += p
-    failed += f
-    total += t
-    failures.extend(fails)
 
 
 # ─── pytest-json (pytest-json-report format) ───
@@ -185,7 +169,19 @@ def parse_flutter_jsonl(path: str):
                     f"{event.get('error', '')}\n{event.get('stackTrace', '')}"
                 )
             elif event_type == "testDone":
-                results[event.get("testID")] = "failure" if not event.get("result") == "success" or event.get("hidden") else event.get("result", "success")
+                # Per the real JSON reporter protocol (dart-lang/test's
+                # doc/json_reporter.md): "hidden" means "not counted
+                # towards the total number of tests run" — true for
+                # virtual setUpAll()/tearDownAll() tests, and the doc is
+                # explicit that "only successful tests will be hidden".
+                # A previous version of this line instead treated
+                # hidden=True as an automatic failure (`or
+                # event.get("hidden")` inside the "failure" branch),
+                # which counted every hidden setUpAll/tearDownAll as a
+                # failed test — skip them entirely instead.
+                if event.get("hidden"):
+                    continue
+                results[event.get("testID")] = "success" if event.get("result") == "success" else "failure"
 
     p = f = 0
     fails = []
@@ -273,53 +269,77 @@ def parse_cargo_text(path: str):
 #  Dispatch — exactly one backend recipe and one frontend recipe
 #  apply per run, matched against whichever raw output file(s)
 #  that recipe's run-tests.yml step actually produced.
+#
+#  Wrapped in main() (called only under `if __name__ == "__main__"`
+#  below) so test_merge_test_results.py can import this module's parser
+#  functions directly without triggering a real run against cwd — the
+#  module used to execute this dispatch unconditionally at import time,
+#  which is exactly why it had no tests until now.
 # ══════════════════════════════════════════════════════════════
-try:
-    if BACKEND_RECIPE in JSON_RESULT_RECIPES and os.path.exists("backend-results.json"):
+def main() -> None:
+    backend_recipe = os.environ.get("BACKEND_RECIPE", "")
+    frontend_recipe = os.environ.get("FRONTEND_RECIPE", "")
+
+    passed = failed = total = 0
+    failures = []
+
+    def add(p, f, t, fails):
+        nonlocal passed, failed, total
+        passed += p
+        failed += f
+        total += t
+        failures.extend(fails)
+
+    try:
+        if backend_recipe in JSON_RESULT_RECIPES and os.path.exists("backend-results.json"):
+            add(*parse_pytest_json("backend-results.json"))
+        elif backend_recipe in ("jest_supertest", "jest_nestjs") and os.path.exists("backend-results.json"):
+            add(*parse_jest_json("backend-results.json"))
+        elif backend_recipe == "rspec" and os.path.exists("backend-results.json"):
+            add(*parse_rspec_json("backend-results.json"))
+        elif backend_recipe == "phpunit" and os.path.exists("backend-results.xml"):
+            add(*parse_junit_xml(["backend-results.xml"]))
+        elif backend_recipe == "junit_spring":
+            reports = glob.glob("project/backend/target/surefire-reports/TEST-*.xml")
+            if reports:
+                add(*parse_junit_xml(reports))
+        elif backend_recipe == "xunit_aspnet" and os.path.exists("backend-results.trx"):
+            add(*parse_trx("backend-results.trx"))
+        elif backend_recipe == "cargo_test" and os.path.exists("backend-cargo-output.txt"):
+            add(*parse_cargo_text("backend-cargo-output.txt"))
+        elif backend_recipe == "go_test" and os.path.exists("backend-results.jsonl"):
+            add(*parse_go_jsonl("backend-results.jsonl"))
+    except (json.JSONDecodeError, KeyError, TypeError, ET.ParseError, OSError) as e:
+        print(f"Warning: could not parse backend results ({backend_recipe}): {e}")
+
+    try:
+        if frontend_recipe in JEST_RESULT_RECIPES and os.path.exists("frontend-results.json"):
+            add(*parse_jest_json("frontend-results.json"))
+        elif frontend_recipe == "karma_jasmine" and os.path.exists("frontend-results.xml"):
+            add(*parse_junit_xml(["frontend-results.xml"]))
+        elif frontend_recipe == "flutter_test" and os.path.exists("frontend-results.jsonl"):
+            add(*parse_flutter_jsonl("frontend-results.jsonl"))
+        elif frontend_recipe == "gradle_unit_test":
+            reports = glob.glob("project/frontend/app/build/test-results/*/TEST-*.xml")
+            if reports:
+                add(*parse_junit_xml(reports))
+    except (json.JSONDecodeError, KeyError, TypeError, ET.ParseError, OSError) as e:
+        print(f"Warning: could not parse frontend results ({frontend_recipe}): {e}")
+
+    # Fallback for legacy runs / local testing without BACKEND_RECIPE set —
+    # preserves the exact behavior this script had before recipes existed.
+    if not backend_recipe and os.path.exists("backend-results.json"):
         add(*parse_pytest_json("backend-results.json"))
-    elif BACKEND_RECIPE in ("jest_supertest", "jest_nestjs") and os.path.exists("backend-results.json"):
-        add(*parse_jest_json("backend-results.json"))
-    elif BACKEND_RECIPE == "rspec" and os.path.exists("backend-results.json"):
-        add(*parse_rspec_json("backend-results.json"))
-    elif BACKEND_RECIPE == "phpunit" and os.path.exists("backend-results.xml"):
-        add(*parse_junit_xml(["backend-results.xml"]))
-    elif BACKEND_RECIPE == "junit_spring":
-        reports = glob.glob("project/backend/target/surefire-reports/TEST-*.xml")
-        if reports:
-            add(*parse_junit_xml(reports))
-    elif BACKEND_RECIPE == "xunit_aspnet" and os.path.exists("backend-results.trx"):
-        add(*parse_trx("backend-results.trx"))
-    elif BACKEND_RECIPE == "cargo_test" and os.path.exists("backend-cargo-output.txt"):
-        add(*parse_cargo_text("backend-cargo-output.txt"))
-    elif BACKEND_RECIPE == "go_test" and os.path.exists("backend-results.jsonl"):
-        add(*parse_go_jsonl("backend-results.jsonl"))
-except (json.JSONDecodeError, KeyError, TypeError, ET.ParseError, OSError) as e:
-    print(f"Warning: could not parse backend results ({BACKEND_RECIPE}): {e}")
-
-try:
-    if FRONTEND_RECIPE in JEST_RESULT_RECIPES and os.path.exists("frontend-results.json"):
+    if not frontend_recipe and os.path.exists("frontend-results.json"):
         add(*parse_jest_json("frontend-results.json"))
-    elif FRONTEND_RECIPE == "karma_jasmine" and os.path.exists("frontend-results.xml"):
-        add(*parse_junit_xml(["frontend-results.xml"]))
-    elif FRONTEND_RECIPE == "flutter_test" and os.path.exists("frontend-results.jsonl"):
-        add(*parse_flutter_jsonl("frontend-results.jsonl"))
-    elif FRONTEND_RECIPE == "gradle_unit_test":
-        reports = glob.glob("project/frontend/app/build/test-results/*/TEST-*.xml")
-        if reports:
-            add(*parse_junit_xml(reports))
-except (json.JSONDecodeError, KeyError, TypeError, ET.ParseError, OSError) as e:
-    print(f"Warning: could not parse frontend results ({FRONTEND_RECIPE}): {e}")
 
-# Fallback for legacy runs / local testing without BACKEND_RECIPE set —
-# preserves the exact behavior this script had before recipes existed.
-if not BACKEND_RECIPE and os.path.exists("backend-results.json"):
-    add(*parse_pytest_json("backend-results.json"))
-if not FRONTEND_RECIPE and os.path.exists("frontend-results.json"):
-    add(*parse_jest_json("frontend-results.json"))
+    result = {"passed": passed, "failed": failed, "total": total, "failures": failures}
 
-result = {"passed": passed, "failed": failed, "total": total, "failures": failures}
+    with open("test-results.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
 
-with open("test-results.json", "w", encoding="utf-8") as f:
-    json.dump(result, f, indent=2)
+    print(f"Merged results: {passed} passed, {failed} failed, {total} total, {len(failures)} failure(s) recorded")
 
-print(f"Merged results: {passed} passed, {failed} failed, {total} total, {len(failures)} failure(s) recorded")
+
+if __name__ == "__main__":
+    main()
