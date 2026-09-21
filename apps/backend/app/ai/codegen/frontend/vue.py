@@ -9,9 +9,11 @@
 from app.ai.codegen.manifests.package_json import build_package_json
 from app.ai.codegen.types import FileResult, FrontendAdapter, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
+    GRAPHQL_CALLING_CONVENTION,
     GROQ_FILE_MAX_TOKENS,
     GeneratedFile,
     _pascal,
+    build_endpoints_block,
     build_reference_design_block,
     generate_text_validated,
 )
@@ -20,9 +22,8 @@ from app.ai.codegen_shared import (
 async def generate_screen(ctx: ScreenCtx) -> FileResult:
     screen_name = ctx.screen.get("name", "Screen")
     component_name = _pascal(screen_name)
-    endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
-    )
+    endpoints_text = build_endpoints_block(ctx.endpoints, ctx.api_style)
+    network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
     reference_block = build_reference_design_block(ctx.screen)
 
     prompt = f"""Write ONE complete, real Vue 3 Single File Component for the "{screen_name}" screen of this app.
@@ -31,7 +32,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{reference_block}
+{network_note}{reference_block}
 Requirements:
 - Use `<script setup>` composition API syntax.
 - Fetch real data from the relevant API endpoints above (use `fetch`), handle loading and

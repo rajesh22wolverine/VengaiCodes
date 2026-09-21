@@ -10,6 +10,16 @@
 #  `django-admin startproject`'s real, long-stable boilerplate from
 #  documented knowledge — no live Django install was available in this
 #  environment to run the equivalent of the Angular CLI verification.
+#
+#  2026-09-21: added a real "graphql" api_style using Graphene-Django
+#  (graphene-django, mounted via graphene_django.views.GraphQLView at
+#  /graphql/ — both confirmed against the graphene-django project's own
+#  current README while writing this, not guessed). GraphQL replaces
+#  the REST urls.py/views.py entirely rather than sitting alongside it —
+#  api_style is mutually exclusive, same as every other backend.
+#  _is_graphql() detects which style was actually generated from the
+#  routes file's own path since WiringCtx carries no api_style field by
+#  design (see its docstring).
 # ═══════════════════════════════════════════════════════════════
 
 import re
@@ -111,11 +121,72 @@ Return ONLY the raw Python code for this one file. No markdown fences, no explan
     )]
 
 
-ROUTES_BUILDERS = {"rest": _rest_routes}
+async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
+    model_imports = "\n".join(
+        f"- backend/api/models/{_slug(t.get('name', 'item'))}.py defines the {t.get('name')} model "
+        f"(import via `from api.models.{_slug(t.get('name', 'item'))} import {_pascal(t.get('name', 'Item'))}`)"
+        for t in ctx.tables
+    )
+    operations_text = "\n".join(
+        f"- (originally {e.get('method')} {e.get('path')}): {e.get('purpose')}"
+        for e in ctx.endpoints
+    )
+
+    prompt = f"""Write ONE complete, real Graphene-Django GraphQL schema file for this app, covering every capability below.
+
+Available models to import and use:
+{model_imports}
+
+Capabilities to expose as GraphQL fields (each was originally described as a REST endpoint — turn
+each GET-shaped one into a Query field, and each POST/PUT/PATCH/DELETE-shaped one into a Mutation
+field, choosing clear, idiomatic GraphQL field/argument names from its purpose):
+{operations_text}
+
+Requirements:
+- `import graphene` and `from graphene_django import DjangoObjectType`.
+- Define one real `class XType(DjangoObjectType):` per model above, with `class Meta: model = X`
+  (the real Django model class), for every model listed.
+- Define `class Query(graphene.ObjectType):` with one field + `resolve_x(self, info, **kwargs)`
+  method per read capability, doing a real Django ORM query (`X.objects...`) — never hardcoded/
+  fake data. ONLY if at least one write capability exists, also define
+  `class Mutation(graphene.ObjectType):` composing one `graphene.Mutation` subclass per write
+  capability (each with its own nested `class Arguments:`, a `mutate(self, info, **kwargs)`
+  classmethod doing a real Django ORM write, and returning the mutation instance).
+- Raise `Exception("...")` with a clear message for not-found/invalid-input cases.
+- Implement the actual behavior implied by the key features and user stories above.
+- End the file with `schema = graphene.Schema(query=Query, mutation=Mutation)` if you defined a
+  Mutation class, otherwise `schema = graphene.Schema(query=Query)`.
+- No placeholders or TODOs — every field/resolver must be fully implemented.
+
+Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
+
+    content, issue = await generate_text_validated(
+        prompt, "python", GROQ_FILE_MAX_TOKENS,
+        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+    )
+    return [(
+        GeneratedFile(
+            path=_GRAPHQL_SCHEMA_PATH,
+            language="python",
+            content=content,
+            description="Graphene-Django GraphQL schema implementing every capability against the real models",
+        ),
+        issue,
+    )]
+
+
+ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes}
 
 
 async def generate_routes(ctx: RoutesCtx) -> list[FileResult]:
     return await ROUTES_BUILDERS[ctx.api_style](ctx)
+
+
+_GRAPHQL_SCHEMA_PATH = "backend/api/schema.py"
+
+
+def _is_graphql(ctx: WiringCtx) -> bool:
+    return any(f.path == _GRAPHQL_SCHEMA_PATH for f in ctx.routes_files)
 
 
 def _build_api_urls_py(endpoints: list[dict]) -> str:
@@ -152,7 +223,19 @@ class ApiConfig(AppConfig):
 """
 
 
-def _settings_py(project_name: str) -> str:
+def _settings_py(project_name: str, graphql: bool) -> str:
+    installed_apps = [
+        "'django.contrib.contenttypes'",
+        "'django.contrib.staticfiles'",
+        "'corsheaders'",
+    ]
+    installed_apps += ["'graphene_django'"] if graphql else ["'rest_framework'"]
+    installed_apps.append("'api'")
+    installed_apps_block = ",\n    ".join(installed_apps)
+    graphene_setting = (
+        "\nGRAPHENE = {\n    'SCHEMA': 'api.schema.schema',\n}\n" if graphql else ""
+    )
+
     return f"""from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -162,11 +245,7 @@ DEBUG = True
 ALLOWED_HOSTS = ['*']
 
 INSTALLED_APPS = [
-    'django.contrib.contenttypes',
-    'django.contrib.staticfiles',
-    'rest_framework',
-    'corsheaders',
-    'api',
+    {installed_apps_block},
 ]
 
 MIDDLEWARE = [
@@ -177,6 +256,7 @@ MIDDLEWARE = [
 CORS_ALLOW_ALL_ORIGINS = True
 
 ROOT_URLCONF = '{_SETTINGS_PACKAGE}.urls'
+{graphene_setting}
 
 TEMPLATES = [
     {{
@@ -203,7 +283,15 @@ STATIC_URL = 'static/'
 """
 
 
-def _root_urls_py() -> str:
+def _root_urls_py(graphql: bool) -> str:
+    if graphql:
+        return """from django.urls import path
+from graphene_django.views import GraphQLView
+
+urlpatterns = [
+    path('graphql/', GraphQLView.as_view(graphiql=True)),
+]
+"""
     return """from django.urls import include, path
 
 urlpatterns = [
@@ -259,27 +347,37 @@ application = get_asgi_application()
 
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    content = build_requirements_txt([
+    graphql = _is_graphql(ctx)
+    packages = [
         "django==5.0.2",
-        "djangorestframework==3.14.0",
         "django-cors-headers==4.3.1",
-    ])
+    ]
+    if graphql:
+        # Version confirmed live on PyPI at the time this was written.
+        packages.append("graphene-django==3.2.3")
+    else:
+        packages.append("djangorestframework==3.14.0")
+    content = build_requirements_txt(packages)
     return [GeneratedFile(path="backend/requirements.txt", language="text", content=content, description="Backend Python dependencies")]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+    graphql = _is_graphql(ctx)
     files = [
         GeneratedFile(path="backend/manage.py", language="python", content=_manage_py(), description="Django management entry point"),
         GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/__init__.py", language="python", content="", description="Settings package marker"),
-        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/settings.py", language="python", content=_settings_py(ctx.project_name), description="Django settings"),
-        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/urls.py", language="python", content=_root_urls_py(), description="Root URL config"),
+        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/settings.py", language="python", content=_settings_py(ctx.project_name, graphql), description="Django settings"),
+        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/urls.py", language="python", content=_root_urls_py(graphql), description="Root URL config"),
         GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/wsgi.py", language="python", content=_wsgi_py(), description="WSGI entry point"),
         GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/asgi.py", language="python", content=_asgi_py(), description="ASGI entry point"),
         GeneratedFile(path="backend/api/__init__.py", language="python", content="", description="API app package marker"),
         GeneratedFile(path="backend/api/apps.py", language="python", content=_APPS_PY, description="API app config"),
         GeneratedFile(path="backend/api/models/__init__.py", language="python", content=_build_models_init_py(ctx.model_files), description="Aggregates every generated model"),
     ]
-    if ctx.endpoints:
+    # REST needs a deterministic urls.py wiring each view to its exact
+    # dictated name; GraphQL doesn't — graphene_django.schema.py's single
+    # /graphql/ endpoint IS the routing, no per-capability URL entries.
+    if ctx.endpoints and not graphql:
         files.append(GeneratedFile(
             path="backend/api/urls.py",
             language="python",

@@ -429,6 +429,39 @@ def get_ordered_pages(uiux_data: Optional[dict]) -> list[dict]:
     return [pages_by_id[pid] for pid in ordered_ids]
 
 
+def build_endpoints_block(endpoints: list[dict], api_style: str) -> str:
+    """Renders the "API endpoints this screen can call" listing every
+    frontend adapter's screen prompt includes — in whichever shape the
+    matching backend adapter actually generated (see app/ai/codegen/
+    backend/{fastapi,flask,django,express}.py's own _graphql_routes()
+    for the real schema this mirrors). REST output is byte-identical to
+    what every adapter inlined before this helper existed, so this is a
+    behavior-preserving factor-out for that case — GraphQL is new.
+    """
+    if api_style == "graphql":
+        return "\n".join(
+            f"- {'query' if str(e.get('method', 'GET')).upper() == 'GET' else 'mutation'} "
+            f"(originally described as {e.get('method')} {e.get('path')}): {e.get('purpose')}"
+            for e in endpoints
+        )
+    return "\n".join(f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in endpoints)
+
+
+# Appended once, right after build_endpoints_block()'s output, whenever
+# api_style == "graphql" — every frontend adapter's own networking
+# mechanism (fetch/http package/URLSession/Ktor) still applies unchanged,
+# only WHAT gets called differs, so this doesn't replace any adapter's
+# existing "fetch real data" instruction, just what URL/body it targets.
+GRAPHQL_CALLING_CONVENTION = """
+This backend exposes a SINGLE GraphQL endpoint — POST /graphql with a JSON body
+{"query": "<graphql query or mutation string>", "variables": {...}}. There are NO REST paths:
+do not call any path from the list above directly, it is a description of each GraphQL
+query/mutation this screen needs, not a URL. Send the right query/mutation string (inferring
+reasonable field/argument names from its purpose — the backend's schema was generated to match)
+for each capability this screen uses.
+"""
+
+
 def build_reference_design_block(screen: dict) -> str:
     """
     If this page has a saved HTML/CSS mockup (auto-generated for a wizard

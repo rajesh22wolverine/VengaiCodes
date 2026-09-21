@@ -68,9 +68,9 @@ The old Sprint 1–7 numbering is retired — everything through Export is built
 ### Codegen coverage — the honest limits
 
 - **REST: all 96 pairings** (8 frontends × 12 backends) are buildable.
-- **GraphQL: not implemented for any backend.**
+- **GraphQL (2026-09-21): 32 pairings buildable** — `fastapi` (Strawberry), `flask` (Ariadne), `django` (Graphene-Django), `express` (Apollo Server v5) each get a real schema/resolver builder mounted at `/graphql`, and all 8 frontend adapters (`ScreenCtx.api_style`) now generate real GraphQL POST calls instead of REST fetches when paired with one. `nestjs`, `spring_boot`, `aspnet_core`, `rails`, `laravel`, `actix`, `axum`, `gin` still have no GraphQL builder.
 - **gRPC: NestJS only.** `spring_boot` and `aspnet_core` declare it in the matrix but have no builder — those combos silently downgrade via `find_nearest()`.
-- **SwiftUI** ships loose `.swift` files + a README only (no manifest, no CI).
+- **SwiftUI (2026-09-21):** real XcodeGen `project.yml` + CI-verified simulator build (`build-swiftui-project.yml`) — no longer loose files only. Still no signed `.ipa` (needs the end user's own Apple Developer account).
 - Always check `BUILDABLE_NOW` in `app/ai/stack_matrix.py` (it is computed, not hardcoded) before claiming a combination works.
 
 ---

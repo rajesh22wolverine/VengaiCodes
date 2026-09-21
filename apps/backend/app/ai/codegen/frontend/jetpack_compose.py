@@ -21,12 +21,14 @@ import re
 
 from app.ai.codegen.types import FileResult, FrontendAdapter, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
+    GRAPHQL_CALLING_CONVENTION,
     GROQ_FILE_MAX_TOKENS,
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _pascal,
     android_package_segment,
     build_design_guidance_block,
+    build_endpoints_block,
     generate_text_validated,
 )
 
@@ -58,8 +60,26 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     screen_name = ctx.screen.get("name", "Screen")
     class_name = f"{_pascal(screen_name)}Screen"
     package_name = _package_name(ctx.project_name)
-    endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+    endpoints_text = build_endpoints_block(ctx.endpoints, ctx.api_style)
+    network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
+    # `java.net.URL(...).readText()` (the REST bullet below) is GET-only —
+    # it has no way to send a request body, so it can't express a GraphQL
+    # POST. This is the one frontend adapter whose REST networking
+    # instruction had to change shape, not just gain an extra note.
+    network_bullet = (
+        '- Real state via `remember { mutableStateOf(...) }`, fetch real data inside '
+        "`LaunchedEffect(Unit)` using a suspend helper wrapped in `withContext(Dispatchers.IO)` "
+        'that opens `(URL(url).openConnection() as HttpURLConnection)`, sets '
+        '`requestMethod = "POST"`, `doOutput = true`, '
+        '`setRequestProperty("Content-Type", "application/json")`, writes the JSON body '
+        "(`{\"query\": ..., \"variables\": {...}}`) to `outputStream`, then reads the response "
+        "from `inputStream.bufferedReader().readText()`, parsed with `org.json.JSONObject` "
+        "(built into Android, no extra dependency). Handle loading/error state."
+        if ctx.api_style == "graphql"
+        else '- Real state via `remember { mutableStateOf(...) }`, fetch real data inside '
+        "`LaunchedEffect(Unit)` using a suspend helper that calls `java.net.URL(...).readText()` "
+        "wrapped in `withContext(Dispatchers.IO)`, parsed with `org.json.JSONArray`/`JSONObject` "
+        "(built into Android, no extra dependency). Handle loading/error state."
     )
 
     capabilities_text = "\n".join(
@@ -81,14 +101,11 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}{design_guidance}
+{network_note}{native_section}{design_guidance}
 Requirements:
 - Package declaration: `package {package_name}.screens`
 - Function signature: `@Composable\\nfun {class_name}() {{ ... }}` — a single composable, no Activity/nav code here.
-- Real state via `remember {{ mutableStateOf(...) }}`, fetch real data inside `LaunchedEffect(Unit)`
-  using a suspend helper that calls `java.net.URL(...).readText()` wrapped in
-  `withContext(Dispatchers.IO)`, parsed with `org.json.JSONArray`/`JSONObject` (built into
-  Android, no extra dependency). Handle loading/error state.
+{network_bullet}
 - Use Material3 composables (Column, LazyColumn, Text, Button, OutlinedTextField, etc.) for a
   real, usable UI — implement the actual feature/user-story behavior, no placeholders or TODOs.
 - This file MUST be fully self-contained: do not reference any class, function, or composable

@@ -76,6 +76,12 @@ class ScreenCtx(_PromptCtx):
     language: str
     user: Optional[User] = None
     db: Optional[AsyncSession] = None
+    # "rest" | "graphql" — which shape `endpoints` should be described as
+    # in the prompt (see codegen_shared.build_endpoints_block()). Default
+    # "rest" so every pre-existing construction site (and any test) that
+    # doesn't pass this explicitly keeps generating exactly what it did
+    # before this field existed.
+    api_style: str = "rest"
     # The app's design system (design_style/typography as free text,
     # color_palette as {primary/secondary/accent/background/text: hex}),
     # from Project.uiux_data["design"]. Optional because callers/tests that

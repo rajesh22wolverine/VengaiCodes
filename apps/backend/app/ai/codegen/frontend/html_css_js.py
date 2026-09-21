@@ -12,10 +12,12 @@ import re
 from app.ai.codegen.manifests.package_json import build_package_json
 from app.ai.codegen.types import FileResult, FrontendAdapter, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
+    GRAPHQL_CALLING_CONVENTION,
     GROQ_FILE_MAX_TOKENS,
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _slug,
+    build_endpoints_block,
     build_reference_design_block,
     generate_text_validated,
 )
@@ -24,9 +26,8 @@ from app.ai.codegen_shared import (
 async def generate_screen(ctx: ScreenCtx) -> FileResult:
     screen_name = ctx.screen.get("name", "Screen")
     slug = _slug(screen_name)
-    endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
-    )
+    endpoints_text = build_endpoints_block(ctx.endpoints, ctx.api_style)
+    network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
 
     capabilities_text = "\n".join(
         f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
@@ -46,7 +47,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}{reference_block}
+{network_note}{native_section}{reference_block}
 Requirements:
 - Do NOT use React, Vue, Svelte, or any other framework API — no `useState`, `useEffect`, JSX,
   or imports from 'react'/'vue'/etc. This is PLAIN vanilla JavaScript: only standard DOM APIs

@@ -264,6 +264,10 @@ async def run_step(ctx: StepCtx) -> None:
                     design_style=c["design_style"],
                     color_palette=c["color_palette"],
                     typography=c["typography"],
+                    # O3DE/Godot screens have no separate backend (stack_matrix's
+                    # "none" sentinel) — api_style is meaningless for them, and
+                    # c["stack_info"]["api_style"] is "none" in that case anyway.
+                    api_style=c["stack_info"]["api_style"],
                 )
             )
             _record(ctx.state, "screen", [result])

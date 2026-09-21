@@ -29,6 +29,7 @@ from app.ai.codegen_shared import (
     GeneratedFile,
     _pascal,
     build_design_guidance_block,
+    build_endpoints_block,
     generate_text_validated,
 )
 
@@ -44,8 +45,23 @@ def _app_name(project_name: str) -> str:
 async def generate_screen(ctx: ScreenCtx) -> FileResult:
     screen_name = ctx.screen.get("name", "Screen")
     struct_name = f"{_pascal(screen_name)}View"
-    endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+    endpoints_text = build_endpoints_block(ctx.endpoints, ctx.api_style)
+    # `URLSession.shared.data(from:)` (the REST bullet below) is GET-only
+    # — it can't send a request body, so it can't express a GraphQL POST.
+    fetch_bullet = (
+        "- Real state via `@State` properties. Fetch data with EXACTLY this async pattern inside "
+        '`.task { ... }`: build `var request = URLRequest(url: url); request.httpMethod = "POST"; '
+        'request.setValue("application/json", forHTTPHeaderField: "Content-Type"); '
+        "request.httpBody = try JSONEncoder().encode(GraphQLRequestBody(query: ..., variables: ...))`, "
+        "then `let (data, _) = try await URLSession.shared.data(for: request)` then "
+        "`let decoded = try JSONDecoder().decode(SomeType.self, from: data)` — do not invent a "
+        "different URLSession method signature (no completion-handler closures). Define a small "
+        "`Encodable GraphQLRequestBody` struct with `query`/`variables` fields in this file."
+        if ctx.api_style == "graphql"
+        else "- Real state via `@State` properties. Fetch data with EXACTLY this async pattern inside "
+        "`.task { ... }`: `let (data, _) = try await URLSession.shared.data(from: url)` then "
+        "`let decoded = try JSONDecoder().decode(SomeType.self, from: data)` — do not invent a "
+        "different URLSession method signature (no completion-handler closures)."
     )
 
     capabilities_text = "\n".join(
@@ -70,10 +86,7 @@ API endpoints this screen can call:
 {native_section}{design_guidance}
 Requirements:
 - Struct name: {struct_name}, conforming to `View`, with a `var body: some View`.
-- Real state via `@State` properties. Fetch data with EXACTLY this async pattern inside
-  `.task {{ ... }}`: `let (data, _) = try await URLSession.shared.data(from: url)` then
-  `let decoded = try JSONDecoder().decode(SomeType.self, from: data)` — do not invent a different
-  URLSession method signature (no completion-handler closures).
+{fetch_bullet}
 - You MUST define every `Decodable` struct you reference directly in THIS file, with fields
   matching the API response shape — never reference an undefined type. Do not reference any
   other view, function, or helper not defined in this one file.

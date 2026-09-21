@@ -15,11 +15,13 @@ import re
 
 from app.ai.codegen.types import FileResult, FrontendAdapter, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
+    GRAPHQL_CALLING_CONVENTION,
     GROQ_FILE_MAX_TOKENS,
     NATIVE_CAPABILITY_DESCRIPTIONS,
     GeneratedFile,
     _pascal,
     build_design_guidance_block,
+    build_endpoints_block,
     generate_text_validated,
 )
 
@@ -56,9 +58,8 @@ def _package_slug(project_name: str) -> str:
 async def generate_screen(ctx: ScreenCtx) -> FileResult:
     screen_name = ctx.screen.get("name", "Screen")
     class_name = f"{_pascal(screen_name)}Screen"
-    endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
-    )
+    endpoints_text = build_endpoints_block(ctx.endpoints, ctx.api_style)
+    network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
 
     capabilities_text = "\n".join(
         f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
@@ -79,7 +80,7 @@ Screen purpose: {ctx.screen.get('purpose', '')}
 
 API endpoints this screen can call:
 {endpoints_text}
-{native_section}{design_guidance}
+{network_note}{native_section}{design_guidance}
 Requirements:
 - Class name: {class_name}, a StatefulWidget (use StatelessWidget only if this screen truly has
   no dynamic state) with a `const {class_name}({{super.key}})` constructor.
