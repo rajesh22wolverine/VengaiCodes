@@ -13,7 +13,8 @@
 #
 #  2026-09-21: added a real "graphql" api_style using Graphene-Django
 #  (graphene-django, mounted via graphene_django.views.GraphQLView at
-#  /graphql/ — both confirmed against the graphene-django project's own
+#  /graphql — no trailing slash, see _root_urls_py()'s own comment for
+#  why — both confirmed against the graphene-django project's own
 #  current README while writing this, not guessed). GraphQL replaces
 #  the REST urls.py/views.py entirely rather than sitting alongside it —
 #  api_style is mutually exclusive, same as every other backend.
@@ -285,11 +286,21 @@ STATIC_URL = 'static/'
 
 def _root_urls_py(graphql: bool) -> str:
     if graphql:
+        # No trailing slash: every frontend adapter's GRAPHQL_CALLING_
+        # CONVENTION prompt (codegen_shared.py) uniformly tells the AI
+        # to POST to "/graphql" across every backend, and
+        # install_backend_sidecar.py's frontend URL rewrite for the
+        # Windows/Linux desktop sidecar matches that same literal path.
+        # A trailing-slash route here would 404 on that exact request,
+        # and Django's own APPEND_SLASH redirect doesn't save it: a 301
+        # redirect on a POST is converted to a bodiless GET by the Fetch
+        # spec, silently dropping the GraphQL query. Matching the
+        # convention here is simpler than special-casing every caller.
         return """from django.urls import path
 from graphene_django.views import GraphQLView
 
 urlpatterns = [
-    path('graphql/', GraphQLView.as_view(graphiql=True)),
+    path('graphql', GraphQLView.as_view(graphiql=True)),
 ]
 """
     return """from django.urls import include, path
@@ -376,7 +387,7 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
     # REST needs a deterministic urls.py wiring each view to its exact
     # dictated name; GraphQL doesn't — graphene_django.schema.py's single
-    # /graphql/ endpoint IS the routing, no per-capability URL entries.
+    # /graphql endpoint IS the routing, no per-capability URL entries.
     if ctx.endpoints and not graphql:
         files.append(GeneratedFile(
             path="backend/api/urls.py",

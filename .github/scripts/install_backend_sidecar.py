@@ -138,10 +138,23 @@ def patch_tauri_conf() -> None:
 
 
 def rewrite_frontend_api_base(sidecar_base_url: str) -> None:
+    # REST-mode screens call literal "/api/..." paths (see the module
+    # docstring's FRONTEND REWRITE note). GraphQL-mode screens call a
+    # single literal "/graphql" endpoint instead — see codegen_shared.
+    # GRAPHQL_CALLING_CONVENTION, the same instruction text baked into
+    # every frontend adapter's screen prompt regardless of which backend
+    # it's paired with. Both get rewritten unconditionally, same as the
+    # /api/ case already was: a generated project only ever contains one
+    # of the two literal path shapes, so rewriting whichever isn't
+    # present is a harmless no-op, not a second conditional to wire up
+    # per backend/api_style.
     replacements = {
         "'/api/": f"'{sidecar_base_url}/api/",
         '"/api/': f'"{sidecar_base_url}/api/',
         "`/api/": f"`{sidecar_base_url}/api/",
+        "'/graphql'": f"'{sidecar_base_url}/graphql'",
+        '"/graphql"': f'"{sidecar_base_url}/graphql"',
+        "`/graphql`": f"`{sidecar_base_url}/graphql`",
     }
     touched = 0
     for path in glob.glob("src/**/*.js*", recursive=True):
