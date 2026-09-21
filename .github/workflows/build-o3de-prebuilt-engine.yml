@@ -1,0 +1,200 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — O3DE Prebuilt-Engine Project Build (EXPERIMENTAL,
+#  BEST EFFORT)
+#
+#  Middle tier between package-o3de-project.yml (validate + zip, no
+#  engine at all) and build-o3de-from-source.yml (compiles the whole
+#  engine, needs 100+ GB). This installs O3DE's official PRECOMPILED
+#  engine/editor binaries (o3de.org/download -> o3debinaries.org/
+#  download/windows.html, confirmed live at the time this workflow was
+#  written: ~40 GB installed, vs. 100+ GB to build from source) and
+#  builds only the PROJECT against it — VengaiCode's generated O3DE
+#  projects have zero custom C++ Gems (gem_names: [] — see
+#  app/ai/codegen/o3de.py), so there is no engine code to compile here
+#  at all. The real, meaningful verification for a Lua/prefab-only
+#  project is Asset Processor ingestion, not a C++ build: does the
+#  installed engine's AssetProcessorBatch actually parse and process
+#  project.json, the level prefab, and every .lua script without error.
+#
+#  HONEST UNCERTAINTIES (why this is "best effort", not "verified"):
+#    1. DISK: the installer needs ~40 GB. A standard GitHub-hosted
+#       runner has ~14 GB free. The cleanup step below removes known
+#       large preinstalled SDKs (Android, extra JDKs, dotnet, etc.) to
+#       claw back space, then a hard gate checks the result and fails
+#       fast if it's still not enough — this is expected to fail on
+#       windows-latest today. Point `runner_label` at a bigger runner
+#       once one exists.
+#    2. SILENT INSTALL FLAGS: O3DE's installer's unattended command-line
+#       syntax could not be confirmed from documentation available while
+#       writing this (no GUI exists on a runner to test interactively).
+#       The install step below TRIES a sequence of common installer
+#       flag conventions (NSIS-style /S, Inno Setup-style /VERYSILENT,
+#       MSI-style /quiet) with a timeout on each, and verifies success
+#       by searching the filesystem for a real o3de.exe afterward rather
+#       than trusting any single flag's exit code — but if the real
+#       installer uses a different convention entirely, every attempt
+#       fails and the job fails with a clear diagnostic, not a silent
+#       false-positive.
+#    3. Never run end-to-end. Treat a green run here as real signal;
+#       treat a red run as "the disk or the silent-install guess was
+#       wrong", not "O3DE projects don't work."
+# ═══════════════════════════════════════════════════════════════
+
+name: Build O3DE Prebuilt Engine (Experimental)
+run-name: "O3DE prebuilt-engine build (experimental) — ${{ github.event.inputs.runner_label || 'windows-latest' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: >-
+          Runner to build on. Default windows-latest may fail the disk
+          gate after cleanup (see header) — point this at a self-hosted
+          or larger runner once one exists.
+        required: false
+        default: "windows-latest"
+      min_free_gb:
+        description: "Minimum free disk (GB) required after cleanup, before downloading the ~40 GB installer."
+        required: false
+        default: "45"
+
+jobs:
+  build-prebuilt-engine:
+    runs-on: ${{ github.event.inputs.runner_label || 'windows-latest' }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository (for templates/o3de/ as the demo project)
+        uses: actions/checkout@v4
+
+      - name: Free up disk space (best-effort — remove known large preinstalled SDKs)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $targets = @(
+            "C:\Program Files (x86)\Android",
+            "C:\Android",
+            "C:\Program Files\dotnet",
+            "C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk",
+            "C:\ghcup",
+            "C:\Strawberry",
+            "C:\Program Files\MongoDB",
+            "C:\Program Files\Microsoft SQL Server"
+          )
+          foreach ($path in $targets) {
+            if (Test-Path $path) {
+              $sizeGb = [math]::Round((Get-ChildItem $path -Recurse -Force -ErrorAction SilentlyContinue |
+                Measure-Object -Property Length -Sum).Sum / 1GB, 1)
+              Write-Host "Removing $path (~$sizeGb GB)..."
+              Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Disk-space gate — fail fast instead of downloading ~40 GB for nothing
+        shell: pwsh
+        run: |
+          $minGb = [int]"${{ github.event.inputs.min_free_gb }}"
+          $drive = Get-PSDrive -Name ((Get-Location).Drive.Name)
+          $freeGb = [math]::Round($drive.Free / 1GB, 1)
+          Write-Host "Free disk on drive $($drive.Name) after cleanup: $freeGb GB (need >= $minGb GB)"
+          if ($freeGb -lt $minGb) {
+            Write-Error "Not enough free disk even after cleanup ($freeGb GB free, need >= $minGb GB). O3DE's prebuilt engine install needs ~40 GB. Point runner_label at a self-hosted or larger runner."
+            exit 1
+          }
+
+      - name: Find the current Windows installer URL
+        id: find_installer
+        shell: pwsh
+        run: |
+          $fallback = "https://o3debinaries.org/main/Latest/Windows/o3de_installer_2605_0.exe"
+          try {
+            $page = Invoke-WebRequest -Uri "https://o3debinaries.org/download/windows.html" -UseBasicParsing -TimeoutSec 30
+            $match = [regex]::Match($page.Content, 'https://o3debinaries\.org/[^"''\s]+o3de_installer[^"''\s]*\.exe')
+            $url = if ($match.Success) { $match.Value } else { $fallback }
+          } catch {
+            Write-Host "Could not scrape the download page ($_) — using last-known URL."
+            $url = $fallback
+          }
+          Write-Host "Installer URL: $url"
+          echo "url=$url" >> $env:GITHUB_OUTPUT
+
+      - name: Download the O3DE installer
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ steps.find_installer.outputs.url }}" -OutFile "$env:RUNNER_TEMP\o3de_installer.exe" -TimeoutSec 300
+          $sizeMb = [math]::Round((Get-Item "$env:RUNNER_TEMP\o3de_installer.exe").Length / 1MB, 1)
+          Write-Host "Downloaded installer: $sizeMb MB"
+          if ($sizeMb -lt 10) {
+            Write-Error "Downloaded file is suspiciously small ($sizeMb MB) — probably not a real installer. Aborting."
+            exit 1
+          }
+
+      - name: Attempt an unattended install (tries several silent-flag conventions)
+        id: install
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\o3de_installer.exe"
+          # See header note #2 — the real flag is unconfirmed, so this tries
+          # the common conventions in order and checks for a real o3de.exe
+          # afterward rather than trusting any single exit code.
+          $attempts = @("/S", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", "/quiet /norestart", "--silent")
+          $found = $null
+          foreach ($flags in $attempts) {
+            Write-Host "Trying: $installer $flags"
+            try {
+              $proc = Start-Process -FilePath $installer -ArgumentList $flags -PassThru -ErrorAction Stop
+              $proc | Wait-Process -Timeout 1200 -ErrorAction SilentlyContinue
+              if (-not $proc.HasExited) {
+                Write-Host "Install did not finish in time with flags '$flags' — killing and trying the next."
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                continue
+              }
+            } catch {
+              Write-Host "Flags '$flags' failed to launch: $_"
+              continue
+            }
+            $found = Get-ChildItem -Path "C:\", "$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA" `
+              -Recurse -Filter "o3de.exe" -ErrorAction SilentlyContinue -Depth 6 | Select-Object -First 1
+            if ($found) {
+              Write-Host "Found o3de.exe after using flags '$flags': $($found.FullName)"
+              break
+            }
+          }
+          if (-not $found) {
+            Write-Error "No o3de.exe found on disk after every silent-install attempt. The installer's real unattended flag is still unconfirmed — see this workflow's header note #2. Inspect the runner logs / consider running the installer interactively once to determine the correct flag."
+            exit 1
+          }
+          echo "o3de_exe=$($found.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Register the engine and the demo project
+        shell: pwsh
+        run: |
+          $o3de = "${{ steps.install.outputs.o3de_exe }}"
+          & $o3de register --this-engine
+          & $o3de register --project-path "${{ github.workspace }}\templates\o3de"
+
+      - name: Run Asset Processor against the project (the real verification)
+        id: asset_processor
+        shell: pwsh
+        run: |
+          $engineDir = Split-Path (Split-Path "${{ steps.install.outputs.o3de_exe }}" -Parent) -Parent
+          $batch = Get-ChildItem -Path $engineDir -Recurse -Filter "AssetProcessorBatch.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $batch) {
+            Write-Error "AssetProcessorBatch.exe not found under the installed engine at $engineDir."
+            exit 1
+          }
+          Write-Host "Running $($batch.FullName) against templates/o3de..."
+          & $batch.FullName --project-path "${{ github.workspace }}\templates\o3de" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\asset_processor.log"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "AssetProcessorBatch exited with code $LASTEXITCODE — see the uploaded log."
+            exit 1
+          }
+          Write-Host "Asset Processor completed successfully — the engine genuinely ingested this project's files."
+
+      - name: Upload Asset Processor log (always, even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: o3de-asset-processor-log
+          path: ${{ runner.temp }}\asset_processor.log
+          if-no-files-found: ignore

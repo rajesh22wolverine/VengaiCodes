@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Download, Loader2, PartyPopper, FileText,
   Code2, TestTube2, Palette, Layers, CheckCircle2, Package,
-  AlertCircle, ExternalLink, Monitor, BookOpen, Smartphone, Terminal
+  AlertCircle, ExternalLink, Monitor, BookOpen, Smartphone, Terminal,
+  Gamepad2
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
@@ -68,12 +69,26 @@ export default function ExportScreen() {
   const [isTriggeringLinux, setIsTriggeringLinux] = useState(false);
   const [linuxArtifacts, setLinuxArtifacts] = useState<BuildArtifact[]>([]);
 
+  const [swiftuiBuildStatus, setSwiftuiBuildStatus] = useState<BuildStatus>("idle");
+  const [swiftuiBuildRunUrl, setSwiftuiBuildRunUrl] = useState<string | null>(null);
+  const [isTriggeringSwiftui, setIsTriggeringSwiftui] = useState(false);
+  const [swiftuiArtifacts, setSwiftuiArtifacts] = useState<BuildArtifact[]>([]);
+
+  const [o3deBuildStatus, setO3deBuildStatus] = useState<BuildStatus>("idle");
+  const [o3deBuildRunUrl, setO3deBuildRunUrl] = useState<string | null>(null);
+  const [isTriggeringO3de, setIsTriggeringO3de] = useState(false);
+  const [o3deArtifacts, setO3deArtifacts] = useState<BuildArtifact[]>([]);
+
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollStartedAtRef = useRef<number | null>(null);
   const androidPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const androidPollStartedAtRef = useRef<number | null>(null);
   const linuxPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const linuxPollStartedAtRef = useRef<number | null>(null);
+  const swiftuiPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const swiftuiPollStartedAtRef = useRef<number | null>(null);
+  const o3dePollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const o3dePollStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     loadSummary();
@@ -81,6 +96,8 @@ export default function ExportScreen() {
       stopPolling();
       stopAndroidPolling();
       stopLinuxPolling();
+      stopSwiftuiPolling();
+      stopO3dePolling();
     };
   }, [projectId]);
 
@@ -441,6 +458,188 @@ export default function ExportScreen() {
       setLinuxBuildStatus("idle");
     } finally {
       setIsTriggeringLinux(false);
+    }
+  };
+
+  // ── SwiftUI Xcode project build ──
+
+  const stopSwiftuiPolling = () => {
+    if (swiftuiPollIntervalRef.current) {
+      clearInterval(swiftuiPollIntervalRef.current);
+      swiftuiPollIntervalRef.current = null;
+    }
+  };
+
+  const checkSwiftuiBuildStatus = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/swiftui/${projectId}/status`);
+      setSwiftuiBuildRunUrl(data.run_url || null);
+
+      if (data.status === "completed") {
+        stopSwiftuiPolling();
+        if (data.conclusion === "success") {
+          setSwiftuiBuildStatus("completed");
+          toast.success("Your Xcode project is ready! 🐯🍎");
+          fetchSwiftuiArtifacts();
+        } else {
+          setSwiftuiBuildStatus("failed");
+          toast.error("Build failed. Check the build log for details.");
+        }
+        return;
+      }
+
+      setSwiftuiBuildStatus(data.status === "queued" ? "queued" : "in_progress");
+
+      if (
+        swiftuiPollStartedAtRef.current &&
+        Date.now() - swiftuiPollStartedAtRef.current > POLL_TIMEOUT_MS
+      ) {
+        stopSwiftuiPolling();
+        toast.error("Build is taking longer than expected. Check the log directly.");
+      }
+    } catch (error: any) {
+      console.error("Status check failed:", error);
+    }
+  };
+
+  const fetchSwiftuiArtifacts = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/swiftui/${projectId}/artifacts`);
+      setSwiftuiArtifacts(data.artifacts || []);
+    } catch (error: any) {
+      console.error("Failed to fetch artifacts:", error);
+    }
+  };
+
+  const downloadSwiftuiArtifact = async (artifactId: number, name: string) => {
+    try {
+      const response = await apiClient.get(
+        `/packaging/swiftui/${projectId}/artifacts/${artifactId}/download`,
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `${artifactDownloadName(appName || summary?.name || "", name)}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Downloaded! Open the .xcodeproj inside in Xcode 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download the Xcode project.");
+    }
+  };
+
+  const handleTriggerSwiftuiBuild = async () => {
+    setIsTriggeringSwiftui(true);
+    try {
+      await apiClient.post("/packaging/swiftui/build", { project_id: projectId });
+      toast.success("Build started! This takes 5-15 minutes 🐯🏗️");
+      setSwiftuiBuildStatus("queued");
+      swiftuiPollStartedAtRef.current = Date.now();
+      stopSwiftuiPolling();
+      swiftuiPollIntervalRef.current = setInterval(checkSwiftuiBuildStatus, POLL_INTERVAL_MS);
+      checkSwiftuiBuildStatus();
+    } catch (error: any) {
+      toast.error(
+        error.message ||
+          "Failed to start build. This project may not be using SwiftUI, or packaging isn't configured yet."
+      );
+      setSwiftuiBuildStatus("idle");
+    } finally {
+      setIsTriggeringSwiftui(false);
+    }
+  };
+
+  // ── O3DE project package (validate + zip, no engine compile) ──
+
+  const stopO3dePolling = () => {
+    if (o3dePollIntervalRef.current) {
+      clearInterval(o3dePollIntervalRef.current);
+      o3dePollIntervalRef.current = null;
+    }
+  };
+
+  const checkO3deBuildStatus = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/o3de/${projectId}/status`);
+      setO3deBuildRunUrl(data.run_url || null);
+
+      if (data.status === "completed") {
+        stopO3dePolling();
+        if (data.conclusion === "success") {
+          setO3deBuildStatus("completed");
+          toast.success("Your O3DE project package is ready! 🐯📦");
+          fetchO3deArtifacts();
+        } else {
+          setO3deBuildStatus("failed");
+          toast.error("Packaging failed. Check the build log for details.");
+        }
+        return;
+      }
+
+      setO3deBuildStatus(data.status === "queued" ? "queued" : "in_progress");
+
+      if (
+        o3dePollStartedAtRef.current &&
+        Date.now() - o3dePollStartedAtRef.current > POLL_TIMEOUT_MS
+      ) {
+        stopO3dePolling();
+        toast.error("Packaging is taking longer than expected. Check the log directly.");
+      }
+    } catch (error: any) {
+      console.error("Status check failed:", error);
+    }
+  };
+
+  const fetchO3deArtifacts = async () => {
+    try {
+      const { data } = await apiClient.get(`/packaging/o3de/${projectId}/artifacts`);
+      setO3deArtifacts(data.artifacts || []);
+    } catch (error: any) {
+      console.error("Failed to fetch artifacts:", error);
+    }
+  };
+
+  const downloadO3deArtifact = async (artifactId: number, name: string) => {
+    try {
+      const response = await apiClient.get(
+        `/packaging/o3de/${projectId}/artifacts/${artifactId}/download`,
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `${artifactDownloadName(appName || summary?.name || "", name)}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Downloaded! Open the project in your own O3DE Editor 🐯");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download the project.");
+    }
+  };
+
+  const handleTriggerO3deBuild = async () => {
+    setIsTriggeringO3de(true);
+    try {
+      await apiClient.post("/packaging/o3de/package", { project_id: projectId });
+      toast.success("Packaging started! This validates and zips your project (a few minutes) 🐯🏗️");
+      setO3deBuildStatus("queued");
+      o3dePollStartedAtRef.current = Date.now();
+      stopO3dePolling();
+      o3dePollIntervalRef.current = setInterval(checkO3deBuildStatus, POLL_INTERVAL_MS);
+      checkO3deBuildStatus();
+    } catch (error: any) {
+      toast.error(
+        error.message ||
+          "Failed to start packaging. This project may not be using O3DE, or packaging isn't configured yet."
+      );
+      setO3deBuildStatus("idle");
+    } finally {
+      setIsTriggeringO3de(false);
     }
   };
 
@@ -1124,6 +1323,331 @@ export default function ExportScreen() {
                     )}
                     <button
                       onClick={() => setAndroidBuildStatus("idle")}
+                      className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors"
+                    >
+                      Try Again
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+
+          {/* SwiftUI Xcode Project — build & poll. Unconditional like the
+              cards above; the backend 400s with a clear message if this
+              project isn't actually using the SwiftUI frontend. */}
+          <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35 }}
+              className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mt-6"
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <Smartphone className="w-4 h-4 text-[var(--color-primary)]" />
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  iOS (Xcode Project)
+                </h3>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-warning-light)] text-[var(--color-warning)] font-medium">
+                  Experimental
+                </span>
+              </div>
+
+              <AnimatePresence mode="wait">
+                {swiftuiBuildStatus === "idle" && (
+                  <motion.div
+                    key="swiftui-idle"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                  >
+                    <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
+                      Generates a real Xcode project (via XcodeGen) and builds it on a real
+                      macOS runner to prove it compiles for the iOS Simulator. This does NOT
+                      produce a signed, installable .ipa — open the downloaded project in
+                      Xcode and sign it with your own Apple Developer account to run on a
+                      device. SwiftUI projects only.
+                    </p>
+                    <button
+                      onClick={handleTriggerSwiftuiBuild}
+                      disabled={isTriggeringSwiftui}
+                      className="w-full py-3 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      {isTriggeringSwiftui ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Package className="w-4 h-4" />
+                      )}
+                      Build &amp; Verify Xcode Project
+                    </button>
+                  </motion.div>
+                )}
+
+                {(swiftuiBuildStatus === "queued" || swiftuiBuildStatus === "in_progress") && (
+                  <motion.div
+                    key="swiftui-building"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col items-center gap-3 py-4"
+                  >
+                    <Loader2 className="w-6 h-6 text-[var(--color-primary)] animate-spin" />
+                    <p className="text-sm text-[var(--color-text-primary)] font-medium">
+                      {swiftuiBuildStatus === "queued" ? "Build queued..." : "Building on macOS..."}
+                    </p>
+                    <p className="text-xs text-[var(--color-text-tertiary)] text-center">
+                      This usually takes 5-15 minutes. Feel free to leave this page —
+                      come back and check later.
+                    </p>
+                    {swiftuiBuildRunUrl && (
+                      <a
+                        href={swiftuiBuildRunUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                      >
+                        View live build log <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </motion.div>
+                )}
+
+                {swiftuiBuildStatus === "completed" && (
+                  <motion.div
+                    key="swiftui-completed"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-2 text-[var(--color-success)]">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <p className="text-sm font-medium">Simulator build succeeded!</p>
+                    </div>
+                    {swiftuiArtifacts.length > 0 ? (
+                      <div className="space-y-2">
+                        {swiftuiArtifacts.map((artifact) => (
+                          <div
+                            key={artifact.id}
+                            className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-mono text-[var(--color-text-primary)] truncate">
+                                {artifact.name}
+                              </p>
+                              <p className="text-xs text-[var(--color-text-tertiary)]">
+                                {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => downloadSwiftuiArtifact(artifact.id, artifact.name)}
+                              className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Download
+                            </button>
+                          </div>
+                        ))}
+                        <p className="text-xs text-[var(--color-text-tertiary)] text-center pt-1">
+                          Files download as .zip — extract, then open the .xcodeproj in Xcode.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[var(--color-text-tertiary)]">
+                        Build succeeded but no artifact was found. Check the build log.
+                      </p>
+                    )}
+                  </motion.div>
+                )}
+
+                {swiftuiBuildStatus === "failed" && (
+                  <motion.div
+                    key="swiftui-failed"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-2 text-[var(--color-error)]">
+                      <AlertCircle className="w-4 h-4" />
+                      <p className="text-sm font-medium">Build failed</p>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                      Something went wrong during packaging — this is an experimental
+                      feature and failures are expected while it's being refined.
+                    </p>
+                    {swiftuiBuildRunUrl && (
+                      <a
+                        href={swiftuiBuildRunUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                      >
+                        View build log for details <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                    <button
+                      onClick={() => setSwiftuiBuildStatus("idle")}
+                      className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors"
+                    >
+                      Try Again
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+
+          {/* O3DE Project — validate & zip, no engine compile. Unconditional
+              like the cards above; the backend 400s with a clear message if
+              this project isn't actually using the O3DE frontend. */}
+          <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+              className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mt-6"
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <Gamepad2 className="w-4 h-4 text-[var(--color-primary)]" />
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  O3DE Project
+                </h3>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-warning-light)] text-[var(--color-warning)] font-medium">
+                  Experimental
+                </span>
+              </div>
+
+              <AnimatePresence mode="wait">
+                {o3deBuildStatus === "idle" && (
+                  <motion.div
+                    key="o3de-idle"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                  >
+                    <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
+                      Validates your generated project.json, level, and Lua scripts, then zips
+                      the real O3DE project for download. This does NOT compile a game — a real
+                      O3DE engine build needs the full Editor (tens of GB) on your own machine.
+                      Open the downloaded project with your own O3DE install. O3DE projects only.
+                    </p>
+                    <button
+                      onClick={handleTriggerO3deBuild}
+                      disabled={isTriggeringO3de}
+                      className="w-full py-3 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm hover:bg-[var(--color-primary-light)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      {isTriggeringO3de ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Package className="w-4 h-4" />
+                      )}
+                      Validate &amp; Package Project
+                    </button>
+                  </motion.div>
+                )}
+
+                {(o3deBuildStatus === "queued" || o3deBuildStatus === "in_progress") && (
+                  <motion.div
+                    key="o3de-building"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col items-center gap-3 py-4"
+                  >
+                    <Loader2 className="w-6 h-6 text-[var(--color-primary)] animate-spin" />
+                    <p className="text-sm text-[var(--color-text-primary)] font-medium">
+                      {o3deBuildStatus === "queued" ? "Packaging queued..." : "Validating and zipping..."}
+                    </p>
+                    <p className="text-xs text-[var(--color-text-tertiary)] text-center">
+                      This usually takes a few minutes. Feel free to leave this page —
+                      come back and check later.
+                    </p>
+                    {o3deBuildRunUrl && (
+                      <a
+                        href={o3deBuildRunUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                      >
+                        View live build log <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </motion.div>
+                )}
+
+                {o3deBuildStatus === "completed" && (
+                  <motion.div
+                    key="o3de-completed"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-2 text-[var(--color-success)]">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <p className="text-sm font-medium">Package ready!</p>
+                    </div>
+                    {o3deArtifacts.length > 0 ? (
+                      <div className="space-y-2">
+                        {o3deArtifacts.map((artifact) => (
+                          <div
+                            key={artifact.id}
+                            className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-mono text-[var(--color-text-primary)] truncate">
+                                {artifact.name}
+                              </p>
+                              <p className="text-xs text-[var(--color-text-tertiary)]">
+                                {(artifact.size_bytes / 1024 / 1024).toFixed(1)} MB
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => downloadO3deArtifact(artifact.id, artifact.name)}
+                              className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Download
+                            </button>
+                          </div>
+                        ))}
+                        <p className="text-xs text-[var(--color-text-tertiary)] text-center pt-1">
+                          Files download as .zip — open the project inside with your own O3DE Editor.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[var(--color-text-tertiary)]">
+                        Packaging succeeded but no artifact was found. Check the build log.
+                      </p>
+                    )}
+                  </motion.div>
+                )}
+
+                {o3deBuildStatus === "failed" && (
+                  <motion.div
+                    key="o3de-failed"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-2 text-[var(--color-error)]">
+                      <AlertCircle className="w-4 h-4" />
+                      <p className="text-sm font-medium">Packaging failed</p>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                      Something went wrong during packaging — this is an experimental
+                      feature and failures are expected while it's being refined.
+                    </p>
+                    {o3deBuildRunUrl && (
+                      <a
+                        href={o3deBuildRunUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                      >
+                        View build log for details <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                    <button
+                      onClick={() => setO3deBuildStatus("idle")}
                       className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors"
                     >
                       Try Again

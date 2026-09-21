@@ -1,34 +1,34 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — Android Packaging API Routes (per-project APK builds)
-#  api/v1/android_packaging.py — Trigger, poll, and download
-#  GitHub Actions-built Android APKs
+#  VengaiCode — SwiftUI Packaging API Routes (per-project)
+#  api/v1/swiftui_packaging.py — Trigger, poll, and download a real,
+#  CI-verified Xcode project for a SwiftUI project.
 #
-#  Mirrors packaging.py (Windows installer builds) but targets one of
-#  FOUR Android workflows, chosen by the project's frontend framework
-#  (see _workflow_for_stack): a "web" category frontend (React/Vue/
-#  Angular/Svelte/Plain HTML-JS) gets wrapped in a Capacitor WebView
-#  (build-android-installer.yml, CONFIRMED WORKING — see that file's
-#  header); Jetpack Compose and Flutter get REAL native (non-WebView)
-#  builds since their codegen already emits a complete native project,
-#  not a web bundle (build-android-native-compose.yml / -flutter.yml);
-#  Godot gets a real game-engine export (build-android-game-godot.yml).
-#  O3DE and SwiftUI have no Android pipeline here (O3DE's engine build
-#  is too heavy for CI; SwiftUI targets iOS, not Android) and keep
-#  400ing in THIS router — each has its own dedicated packaging router
-#  instead (o3de_packaging.py / swiftui_packaging.py), same reasoning
-#  as the split below. See stack_matrix.CI_BUILDABLE_GAME_ENGINES for
-#  why Godot but not O3DE gets a real CI game-engine build.
+#  Deliberately its own router, not folded into android_packaging.py/
+#  packaging.py (mirrors o3de_packaging.py's reasoning): iOS needs a
+#  macos-latest runner, a different workflow shape, and a different
+#  honest ceiling than any of the Windows/Linux/Android pipelines, so
+#  giving it its own module keeps that ceiling explicit instead of
+#  bolting an "if swiftui" branch onto code that otherwise assumes a
+#  Tauri/Capacitor WebView wrap.
 #
-#  All four workflows call back to GET /packaging/{project_id}/files
-#  to fetch the code to package — that endpoint is platform-agnostic.
+#  What build-swiftui-project.yml DOES do: fetch the project's generated
+#  files (real .swift screens + a real XcodeGen project.yml — see
+#  app/ai/codegen/frontend/swiftui.py), run `xcodegen generate` to turn
+#  that into a real .xcodeproj, then `xcodebuild build` against an iOS
+#  Simulator destination (CODE_SIGNING_ALLOWED=NO) to prove it actually
+#  compiles. On success it zips the real project (source + generated
+#  .xcodeproj) as the downloadable artifact.
 #
-#  HONEST STATUS: build-android-installer.yml is CONFIRMED WORKING
-#  (one real successful end-to-end run). The three new native/game
-#  workflows are written but UNTESTED end-to-end — no Android SDK/
-#  Gradle/Flutter SDK/Godot binary is available in this environment to
-#  live-verify them, same class of limitation documented in
-#  jetpack_compose.py's and godot.py's headers. Requires the same
-#  GITHUB_TOKEN / GITHUB_REPO / BUILD_SECRET settings for all four —
+#  HONEST CEILING: this proves a *simulator* build compiles — it does
+#  NOT produce a signed, device-installable .ipa. Code signing needs the
+#  end user's own Apple Developer account/certificates/provisioning
+#  profiles, which VengaiCode has no access to; that step stays manual
+#  (Xcode's Signing & Capabilities tab, after opening the downloaded
+#  project — see the generated setup_commands() instructions).
+#
+#  HONEST STATUS: written but UNTESTED end-to-end — no macOS runner run
+#  has ever been triggered from here. Requires the same GITHUB_TOKEN/
+#  GITHUB_REPO/BUILD_SECRET settings as every other packaging module —
 #  no separate configuration needed.
 # ═══════════════════════════════════════════════════════════════
 
@@ -41,7 +41,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.stack_matrix import CI_BUILDABLE_GAME_ENGINES, FRONTEND_FRAMEWORKS, get_project_stack
+from app.ai.stack_matrix import get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
@@ -49,32 +49,12 @@ from app.core.naming import safe_filename
 from app.models.project import Project
 from app.models.user import User
 
-logger = logging.getLogger("vengaicode.android_packaging")
+logger = logging.getLogger("vengaicode.swiftui_packaging")
 router = APIRouter()
 
 GITHUB_API = "https://api.github.com"
-
-# frontend_framework -> (workflow YAML file, repository_dispatch event_type).
-# "web" category frontends (react/vue/angular/svelte/html_css_js) all share
-# one entry, added below the literal dict since there are 5 of them and
-# they all route to the same Capacitor pipeline.
-_NATIVE_WORKFLOW_ROUTES: dict[str, tuple[str, str]] = {
-    "jetpack_compose": ("build-android-native-compose.yml", "build-android-native-compose-app"),
-    "flutter": ("build-android-native-flutter.yml", "build-android-native-flutter-app"),
-}
-_WEB_WORKFLOW: tuple[str, str] = ("build-android-installer.yml", "build-android-installer-app")
-_GODOT_WORKFLOW: tuple[str, str] = ("build-android-game-godot.yml", "build-android-game-godot-app")
-
-
-def _workflow_for_stack(stack_info: dict) -> tuple[str, str] | None:
-    """Returns (workflow_file, dispatch_event_type), or None if this
-    project's frontend has no automated Android build pipeline."""
-    fe = stack_info["frontend_framework"]
-    if FRONTEND_FRAMEWORKS[fe]["category"] == "web":
-        return _WEB_WORKFLOW
-    if fe in CI_BUILDABLE_GAME_ENGINES:
-        return _GODOT_WORKFLOW
-    return _NATIVE_WORKFLOW_ROUTES.get(fe)
+_WORKFLOW_FILE = "build-swiftui-project.yml"
+_EVENT_TYPE = "build-swiftui-project-app"
 
 
 # ─── Schemas ───
@@ -89,12 +69,32 @@ class BuildStatusResponse(BaseModel):
     conclusion: str | None = None  # "success" | "failure" | None
 
 
+async def _get_swiftui_project(project_id: str, user: User, db: AsyncSession) -> Project:
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
+    if get_project_stack(project)["frontend_framework"] != "swiftui":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This project isn't using SwiftUI — nothing to package here.",
+        )
+    return project
+
+
 # ═══════════════════════════════════════════════════════════════
-#  POST /build — trigger an Android APK build
+#  POST /build — trigger a simulator-verified Xcode project build
 # ═══════════════════════════════════════════════════════════════
 @router.post(
     "/build",
-    summary="Trigger an Android APK build via GitHub Actions",
+    summary="Build and verify this project's Xcode project via GitHub Actions",
 )
 async def trigger_build(
     payload: TriggerBuildRequest,
@@ -102,9 +102,11 @@ async def trigger_build(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Triggers the build-android-installer.yml GitHub Actions workflow
-    via the repository_dispatch API. The workflow then calls back to
-    GET /packaging/{project_id}/files to fetch the code to package.
+    Triggers build-swiftui-project.yml via repository_dispatch. That
+    workflow calls back to GET /packaging/{project_id}/files (the same
+    platform-agnostic endpoint every other packaging workflow uses),
+    runs `xcodegen generate` + a simulator `xcodebuild build`, and zips
+    the real project on success.
     """
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -112,16 +114,7 @@ async def trigger_build(
             detail="Packaging is not configured yet (missing GitHub credentials).",
         )
 
-    result = await db.execute(
-        select(Project).where(
-            Project.id == payload.project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_swiftui_project(payload.project_id, user, db)
 
     if not project.codegen_data or not project.codegen_data.get("user_approved"):
         raise HTTPException(
@@ -140,20 +133,6 @@ async def trigger_build(
             ),
         )
 
-    stack_info = get_project_stack(project)
-    route = _workflow_for_stack(stack_info)
-    if route is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "This project's frontend doesn't have an automated Android build pipeline yet "
-                "(SwiftUI is iOS-only). For Open 3D Engine, its full build is too heavy to run "
-                "in CI — use POST /api/v1/packaging/o3de/package instead, which validates and "
-                "zips a real project for you to open/build in your own O3DE Editor."
-            ),
-        )
-    _, event_type = route
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/dispatches",
@@ -162,13 +141,15 @@ async def trigger_build(
                 "Accept": "application/vnd.github+json",
             },
             json={
-                "event_type": event_type,
+                "event_type": _EVENT_TYPE,
                 "client_payload": {"project_id": payload.project_id},
             },
         )
 
     if response.status_code != 204:
-        logger.error(f"Failed to trigger build: {response.status_code} {response.text}")
+        logger.error(
+            f"Failed to trigger SwiftUI build: {response.status_code} {response.text}"
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to start the build. Please try again.",
@@ -176,7 +157,12 @@ async def trigger_build(
 
     return {
         "success": True,
-        "message": "Build started! This takes 10-25 minutes. Check status for progress. 🐯🏗️",
+        "message": (
+            "Build started! This runs xcodegen + a simulator xcodebuild on a real macOS "
+            "runner (a few minutes) to prove your app compiles — it does NOT produce a "
+            "signed .ipa. Open the downloaded project in Xcode to run on a device with "
+            "your own Apple Developer account. 🐯🍎"
+        ),
     }
 
 
@@ -186,22 +172,14 @@ async def trigger_build(
 @router.get(
     "/{project_id}/status",
     response_model=BuildStatusResponse,
-    summary="Check the status of the most recent Android APK build",
+    summary="Check the status of the most recent SwiftUI build",
 )
 async def get_build_status(
     project_id: str,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    await _get_swiftui_project(project_id, user, db)
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -209,15 +187,10 @@ async def get_build_status(
             detail="Packaging is not configured yet.",
         )
 
-    route = _workflow_for_stack(get_project_stack(project))
-    if route is None:
-        return BuildStatusResponse(status="not_started")
-    workflow_file, _ = route
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{workflow_file}/runs",
+            f"{_WORKFLOW_FILE}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
@@ -247,26 +220,18 @@ async def get_build_status(
 
 
 # ═══════════════════════════════════════════════════════════════
-#  GET /{project_id}/artifacts — list available APK artifacts
+#  GET /{project_id}/artifacts — list the packaged Xcode project zip
 # ═══════════════════════════════════════════════════════════════
 @router.get(
     "/{project_id}/artifacts",
-    summary="List available downloadable artifacts for a completed Android build",
+    summary="List available downloadable artifacts for a completed SwiftUI build",
 )
 async def list_build_artifacts(
     project_id: str,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_swiftui_project(project_id, user, db)
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -274,18 +239,10 @@ async def list_build_artifacts(
             detail="Packaging is not configured yet.",
         )
 
-    route = _workflow_for_stack(get_project_stack(project))
-    if route is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No completed build found for this project. Trigger a build first.",
-        )
-    workflow_file, _ = route
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         runs_response = await client.get(
             f"{GITHUB_API}/repos/{settings.GITHUB_REPO}/actions/workflows/"
-            f"{workflow_file}/runs",
+            f"{_WORKFLOW_FILE}/runs",
             headers={
                 "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
                 "Accept": "application/vnd.github+json",
@@ -298,7 +255,7 @@ async def list_build_artifacts(
         if matching is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No completed build found for this project. Trigger a build first.",
+                detail="No completed build found for this project. Trigger one first.",
             )
 
         run_id = matching["id"]
@@ -315,7 +272,7 @@ async def list_build_artifacts(
     if not artifacts:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Build completed but no APK artifact was found.",
+            detail="Build completed but no project zip artifact was found.",
         )
 
     return {
@@ -337,7 +294,7 @@ async def list_build_artifacts(
 # ═══════════════════════════════════════════════════════════════
 @router.get(
     "/{project_id}/artifacts/{artifact_id}/download",
-    summary="Stream a specific Android build artifact for direct download",
+    summary="Stream the packaged Xcode project zip for direct download",
 )
 async def download_build_artifact(
     project_id: str,
@@ -345,15 +302,7 @@ async def download_build_artifact(
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user.id,
-        )
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    project = await _get_swiftui_project(project_id, user, db)
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -383,7 +332,7 @@ async def download_build_artifact(
                 async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
                     yield chunk
 
-    filename = f"{safe_filename(project.name)}-android-{artifact_id}.zip"
+    filename = f"{safe_filename(project.name)}-swiftui-{artifact_id}.zip"
     return StreamingResponse(
         stream_artifact(),
         media_type="application/zip",

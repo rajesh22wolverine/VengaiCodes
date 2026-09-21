@@ -1,0 +1,128 @@
+# ═══════════════════════════════════════════════════════════════
+#  VengaiCode — O3DE Full From-Source Engine Build (EXPERIMENTAL)
+#
+#  This is the literal "compile the real O3DE engine" pipeline —
+#  distinct from package-o3de-project.yml (validate + zip, no engine)
+#  and build-o3de-prebuilt-engine.yml (installs a PRECOMPILED engine,
+#  builds only the project against it). This one clones o3de/o3de and
+#  builds the engine itself from source, per O3DE's own documented
+#  Windows build steps (github.com/o3de/o3de/blob/development/README.md,
+#  confirmed current at the time this workflow was written):
+#
+#    git lfs install && git clone https://github.com/o3de/o3de.git
+#    cmake -B <build> -S <source> -G "Visual Studio 16" -DLY_3RDPARTY_PATH=<pkgs>
+#    scripts\o3de.bat register --this-engine
+#    scripts\o3de.bat register --project-path <project>
+#    cmake -B <project build> -S <project source> -G "Visual Studio 16"
+#    cmake --build <project build> --target <Name>.GameLauncher Editor --config profile -- /m
+#
+#  HONEST STATUS — READ BEFORE RUNNING: O3DE's own published minimum is
+#  100+ GB free disk, an 8-core CPU, and 16+ GB RAM just to build the
+#  engine (o3de.org/download's stated system requirements). A standard
+#  GitHub-hosted runner has ~14 GB free disk. The "Disk-space gate" step
+#  below checks this FIRST and fails immediately with a clear message
+#  rather than spending hours cloning/compiling only to run out of disk —
+#  on every runner available to this repo today, that gate is expected
+#  to fail. This workflow exists so the day a self-hosted runner or a
+#  larger GitHub-hosted runner (2TB+ disk) is available, pointing
+#  `runner_label` at it is the only change needed — the build steps
+#  themselves are real, not placeholders.
+#
+#  Deliberately workflow_dispatch-only (not repository_dispatch), and
+#  NOT wired to the backend or any per-user "package my project" button —
+#  triggering a build this expensive from ordinary product usage would
+#  be irresponsible before it's ever been proven to complete once. Run
+#  it manually (Actions tab -> this workflow -> Run workflow) once real
+#  hardware is available.
+# ═══════════════════════════════════════════════════════════════
+
+name: Build O3DE From Source (Experimental)
+run-name: "O3DE from-source build (experimental) — ${{ github.event.inputs.runner_label || 'windows-latest' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: >-
+          Runner to build on. Default windows-latest is expected to FAIL
+          the disk-space gate immediately (see header) — point this at a
+          self-hosted runner or a larger GitHub-hosted runner once one
+          exists.
+        required: false
+        default: "windows-latest"
+      min_free_gb:
+        description: "Minimum free disk (GB) required to proceed before attempting anything. O3DE's own documented minimum is 100+ GB."
+        required: false
+        default: "120"
+
+jobs:
+  build-from-source:
+    runs-on: ${{ github.event.inputs.runner_label || 'windows-latest' }}
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository (for templates/o3de/ as the demo project)
+        uses: actions/checkout@v4
+
+      - name: Disk-space gate — fail fast instead of grinding for hours
+        shell: pwsh
+        run: |
+          $minGb = [int]"${{ github.event.inputs.min_free_gb }}"
+          $drive = Get-PSDrive -Name ((Get-Location).Drive.Name)
+          $freeGb = [math]::Round($drive.Free / 1GB, 1)
+          Write-Host "Free disk on drive $($drive.Name): $freeGb GB (need >= $minGb GB)"
+          if ($freeGb -lt $minGb) {
+            Write-Error "Not enough free disk space ($freeGb GB free, need >= $minGb GB). O3DE's own documented minimum for building from source is 100+ GB free disk (see o3de.org/download). This is EXPECTED to fail on a standard GitHub-hosted runner (~14 GB free) -- that is exactly what this gate is for: failing in seconds instead of after hours of cloning/compiling. Re-run with runner_label pointed at a self-hosted runner or a larger GitHub-hosted runner with enough disk."
+            exit 1
+          }
+          Write-Host "Disk gate passed -- proceeding with a real from-source build attempt."
+
+      - name: Clone o3de/o3de (with LFS)
+        shell: bash
+        run: |
+          git lfs install
+          git clone --depth 1 https://github.com/o3de/o3de.git "$RUNNER_TEMP/o3de-engine"
+
+      - name: Configure the engine (CMake)
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          cmake -B "$env:RUNNER_TEMP\o3de-build" -S "$env:RUNNER_TEMP\o3de-engine" `
+            -G "Visual Studio 17 2022" `
+            -DLY_3RDPARTY_PATH="$env:RUNNER_TEMP\o3de-3rdparty"
+          # Long step: CMake also downloads/builds the engine's 3rdParty
+          # package set on first configure if LY_3RDPARTY_PATH is empty.
+
+      - name: Register the built engine
+        shell: cmd
+        working-directory: ${{ runner.temp }}\o3de-engine
+        run: scripts\o3de.bat register --this-engine
+
+      - name: Register VengaiCode's O3DE template as the demo project
+        shell: cmd
+        working-directory: ${{ runner.temp }}\o3de-engine
+        run: scripts\o3de.bat register --project-path "${{ github.workspace }}\templates\o3de"
+
+      - name: Configure the project build
+        shell: pwsh
+        run: |
+          cmake -B "$env:RUNNER_TEMP\o3de-project-build" -S "${{ github.workspace }}\templates\o3de" `
+            -G "Visual Studio 17 2022"
+
+      - name: Build the Editor + GameLauncher targets
+        shell: pwsh
+        run: |
+          $projectName = (Get-Content "${{ github.workspace }}\templates\o3de\project.json" | ConvertFrom-Json).project_name
+          cmake --build "$env:RUNNER_TEMP\o3de-project-build" `
+            --target "$projectName.GameLauncher" Editor `
+            --config profile -- /m
+
+      - name: Upload build logs (always, even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: o3de-from-source-build-logs
+          path: |
+            ${{ runner.temp }}\o3de-build\**\*.log
+            ${{ runner.temp }}\o3de-project-build\**\*.log
+          if-no-files-found: ignore

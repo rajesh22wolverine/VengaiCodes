@@ -236,3 +236,11 @@ api_router.include_router(
     prefix="/packaging/o3de",
     tags=["Packaging"],
 )
+
+# ── Packaging (SwiftUI — real Xcode project, CI-verified simulator build) ──
+from app.api.v1 import swiftui_packaging
+api_router.include_router(
+    swiftui_packaging.router,
+    prefix="/packaging/swiftui",
+    tags=["Packaging"],
+)
