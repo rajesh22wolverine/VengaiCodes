@@ -29,6 +29,14 @@ api_router.include_router(
     tags=["Projects"],
 )
 
+# ── Reverse App — analyze an existing app/website into a project idea ──
+from app.api.v1 import reverse_engineer
+api_router.include_router(
+    reverse_engineer.router,
+    prefix="/reverse",
+    tags=["Reverse App"],
+)
+
 # ── Marketplace ──
 # /api/v1/marketplace/apps, /api/v1/marketplace/apps/{id}
 api_router.include_router(

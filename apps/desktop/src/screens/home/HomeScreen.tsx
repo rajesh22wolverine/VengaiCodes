@@ -1,18 +1,20 @@
 import { useDispatch, useSelector } from "react-redux";
 import { motion } from "framer-motion";
-import { Plus, Clock, CheckCircle2 } from "lucide-react";
+import { Plus, RefreshCw, Clock, CheckCircle2 } from "lucide-react";
 
 import { AppDispatch, RootState } from "@/store";
 import { setActiveTab } from "@/store/slices/uiSlice";
 import TopBar from "@/components/layout/TopBar";
 import CreateTab from "./CreateTab";
+import ReverseAppTab from "./ReverseAppTab";
 import PendingTab from "./PendingTab";
 import CompletedTab from "./CompletedTab";
 
-type TabId = "create" | "pending" | "completed";
+type TabId = "create" | "reverse" | "pending" | "completed";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "create", label: "Create", icon: Plus },
+  { id: "reverse", label: "Reverse App", icon: RefreshCw },
   { id: "pending", label: "Pending", icon: Clock },
   { id: "completed", label: "Completed", icon: CheckCircle2 },
 ];
@@ -90,6 +92,7 @@ export default function HomeScreen() {
 
       {/* Tab content */}
       {activeTab === "create" && <CreateTab />}
+      {activeTab === "reverse" && <ReverseAppTab />}
       {activeTab === "pending" && <PendingTab />}
       {activeTab === "completed" && <CompletedTab />}
     </div>

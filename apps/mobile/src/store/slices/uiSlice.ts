@@ -11,7 +11,7 @@ import {
 interface UIState {
   theme: "light" | "dark";
   isFirstLaunch: boolean;
-  activeTab: "create" | "pending" | "completed";
+  activeTab: "create" | "reverse" | "pending" | "completed";
   isLoading: boolean;
   loadingMessage: string;
   tigerExpression:
@@ -71,7 +71,7 @@ const uiSlice = createSlice({
       state.theme = state.theme === "light" ? "dark" : "light";
       setStoredTheme(state.theme);
     },
-    setActiveTab: (state, action: PayloadAction<"create" | "pending" | "completed">) => {
+    setActiveTab: (state, action: PayloadAction<"create" | "reverse" | "pending" | "completed">) => {
       state.activeTab = action.payload;
     },
     setLoading: (state, action: PayloadAction<{ isLoading: boolean; message?: string }>) => {

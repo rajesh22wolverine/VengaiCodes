@@ -4,7 +4,7 @@ interface UIState {
   theme: "light" | "dark";
   sidebarCollapsed: boolean;
   isFirstLaunch: boolean;
-  activeTab: "create" | "pending" | "completed";
+  activeTab: "create" | "reverse" | "pending" | "completed";
   isLoading: boolean;
   loadingMessage: string;
   tigerExpression:
@@ -53,7 +53,7 @@ const uiSlice = createSlice({
     setSidebarCollapsed: (state, action: PayloadAction<boolean>) => {
       state.sidebarCollapsed = action.payload;
     },
-    setActiveTab: (state, action: PayloadAction<"create" | "pending" | "completed">) => {
+    setActiveTab: (state, action: PayloadAction<"create" | "reverse" | "pending" | "completed">) => {
       state.activeTab = action.payload;
     },
     setLoading: (state, action: PayloadAction<{ isLoading: boolean; message?: string }>) => {
