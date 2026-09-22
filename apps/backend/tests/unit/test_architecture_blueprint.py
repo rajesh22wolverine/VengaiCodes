@@ -12,6 +12,7 @@ from app.api.v1.architecture import (
     ArchitectureDesign,
     DatabaseTable,
     TechStack,
+    build_architecture_prompt,
     build_erd,
     build_system_diagram,
 )
@@ -89,3 +90,18 @@ def test_architecture_design_defaults_adrs_to_empty_list_when_omitted():
         third_party_services=[],
     )
     assert arch.adrs == []
+
+
+# ─── Standing policy: default to open-source/free third-party services,
+# only name a paid one the user already said they have credentials for,
+# and always attribute it as the user's own account, never VengaiCode's ───
+def test_architecture_prompt_defaults_third_party_services_to_open_source():
+    prompt = build_architecture_prompt("MyApp", {"overview": "A todo app"}, [])
+    assert "open-source" in prompt
+    assert "self-host" in prompt.lower()
+    assert "user's own" in prompt.lower() or "users own" in prompt.lower()
+
+
+def test_architecture_prompt_never_implies_vengaicode_pays_for_paid_services():
+    prompt = build_architecture_prompt("MyApp", {"overview": "A todo app"}, [])
+    assert "never implying vengaicode provisions or pays for it" in prompt.lower()

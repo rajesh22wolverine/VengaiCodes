@@ -165,6 +165,16 @@ Generate a JSON object with EXACTLY these fields (no markdown, no extra text, ju
 Generate 3-6 database tables and 6-10 core API endpoints covering the key features.
 Favor simple, well-known, open-source technology suitable for the app's complexity.
 Use realistic REST conventions for API endpoint paths and methods.
+
+"third_party_services" MUST default to free, open-source, or self-hostable options the user
+doesn't need to pay for or already own an account with (e.g. self-hosted Postfix/an SMTP relay
+instead of SendGrid, self-hosted MinIO instead of S3, Firebase Cloud Messaging's free tier
+instead of a paid push provider). Only name a specific paid/subscription service if the user
+already said, in the overview/features/conversation above, that they have their own account or
+credentials for it — and even then, phrase it as using THEIR OWN key/account (e.g. "Stripe,
+using the user's own API key"), never implying VengaiCode provisions or pays for it. If a
+feature genuinely needs a paid capability with no realistic open-source substitute, name it
+plainly but flag that it requires the user's own subscription.
 Generate 3-5 ADRs (Architecture Decision Records) covering the most consequential choices
 (tech stack, database, one or two key structural decisions) — each a real trade-off with a
 stated rationale and the alternatives that were passed over, not a restatement of the summary.
