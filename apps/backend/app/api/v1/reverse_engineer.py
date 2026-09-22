@@ -6,7 +6,7 @@
 #  nothing downstream (wizard, requirements, architecture, codegen)
 #  needs to change to consume it.
 #
-#  Four source modes:
+#  Five source modes:
 #    - url: crawls the real site (httpx, same-origin, depth/time/page
 #      capped), fingerprints its actual tech stack from HTML/header/
 #      cookie signatures (the same technique tools like Wappalyzer use —
@@ -18,12 +18,21 @@
 #      files (package.json/requirements.txt/etc.), and regex-extracts
 #      real route declarations and real ORM model declarations from
 #      fetched source files — genuine matched source, not fabricated.
+#    - local_folder: the ONE mode that reaches an actually-installed app
+#      rather than something published online. VengaiCode's own Tauri
+#      desktop app reads a folder the user picks (real Rust filesystem
+#      access — see src-tauri's scan_local_folder command), uploads a
+#      bounded set of candidate files here, and if it's an Electron app
+#      (bundled as one app.asar archive), parse_asar() unpacks it
+#      server-side first. Same real extraction as repo mode after that
+#      (_analyze_source_text is shared by both). No commit_history: a
+#      local install has no VCS to read.
 #    - screenshots: reuses orchestrator.generate_vision() (the same
 #      Groq vision call already used for the UI/UX phase's design-to-
 #      code feature) once per image.
 #    - description: passed straight through — nothing to extract.
 #
-#  All four modes still end with one AI synthesis call that turns the
+#  All five modes still end with one AI synthesis call that turns the
 #  gathered material into a first-person raw_idea paragraph for the
 #  wizard, but ALSO return the raw structured facts (`reverse_engineering`)
 #  so the frontend can echo them straight into POST /projects and ground
@@ -50,6 +59,7 @@ import json
 import logging
 import re
 import socket
+import struct
 import time
 from urllib.parse import urljoin, urlparse
 
@@ -600,6 +610,117 @@ def _package_json_has_shell_dependency(content: str) -> bool:
     return any(name in deps for name in _SHELL_PACKAGE_NAMES)
 
 
+# ─── ASAR archive parsing (local_folder mode) ───
+# Electron apps ship their bundled JS/HTML/CSS as one app.asar file — an
+# uncompressed, unencrypted archive format (not DRM), so unpacking it is
+# just parsing, not circumventing anything. No existing dependency does
+# this here: the `asar` npm package is Node-only, and VengaiCode's own
+# desktop app is Tauri (Rust), not Electron, so there's nowhere upstream to
+# borrow the unpacking logic from — implemented directly against the
+# documented format instead of adding a dependency.
+MAX_ASAR_ENTRIES_CONSIDERED = 4000
+
+
+class AsarParseError(Exception):
+    pass
+
+
+def _read_pickle_uint32(buf: bytes, offset: int) -> int:
+    """Reads one Chromium-Pickle-encoded uint32 field at `offset`. On-disk
+    shape: [4 bytes LE payload_size][payload_size bytes payload] — for a
+    lone uint32 field payload_size is always exactly 4 (a uint32 payload
+    needs no padding, it's already 4-byte aligned)."""
+    if offset + 8 > len(buf):
+        raise AsarParseError("truncated pickle uint32 header")
+    payload_size = struct.unpack_from("<I", buf, offset)[0]
+    if payload_size != 4:
+        raise AsarParseError(f"unexpected pickle payload size for a uint32 field: {payload_size}")
+    return struct.unpack_from("<I", buf, offset + 4)[0]
+
+
+def _read_pickle_string(buf: bytes, offset: int) -> str:
+    """Reads a Chromium-Pickle-encoded string starting at `offset`. Shape:
+    [4 bytes LE payload_size][4 bytes LE str_len][str_len bytes utf8][pad
+    to 4-byte align]. Only str_len is needed to extract the string itself —
+    the caller already knows where the NEXT region starts from the outer
+    pickle's declared (padded) size, so trailing padding is never read."""
+    if offset + 8 > len(buf):
+        raise AsarParseError("truncated pickle string header")
+    str_len = struct.unpack_from("<I", buf, offset + 4)[0]
+    start = offset + 8
+    end = start + str_len
+    if end > len(buf):
+        raise AsarParseError("truncated pickle string payload")
+    return buf[start:end].decode("utf-8", errors="replace")
+
+
+def parse_asar(data: bytes) -> dict[str, bytes]:
+    """Unpacks an Electron ASAR archive's embedded file contents from raw
+    bytes.
+
+    ASAR's header is Chromium's Pickle format, nested: an 8-byte outer
+    pickle wraps a single uint32 giving the on-disk byte length of a
+    second, inner pickle, which itself wraps the header's JSON string (a
+    tree of {"files": {...}} entries, each carrying a byte offset/size into
+    the data region that starts immediately after the header). This exact
+    "pickle wrapping a pickle" nesting is the well-documented quirky part
+    of the asar format.
+
+    Verified against a hand-constructed synthetic archive built
+    independently from this same spec (tests/unit/test_asar.py) — not
+    against a real Electron-produced file, since none was available to
+    fetch in this environment. Malformed input raises AsarParseError
+    rather than crashing; out-of-range individual entries are skipped
+    rather than aborting the whole unpack.
+    """
+    if len(data) < 8:
+        raise AsarParseError("file is too small to be a valid asar archive")
+
+    header_pickle_size = _read_pickle_uint32(data, 0)
+    if header_pickle_size < 8:
+        raise AsarParseError("asar header size is implausibly small")
+    header_region_end = 8 + header_pickle_size
+    if header_region_end > len(data):
+        raise AsarParseError("asar header extends past the end of the file")
+
+    header_json_str = _read_pickle_string(data, 8)
+    try:
+        header = json.loads(header_json_str)
+    except json.JSONDecodeError as e:
+        raise AsarParseError(f"asar header is not valid JSON: {e}")
+
+    data_start = header_region_end
+    files: dict[str, bytes] = {}
+
+    def walk(node: dict, prefix: str, depth: int) -> None:
+        if depth > 40 or len(files) >= MAX_ASAR_ENTRIES_CONSIDERED:
+            return  # malformed/adversarial or just huge header — safety valve
+        for name, entry in (node.get("files") or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            path = f"{prefix}/{name}" if prefix else name
+            if "files" in entry:
+                walk(entry, path, depth + 1)
+                continue
+            if entry.get("unpacked"):
+                continue  # lives alongside the archive on disk, not embedded in these bytes
+            try:
+                offset = int(entry.get("offset", "0"))
+                size = int(entry.get("size", 0))
+            except (TypeError, ValueError):
+                continue
+            start = data_start + offset
+            end = start + size
+            if size < 0 or start < data_start or end > len(data):
+                continue  # malformed/out-of-range entry — skip rather than crash
+            files[path] = data[start:end]
+            if len(files) >= MAX_ASAR_ENTRIES_CONSIDERED:
+                return
+
+    walk(header, "", 0)
+    return files
+
+
 async def _github_api_get(path: str):
     url = f"https://api.github.com/{path}"
     try:
@@ -697,6 +818,31 @@ async def _fetch_commit_history(owner: str, repo: str, branch: str) -> list[dict
     return commits
 
 
+def _analyze_source_text(path: str, text: str, tech_stack: list[dict], routes: list[dict], db_models: list[dict], code_snippets: list[dict]) -> None:
+    """Shared per-file regex extraction — real manifest/route/model
+    matching against real fetched text, whether that text came from
+    GitHub (repo mode) or an uploaded/unpacked local folder (local_folder
+    mode). Mutates the four accumulator lists in place."""
+    filename = path.rsplit("/", 1)[-1]
+    if filename in MANIFEST_FILENAMES:
+        tech_stack.extend(_detect_stack_from_manifest(filename, text))
+        return
+
+    for framework_name, pattern in ROUTE_PATTERNS:
+        for m in pattern.finditer(text):
+            method = m.group(1).upper() if m.re.groups >= 2 else "GET"
+            route_path = m.group(m.re.groups)
+            routes.append({"framework": framework_name, "method": method, "path": route_path, "file": path})
+
+    for orm_name, pattern in MODEL_PATTERNS:
+        for m in pattern.finditer(text):
+            db_models.append({"orm": orm_name, "name": m.group(1), "file": path})
+
+    if len(code_snippets) < MAX_REPO_SNIPPETS:
+        language = filename.rsplit(".", 1)[-1] if "." in filename else "text"
+        code_snippets.append({"source": path, "language": language, "content": text[:REPO_SNIPPET_CHARS]})
+
+
 async def _analyze_repo(repo_url: str) -> dict:
     match = GITHUB_REPO_RE.match(repo_url.strip())
     if not match:
@@ -773,24 +919,7 @@ async def _analyze_repo(repo_url: str) -> dict:
         if status_code != 200 or not body:
             continue
         text = body[:MAX_REPO_FILE_BYTES].decode("utf-8", errors="replace")
-        filename = path.rsplit("/", 1)[-1]
-
-        if filename in MANIFEST_FILENAMES:
-            tech_stack.extend(_detect_stack_from_manifest(filename, text))
-            continue
-
-        for framework_name, pattern in ROUTE_PATTERNS:
-            for m in pattern.finditer(text):
-                method = m.group(1).upper() if m.re.groups >= 2 else "GET"
-                route_path = m.group(m.re.groups)
-                routes.append({"framework": framework_name, "method": method, "path": route_path, "file": path})
-
-        for orm_name, pattern in MODEL_PATTERNS:
-            for m in pattern.finditer(text):
-                db_models.append({"orm": orm_name, "name": m.group(1), "file": path})
-
-        if len(code_snippets) < MAX_REPO_SNIPPETS:
-            code_snippets.append({"source": path, "language": filename.rsplit(".", 1)[-1], "content": text[:REPO_SNIPPET_CHARS]})
+        _analyze_source_text(path, text, tech_stack, routes, db_models, code_snippets)
 
     tech_stack = _dedupe(tech_stack, lambda t: t["name"])
     routes = _dedupe(routes, lambda r: (r["method"], r["path"]))[:25]
@@ -827,6 +956,129 @@ def _material_from_repo_analysis(repo_analysis: dict) -> str:
         lines.append(f"Recent real build history ({len(commits)} commits{', ' + span if span else ''}):")
         for c in commits[-5:]:
             lines.append(f"  - {c['message']}")
+    return "\n".join(lines)
+
+
+# ─── local_folder mode: a real installed app, picked from disk ───
+# VengaiCode's own desktop app is Tauri, which runs natively and can read
+# the local filesystem — the ONLY place any of this feature's four modes
+# can honestly reach an actually-installed application rather than
+# something published on the public internet. The desktop app itself does
+# the folder walking and file reading (see src-tauri's scan_local_folder
+# command) and uploads a bounded set of candidate files here; the backend
+# does the same real extraction as repo mode, just fed from an upload
+# instead of a git fetch. No commit_history: a local install has no VCS.
+MAX_LOCAL_FILES = 60
+MAX_LOCAL_FILE_BYTES = 200_000
+MAX_ASAR_BYTES = 80 * 1024 * 1024
+
+
+async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_label: str) -> dict:
+    if len(files) != len(paths):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Each uploaded file needs a matching relative path.")
+    if len(files) > MAX_LOCAL_FILES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Please limit this to {MAX_LOCAL_FILES} files.")
+    if not files:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No files were uploaded from that folder.")
+
+    collected: dict[str, bytes] = {}
+    asar_unpacked = False
+
+    for upload, rel_path in zip(files, paths):
+        content = await upload.read()
+        clean_path = rel_path.replace("\\", "/").lstrip("/")
+        if not clean_path:
+            continue
+        if clean_path.lower().endswith(".asar"):
+            if len(content) > MAX_ASAR_BYTES:
+                logger.warning(f"Skipping {clean_path}: {len(content)} bytes exceeds the asar unpack cap")
+                continue
+            try:
+                unpacked = parse_asar(content)
+            except AsarParseError as e:
+                logger.warning(f"Couldn't unpack {clean_path} as asar: {e}")
+                continue
+            asar_unpacked = True
+            for inner_path, inner_content in unpacked.items():
+                collected[f"{clean_path}!/{inner_path}"] = inner_content[:MAX_LOCAL_FILE_BYTES]
+        else:
+            collected[clean_path] = content[:MAX_LOCAL_FILE_BYTES]
+
+    if not collected:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Couldn't find any readable files in that folder.")
+
+    all_paths = list(collected.keys())
+    shell_tech = _detect_shell_framework_from_tree(all_paths)
+    is_shell_app = bool(shell_tech)
+    if not is_shell_app:
+        for path, content in collected.items():
+            if path.rsplit("/", 1)[-1] == "package.json":
+                if _package_json_has_shell_dependency(content.decode("utf-8", errors="replace")):
+                    is_shell_app = True
+                break
+
+    manifest_paths = [p for p in all_paths if p.rsplit("/", 1)[-1] in MANIFEST_FILENAMES][:6]
+
+    shell_core_paths: list[str] = []
+    if is_shell_app:
+        shell_core_paths = [
+            p
+            for p in all_paths
+            if p not in manifest_paths
+            and "." in p
+            and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
+            and _is_shell_core_file(p)
+        ]
+        shell_core_paths.sort(key=lambda p: 0 if p.rsplit("/", 1)[-1].split(".")[0].lower() in _SHELL_ENTRY_POINT_STEMS else 1)
+
+    interesting_paths = [
+        p
+        for p in all_paths
+        if p not in manifest_paths
+        and _INTERESTING_FILE_RE.search(p)
+        and "." in p
+        and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
+    ]
+    combined_interesting = _dedupe_strings(shell_core_paths + interesting_paths)[:MAX_REPO_FILES_FETCHED]
+    scan_paths = (manifest_paths + combined_interesting)[:MAX_REPO_FILES_FETCHED]
+
+    tech_stack: list[dict] = list(shell_tech)
+    routes: list[dict] = []
+    db_models: list[dict] = []
+    code_snippets: list[dict] = []
+
+    for path in scan_paths:
+        text = collected[path].decode("utf-8", errors="replace")
+        _analyze_source_text(path, text, tech_stack, routes, db_models, code_snippets)
+
+    tech_stack = _dedupe(tech_stack, lambda t: t["name"])
+    routes = _dedupe(routes, lambda r: (r["method"], r["path"]))[:25]
+    db_models = _dedupe(db_models, lambda m_: m_["name"])[:20]
+
+    return {
+        "mode": "local_folder",
+        "root_label": root_label or "the selected folder",
+        "files_uploaded": len(collected),
+        "files_scanned": len(scan_paths),
+        "asar_unpacked": asar_unpacked,
+        "tech_stack": tech_stack,
+        "api_endpoints": routes,
+        "data_model": db_models,
+        "code_snippets": code_snippets,
+    }
+
+
+def _material_from_local_folder_analysis(analysis: dict) -> str:
+    lines = [f"Local install: {analysis['root_label']} ({analysis['files_scanned']} of {analysis['files_uploaded']} uploaded files scanned)"]
+    if analysis.get("asar_unpacked"):
+        lines.append("An Electron app.asar archive was found and unpacked to reach its real bundled source.")
+    if analysis["tech_stack"]:
+        lines.append("Detected technology: " + ", ".join(t["name"] for t in analysis["tech_stack"]))
+    if analysis["api_endpoints"]:
+        sample = ", ".join(f"{e['method']} {e['path']}" for e in analysis["api_endpoints"][:12])
+        lines.append(f"Real API endpoints found: {sample}")
+    if analysis["data_model"]:
+        lines.append("Real data models found: " + ", ".join(m["name"] for m in analysis["data_model"][:12]))
     return "\n".join(lines)
 
 
@@ -932,6 +1184,8 @@ async def analyze(
     url: str | None = Form(None),
     repo_url: str | None = Form(None),
     description: str | None = Form(None),
+    root_label: str | None = Form(None),
+    paths: list[str] = Form(default=[]),
     files: list[UploadFile] = File(default=[]),
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -950,6 +1204,12 @@ async def analyze(
         reverse_engineering = await _analyze_repo(repo_url.strip())
         material = _material_from_repo_analysis(reverse_engineering)
         source_kind = f"a GitHub repository ({reverse_engineering['repo']}) — its real source code was scanned"
+    elif source_type == "local_folder":
+        if not files:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No files were uploaded from that folder.")
+        reverse_engineering = await _analyze_local_folder(files, paths, (root_label or "").strip())
+        material = _material_from_local_folder_analysis(reverse_engineering)
+        source_kind = f"a real installed desktop app ({reverse_engineering['root_label']}) — its real local files were scanned"
     elif source_type == "screenshots":
         if not files:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please upload at least one screenshot.")
@@ -962,7 +1222,7 @@ async def analyze(
         source_kind = "a text description of an existing app, written by the user"
         reverse_engineering = {"mode": "description"}
     else:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "source_type must be 'url', 'repo', 'screenshots', or 'description'.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "source_type must be 'url', 'repo', 'local_folder', 'screenshots', or 'description'.")
 
     prompt = _SYNTHESIS_PROMPT.format(source_kind=source_kind, material=material[:MAX_MATERIAL_CHARS_IN_PROMPT])
 

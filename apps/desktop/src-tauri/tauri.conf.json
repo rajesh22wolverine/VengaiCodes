@@ -24,6 +24,10 @@
             "sidecar": true
           }
         ]
+      },
+      "dialog": {
+        "all": false,
+        "open": true
       }
     },
     "bundle": {

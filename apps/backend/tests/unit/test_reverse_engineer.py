@@ -6,15 +6,19 @@ SSRF guard and the endpoint's stubbed-AI flow separately.
 """
 
 import asyncio
+import io
+import json
+import struct
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 import app.api.v1.reverse_engineer as re_mod
 from app.api.v1.reverse_engineer import (
     GITHUB_REPO_RE,
     MODEL_PATTERNS,
     ROUTE_PATTERNS,
+    _analyze_local_folder,
     _detect_shell_framework_from_tree,
     _detect_stack_from_manifest,
     _fetch_commit_history,
@@ -330,3 +334,66 @@ def test_package_json_has_shell_dependency_false_for_ordinary_web_app():
 
 def test_package_json_has_shell_dependency_false_for_malformed_json():
     assert _package_json_has_shell_dependency("{not json") is False
+
+
+# ─── local_folder mode: an installed app read from disk, uploaded by the
+# Tauri desktop app itself ───
+def _upload(content: bytes, filename: str) -> UploadFile:
+    return UploadFile(file=io.BytesIO(content), filename=filename)
+
+
+def _build_test_asar(files: dict[str, bytes]) -> bytes:
+    header_files = {}
+    file_data = b""
+    offset = 0
+    for path, content in files.items():
+        header_files[path] = {"size": len(content), "offset": str(offset)}
+        file_data += content
+        offset += len(content)
+    header_json = json.dumps({"files": header_files}).encode("utf-8")
+    str_len = len(header_json)
+    pad = (4 - ((4 + str_len) % 4)) % 4
+    header_pickle_payload = struct.pack("<I", str_len) + header_json + (b"\x00" * pad)
+    header_pickle_bytes = struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
+    return struct.pack("<I", 4) + struct.pack("<I", len(header_pickle_bytes)) + header_pickle_bytes + file_data
+
+
+def test_analyze_local_folder_detects_electron_from_package_json():
+    files = [_upload(b'{"dependencies": {"electron": "^28.0.0"}}', "package.json")]
+    result = asyncio.run(_analyze_local_folder(files, ["package.json"], "MyApp"))
+    assert result["mode"] == "local_folder"
+    assert result["root_label"] == "MyApp"
+    assert any(t["name"] == "Electron" for t in result["tech_stack"])
+
+
+def test_analyze_local_folder_unpacks_a_real_asar_and_extracts_its_shell_core_files():
+    asar_bytes = _build_test_asar(
+        {
+            "package.json": b'{"dependencies": {"electron": "^28.0.0"}}',
+            "index.ts": b"import {BrowserWindow} from 'electron';\nconst win = new BrowserWindow();",
+        }
+    )
+    files = [_upload(asar_bytes, "resources/app.asar")]
+    result = asyncio.run(_analyze_local_folder(files, ["resources/app.asar"], "Messenger"))
+
+    assert result["asar_unpacked"] is True
+    assert any(t["name"] == "Electron" for t in result["tech_stack"])
+    snippet_sources = [s["source"] for s in result["code_snippets"]]
+    assert any(s.endswith("!/index.ts") for s in snippet_sources)
+
+
+def test_analyze_local_folder_rejects_mismatched_files_and_paths():
+    with pytest.raises(HTTPException):
+        asyncio.run(_analyze_local_folder([_upload(b"x", "a.js")], [], "App"))
+
+
+def test_analyze_local_folder_rejects_when_nothing_uploaded():
+    with pytest.raises(HTTPException):
+        asyncio.run(_analyze_local_folder([], [], "App"))
+
+
+def test_analyze_local_folder_skips_a_corrupt_asar_without_crashing():
+    files = [_upload(b"not a real asar file", "resources/app.asar"), _upload(b"console.log(1)", "main.js")]
+    result = asyncio.run(_analyze_local_folder(files, ["resources/app.asar", "main.js"], "App"))
+    assert result["asar_unpacked"] is False
+    assert result["files_uploaded"] == 1  # only main.js survived; the corrupt asar was skipped

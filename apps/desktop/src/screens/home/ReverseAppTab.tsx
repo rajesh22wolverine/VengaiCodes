@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Globe, Image as ImageIcon, FileText, Loader2, Sparkles, X, RotateCcw, Github, Wrench } from "lucide-react";
+import { Globe, Image as ImageIcon, FileText, Loader2, Sparkles, X, RotateCcw, Github, Wrench, FolderOpen } from "lucide-react";
+import { open as openFolderDialog } from "@tauri-apps/api/dialog";
+import { invoke } from "@tauri-apps/api/tauri";
 import toast from "react-hot-toast";
 
 import { AppDispatch, RootState } from "@/store";
@@ -11,12 +13,13 @@ import { setTigerExpression } from "@/store/slices/uiSlice";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 
-type SourceType = "description" | "url" | "repo" | "screenshots";
+type SourceType = "description" | "url" | "repo" | "local_folder" | "screenshots";
 
 const SOURCE_TABS: { id: SourceType; label: string; icon: React.ElementType }[] = [
   { id: "description", label: "Describe it", icon: FileText },
   { id: "url", label: "Website URL", icon: Globe },
   { id: "repo", label: "GitHub repo", icon: Github },
+  { id: "local_folder", label: "Installed App", icon: FolderOpen },
   { id: "screenshots", label: "Screenshots", icon: ImageIcon },
 ];
 
@@ -29,10 +32,32 @@ interface ReverseEngineering {
   pages?: { url: string; title: string }[];
   pages_crawled?: number;
   repo?: string;
+  root_label?: string;
+  asar_unpacked?: boolean;
   files_scanned?: number;
+  files_uploaded?: number;
   data_model?: { name: string }[];
   api_endpoints?: { method: string; path: string }[];
   code_snippets?: { source: string; language: string }[];
+}
+
+interface LocalFileEntry {
+  relative_path: string;
+  content_base64: string;
+  is_asar: boolean;
+}
+
+interface LocalFolderScanResult {
+  root_label: string;
+  files: LocalFileEntry[];
+  truncated: boolean;
+}
+
+function base64ToBlob(base64: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes]);
 }
 
 interface Analysis {
@@ -52,10 +77,35 @@ export default function ReverseAppTab() {
   const [url, setUrl] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [localFolder, setLocalFolder] = useState<LocalFolderScanResult | null>(null);
+  const [isScanningFolder, setIsScanningFolder] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
 
   const canCreate = user ? user.projects_remaining > 0 : true;
+
+  const handlePickFolder = async () => {
+    try {
+      const selected = await openFolderDialog({ directory: true, multiple: false });
+      if (!selected || Array.isArray(selected)) return;
+
+      setIsScanningFolder(true);
+      const result = await invoke<LocalFolderScanResult>("scan_local_folder", { path: selected });
+      if (result.files.length === 0) {
+        toast.error("Couldn't find any readable source files in that folder. 🐯");
+        setLocalFolder(null);
+        return;
+      }
+      setLocalFolder(result);
+      if (result.truncated) {
+        toast(`Scanned the first ${result.files.length} matching files — that folder has more than this fits.`, { icon: "ℹ️" });
+      }
+    } catch (error: any) {
+      toast.error(typeof error === "string" ? error : "Couldn't read that folder. Please try again!");
+    } finally {
+      setIsScanningFolder(false);
+    }
+  };
 
   const handleFilesSelected = (selected: FileList | null) => {
     if (!selected) return;
@@ -87,6 +137,10 @@ export default function ReverseAppTab() {
       toast.error("Paste a GitHub repo URL first! 🐯");
       return;
     }
+    if (sourceType === "local_folder" && !localFolder) {
+      toast.error("Pick a folder first! 🐯");
+      return;
+    }
     if (sourceType === "screenshots" && files.length === 0) {
       toast.error("Upload at least one screenshot first! 🐯");
       return;
@@ -101,6 +155,13 @@ export default function ReverseAppTab() {
       if (sourceType === "description") form.append("description", description.trim());
       if (sourceType === "url") form.append("url", url.trim());
       if (sourceType === "repo") form.append("repo_url", repoUrl.trim());
+      if (sourceType === "local_folder" && localFolder) {
+        form.append("root_label", localFolder.root_label);
+        for (const entry of localFolder.files) {
+          form.append("files", base64ToBlob(entry.content_base64), entry.relative_path);
+          form.append("paths", entry.relative_path);
+        }
+      }
       if (sourceType === "screenshots") files.forEach((f) => form.append("files", f));
 
       const { data } = await apiClient.post("/reverse/analyze", form, {
@@ -151,6 +212,7 @@ export default function ReverseAppTab() {
     setUrl("");
     setRepoUrl("");
     setFiles([]);
+    setLocalFolder(null);
   };
 
   return (
@@ -232,6 +294,38 @@ export default function ReverseAppTab() {
                     />
                     <p className="text-xs text-[var(--color-text-tertiary)] mt-2">
                       Public repos only. Baby Tiger scans real source files — routes, models, dependencies — not just the README.
+                    </p>
+                  </div>
+                )}
+
+                {sourceType === "local_folder" && (
+                  <div>
+                    <button
+                      onClick={handlePickFolder}
+                      disabled={isScanningFolder}
+                      className="w-full flex flex-col items-center justify-center gap-2 px-4 py-8 rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-tertiary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors disabled:opacity-60"
+                    >
+                      {isScanningFolder ? <Loader2 className="w-6 h-6 animate-spin" /> : <FolderOpen className="w-6 h-6" />}
+                      <span className="text-sm font-medium">
+                        {isScanningFolder ? "Scanning folder..." : localFolder ? "Pick a different folder" : "Pick an installed app's folder"}
+                      </span>
+                      <span className="text-xs">e.g. where a desktop app was installed on this machine</span>
+                    </button>
+
+                    {localFolder && (
+                      <div className="mt-3 px-4 py-3 rounded-xl bg-[var(--color-surface-raised)] border border-[var(--color-border)] text-sm">
+                        <div className="font-medium text-[var(--color-text-primary)] mb-1">{localFolder.root_label}</div>
+                        <div className="text-xs text-[var(--color-text-tertiary)]">
+                          {localFolder.files.length} real file{localFolder.files.length === 1 ? "" : "s"} found
+                          {localFolder.files.some((f) => f.is_asar) ? " (including an app.asar archive to unpack)" : ""}
+                          {localFolder.truncated ? " — folder has more than this fits, so only a subset was scanned" : ""}
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-[var(--color-text-tertiary)] mt-2">
+                      Reads real files from a folder on this machine — routes, models, dependencies, and unpacks any
+                      Electron app.asar archive found. Nothing here calls that app's own service/API.
                     </p>
                   </div>
                 )}
@@ -367,6 +461,8 @@ function ReverseFindings({ re }: { re: ReverseEngineering }) {
       ? `${re.pages_crawled ?? re.pages?.length ?? 0} real page${(re.pages_crawled ?? 0) === 1 ? "" : "s"} crawled`
       : re.mode === "repo"
       ? `${re.files_scanned ?? 0} real source file${re.files_scanned === 1 ? "" : "s"} scanned in ${re.repo}`
+      : re.mode === "local_folder"
+      ? `${re.files_scanned ?? 0} real file${re.files_scanned === 1 ? "" : "s"} scanned from ${re.root_label}${re.asar_unpacked ? " (unpacked an app.asar archive)" : ""}`
       : re.mode === "screenshots"
       ? "Screens analyzed with vision AI"
       : "";
