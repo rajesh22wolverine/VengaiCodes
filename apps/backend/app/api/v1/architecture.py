@@ -6,6 +6,7 @@
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -49,12 +50,24 @@ class APIEndpoint(BaseModel):
     purpose: str
 
 
+class ADR(BaseModel):
+    """One Architecture Decision Record — 'what was decided, and why',
+    the closest thing to a real build-blueprint document this phase
+    produces. Wires the previously-unused Project.architecture_data.adrs
+    field the model schema already documented but nothing generated."""
+    title: str
+    decision: str
+    rationale: str
+    alternatives_considered: list[str] = []
+
+
 class ArchitectureDesign(BaseModel):
     architecture_summary: str
     tech_stack: TechStack
     database_tables: list[DatabaseTable]
     api_endpoints: list[APIEndpoint]
     third_party_services: list[str]
+    adrs: list[ADR] = []
 
 
 class GenerateArchitectureResponse(BaseModel):
@@ -110,7 +123,10 @@ def build_architecture_prompt(
         reverse_directive += (
             "Prefer recommending the SAME or a directly compatible technology to what was detected above, "
             "rather than inventing an unrelated stack — and base database_tables/api_endpoints on the real "
-            "data entities/endpoints found above when they exist.\n"
+            "data entities/endpoints found above when they exist. Write the \"adrs\" entries as real decisions "
+            "grounded in that detected evidence (e.g. \"decision: keep the same backend framework\", "
+            "\"rationale: it was directly detected in the source/site being reverse-engineered\") rather than "
+            "generic boilerplate reasoning.\n"
         )
 
     return f"""You are Baby Tiger 🐯, VengaiCode's AI architecture assistant. Based on this app's approved requirements and UI/UX design, propose a simple, open-source technical architecture.
@@ -140,12 +156,18 @@ Generate a JSON object with EXACTLY these fields (no markdown, no extra text, ju
   "api_endpoints": [
     {{"method": "GET", "path": "/resource", "purpose": "1 sentence"}}
   ],
-  "third_party_services": ["service1 (why needed)", "service2 (why needed)"]
+  "third_party_services": ["service1 (why needed)", "service2 (why needed)"],
+  "adrs": [
+    {{"title": "short decision title", "decision": "what was decided", "rationale": "why", "alternatives_considered": ["alternative 1", "alternative 2"]}}
+  ]
 }}
 
 Generate 3-6 database tables and 6-10 core API endpoints covering the key features.
 Favor simple, well-known, open-source technology suitable for the app's complexity.
 Use realistic REST conventions for API endpoint paths and methods.
+Generate 3-5 ADRs (Architecture Decision Records) covering the most consequential choices
+(tech stack, database, one or two key structural decisions) — each a real trade-off with a
+stated rationale and the alternatives that were passed over, not a restatement of the summary.
 
 Respond with ONLY the JSON object, nothing else."""
 
@@ -158,6 +180,56 @@ def parse_ai_json(text: str) -> dict:
             cleaned = cleaned[4:]
     cleaned = cleaned.strip()
     return json.loads(cleaned)
+
+
+def _mermaid_safe_text(text: str) -> str:
+    """Strips characters that break Mermaid node-label syntax. Applied to
+    AI-generated tech_stack/service strings before embedding them in a
+    diagram, since we don't control their exact punctuation."""
+    return re.sub(r'["\[\]{}<>|]', "", text).strip()[:80]
+
+
+def _mermaid_safe_id(name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_]", "_", name).strip("_") or "T"
+    if safe[0].isdigit():
+        safe = f"T_{safe}"
+    return safe.upper()
+
+
+def build_system_diagram(architecture: "ArchitectureDesign") -> str:
+    """Deterministic Mermaid component diagram built straight from the
+    already-structured tech_stack + third_party_services the AI call above
+    just produced — no separate AI call, so it can't drift from or
+    hallucinate beyond what generate_architecture actually decided."""
+    ts = architecture.tech_stack
+    lines = [
+        "graph TD",
+        f'  FE["Frontend<br/>{_mermaid_safe_text(ts.frontend)}"]',
+        f'  BE["Backend<br/>{_mermaid_safe_text(ts.backend)}"]',
+        f'  DB[("Database<br/>{_mermaid_safe_text(ts.database)}")]',
+        "  FE --> BE",
+        "  BE --> DB",
+    ]
+    for i, svc in enumerate(architecture.third_party_services):
+        node = f"SVC{i}"
+        lines.append(f'  {node}["{_mermaid_safe_text(svc)}"]')
+        lines.append(f"  BE --> {node}")
+    return "\n".join(lines)
+
+
+def build_erd(database_tables: list["DatabaseTable"]) -> str:
+    """Deterministic Mermaid ERD from the architecture's own database_tables
+    — same rationale as build_system_diagram: derived from structured data
+    we already trust, not a second AI call that could contradict it."""
+    lines = ["erDiagram"]
+    for table in database_tables:
+        table_id = _mermaid_safe_id(table.name)
+        lines.append(f"  {table_id} {{")
+        for field in table.key_fields[:12]:
+            field_id = re.sub(r"[^A-Za-z0-9_]", "_", field).strip("_") or "field"
+            lines.append(f"    string {field_id}")
+        lines.append("  }")
+    return "\n".join(lines)
 
 
 @router.post(
@@ -213,7 +285,11 @@ async def generate_architecture(
         "architecture": architecture.model_dump(),
         "user_approved": False,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        # Deterministic (no AI call) — derived from the architecture object
+        # right above, so these can't drift from or contradict it.
+        "system_diagram": build_system_diagram(architecture),
     }
+    project.uml_diagrams = {**(project.uml_diagrams or {}), "erd": build_erd(architecture.database_tables)}
     await db.commit()
 
     return GenerateArchitectureResponse(architecture=architecture)
@@ -251,6 +327,8 @@ async def get_architecture(
         "architecture": project.architecture_data.get("architecture"),
         "user_approved": project.architecture_data.get("user_approved", False),
         "generated_at": project.architecture_data.get("generated_at"),
+        "system_diagram": project.architecture_data.get("system_diagram"),
+        "erd": (project.uml_diagrams or {}).get("erd"),
     }
 
 

@@ -481,7 +481,36 @@ _PACKAGE_JSON_MAP = {
     "react": "React", "next": "Next.js", "vue": "Vue.js", "nuxt": "Nuxt.js",
     "@angular/core": "Angular", "svelte": "Svelte", "express": "Express",
     "fastify": "Fastify", "@nestjs/core": "NestJS", "koa": "Koa",
+    # Shell/wrapper frameworks — a "shell app" that just wraps a website or
+    # API behind a native window is built with one of these. Detecting them
+    # tells you HOW the wrapper itself was built, distinct from whatever
+    # site/API it wraps (which url mode would separately analyze if you
+    # know the URL it loads).
+    "electron": "Electron", "electron-builder": "Electron",
+    "@tauri-apps/api": "Tauri", "@tauri-apps/cli": "Tauri",
+    "react-native": "React Native", "react-native-webview": "React Native WebView",
+    "expo": "Expo", "@capacitor/core": "Capacitor", "cordova-lib": "Apache Cordova",
 }
+
+# Config files whose mere presence in a repo's file tree is itself real
+# evidence of a shell/wrapper framework — no need to fetch their content.
+_SHELL_CONFIG_FILE_SIGNATURES: list[tuple[str, str]] = [
+    ("tauri.conf.json", "Tauri"),
+    ("capacitor.config.json", "Capacitor"),
+    ("capacitor.config.ts", "Capacitor"),
+    ("electron-builder.yml", "Electron"),
+    ("electron-builder.json", "Electron"),
+    ("forge.config.js", "Electron (Forge)"),
+]
+
+
+def _detect_shell_framework_from_tree(paths: list[str]) -> list[dict]:
+    found = []
+    basenames = {p.rsplit("/", 1)[-1] for p in paths}
+    for filename, name in _SHELL_CONFIG_FILE_SIGNATURES:
+        if filename in basenames:
+            found.append({"name": name, "category": "shell_framework", "evidence": f"found {filename} in the repo"})
+    return found
 
 _MANIFEST_TEXT_PATTERNS: dict[str, list[tuple[re.Pattern, str]]] = {
     "requirements.txt": [
@@ -525,7 +554,15 @@ async def _github_api_get(path: str):
     try:
         async with httpx.AsyncClient(
             timeout=15.0,
-            follow_redirects=False,
+            # Unlike url mode's crawl (an arbitrary, user-controlled target —
+            # SSRF-sensitive, redirects refused), this always hits the fixed
+            # literal host api.github.com. A redirect here can only ever be
+            # GitHub's own "repo was renamed" 301 to another api.github.com
+            # path, never an attacker-controlled host, so following it is
+            # safe — and refusing it silently returned a {"message": "Moved
+            # Permanently"} stub in place of real data for any renamed repo
+            # (caught live against electron/electron-quick-start).
+            follow_redirects=True,
             headers={"User-Agent": "VengaiCodeBot/1.0", "Accept": "application/vnd.github+json"},
         ) as client:
             resp = await client.get(url)
@@ -574,6 +611,41 @@ def _dedupe(items: list[dict], keyfn) -> list[dict]:
     return out
 
 
+MAX_COMMITS_FETCHED = 20
+
+
+async def _fetch_commit_history(owner: str, repo: str, branch: str) -> list[dict]:
+    """The closest thing to real "steps followed to build it" this feature
+    can honestly offer: a repo's own real commit history, not an inferred
+    guess. Deliberately scoped to the most recent MAX_COMMITS_FETCHED commits
+    (GitHub's API returns newest-first; walking all the way back to a
+    project's first commit on a large repo would mean many more paginated
+    requests against a 60/hr unauthenticated rate limit) — labeled as such
+    in the returned dict rather than implied to be the full project history."""
+    try:
+        data = await _github_api_get(f"repos/{owner}/{repo}/commits?sha={branch}&per_page={MAX_COMMITS_FETCHED}")
+    except HTTPException:
+        return []
+    if not isinstance(data, list):
+        return []
+
+    commits = []
+    for item in data:
+        commit = item.get("commit") or {}
+        author = commit.get("author") or {}
+        message = (commit.get("message") or "").split("\n", 1)[0][:200]
+        commits.append(
+            {
+                "sha": (item.get("sha") or "")[:7],
+                "message": message,
+                "author": author.get("name", "unknown"),
+                "date": author.get("date", ""),
+            }
+        )
+    commits.reverse()  # API gives newest-first; present chronologically (oldest first)
+    return commits
+
+
 async def _analyze_repo(repo_url: str) -> dict:
     match = GITHUB_REPO_RE.match(repo_url.strip())
     if not match:
@@ -590,6 +662,9 @@ async def _analyze_repo(repo_url: str) -> dict:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "That repo's file tree looks empty.")
 
     paths = [e["path"] for e in entries]
+    shell_tech = _detect_shell_framework_from_tree(paths)
+    commit_history = await _fetch_commit_history(owner, repo, branch)
+
     manifest_paths = [p for p in paths if p.rsplit("/", 1)[-1] in MANIFEST_FILENAMES and p.count("/") <= 1][:6]
     interesting_paths = [
         p
@@ -601,7 +676,7 @@ async def _analyze_repo(repo_url: str) -> dict:
     ][:MAX_REPO_FILES_FETCHED]
     fetch_paths = (manifest_paths + interesting_paths)[:MAX_REPO_FILES_FETCHED]
 
-    tech_stack: list[dict] = []
+    tech_stack: list[dict] = list(shell_tech)
     routes: list[dict] = []
     db_models: list[dict] = []
     code_snippets: list[dict] = []
@@ -650,6 +725,8 @@ async def _analyze_repo(repo_url: str) -> dict:
         "api_endpoints": routes,
         "data_model": db_models,
         "code_snippets": code_snippets,
+        "commit_history": commit_history,
+        "commit_history_note": f"most recent {len(commit_history)} commits on {branch}, not the repo's full history",
     }
 
 
@@ -662,6 +739,12 @@ def _material_from_repo_analysis(repo_analysis: dict) -> str:
         lines.append(f"Real API endpoints found: {sample}")
     if repo_analysis["data_model"]:
         lines.append("Real data models found: " + ", ".join(m["name"] for m in repo_analysis["data_model"][:12]))
+    commits = repo_analysis.get("commit_history") or []
+    if commits:
+        span = f"{commits[0]['date'][:10]} to {commits[-1]['date'][:10]}" if commits[0].get("date") and commits[-1].get("date") else ""
+        lines.append(f"Recent real build history ({len(commits)} commits{', ' + span if span else ''}):")
+        for c in commits[-5:]:
+            lines.append(f"  - {c['message']}")
     return "\n".join(lines)
 
 
@@ -747,6 +830,12 @@ def build_reverse_engineering_directive(reverse_data: dict | None) -> str:
         parts.append("Real API endpoints found: " + ", ".join(f"{e.get('method', '')} {e.get('path', '')}".strip() for e in endpoints[:10]))
     if reverse_data.get("repo"):
         parts.append(f"Source repo scanned: {reverse_data['repo']}")
+    commits = reverse_data.get("commit_history") or []
+    if commits:
+        parts.append(
+            f"Real recent build history ({reverse_data.get('commit_history_note', f'{len(commits)} commits')}): "
+            + "; ".join(c["message"] for c in commits[-5:] if c.get("message"))
+        )
 
     return "\n".join(parts) + "\n" if len(parts) > 1 else ""
 

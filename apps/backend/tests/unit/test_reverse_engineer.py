@@ -5,14 +5,19 @@ repo source. None of this hits the network — that's exercised by the
 SSRF guard and the endpoint's stubbed-AI flow separately.
 """
 
+import asyncio
+
 import pytest
 from fastapi import HTTPException
 
+import app.api.v1.reverse_engineer as re_mod
 from app.api.v1.reverse_engineer import (
     GITHUB_REPO_RE,
     MODEL_PATTERNS,
     ROUTE_PATTERNS,
+    _detect_shell_framework_from_tree,
     _detect_stack_from_manifest,
+    _fetch_commit_history,
     _infer_data_model,
     _validate_public_url,
     build_reverse_engineering_directive,
@@ -225,3 +230,68 @@ def test_reverse_engineering_directive_surfaces_real_facts():
     assert "Django" in directive
     assert "product" in directive
     assert "GET /api/products" in directive
+
+
+def test_reverse_engineering_directive_surfaces_commit_history():
+    reverse_data = {
+        "repo": "acme/shop",
+        "commit_history": [{"sha": "abc1234", "message": "Add checkout flow", "author": "dev", "date": "2026-01-01T00:00:00Z"}],
+        "commit_history_note": "most recent 1 commits on main, not the repo's full history",
+    }
+    directive = build_reverse_engineering_directive(reverse_data)
+    assert "Add checkout flow" in directive
+    assert "acme/shop" in directive
+
+
+# ─── Shell/wrapper framework detection (Electron/Tauri/Capacitor/...) ───
+def test_detect_shell_framework_from_tree_finds_tauri_config():
+    found = _detect_shell_framework_from_tree(["src/main.rs", "tauri.conf.json", "package.json"])
+    assert any(f["name"] == "Tauri" for f in found)
+
+
+def test_detect_shell_framework_from_tree_finds_capacitor_config():
+    found = _detect_shell_framework_from_tree(["capacitor.config.ts", "src/index.ts"])
+    assert any(f["name"] == "Capacitor" for f in found)
+
+
+def test_detect_shell_framework_from_tree_empty_for_ordinary_repo():
+    assert _detect_shell_framework_from_tree(["src/index.js", "package.json", "README.md"]) == []
+
+
+def test_detect_stack_from_manifest_finds_electron_dependency():
+    found = _detect_stack_from_manifest("package.json", '{"dependencies": {"electron": "^28.0.0"}}')
+    assert any(f["name"] == "Electron" for f in found)
+
+
+def test_detect_stack_from_manifest_finds_react_native():
+    found = _detect_stack_from_manifest("package.json", '{"dependencies": {"react-native": "^0.73.0"}}')
+    assert any(f["name"] == "React Native" for f in found)
+
+
+# ─── Commit history (real "steps followed" for public repos) ───
+def test_fetch_commit_history_presents_chronological_oldest_first(monkeypatch):
+    # GitHub returns newest-first; we present oldest-first (a real build timeline).
+    api_response = [
+        {"sha": "cccccccccccc", "commit": {"message": "Third commit\n\nbody", "author": {"name": "dev", "date": "2026-01-03T00:00:00Z"}}},
+        {"sha": "bbbbbbbbbbbb", "commit": {"message": "Second commit", "author": {"name": "dev", "date": "2026-01-02T00:00:00Z"}}},
+        {"sha": "aaaaaaaaaaaa", "commit": {"message": "First commit", "author": {"name": "dev", "date": "2026-01-01T00:00:00Z"}}},
+    ]
+
+    async def fake_github_api_get(path):
+        assert path == "repos/acme/shop/commits?sha=main&per_page=20"
+        return api_response
+
+    monkeypatch.setattr(re_mod, "_github_api_get", fake_github_api_get)
+
+    commits = asyncio.run(_fetch_commit_history("acme", "shop", "main"))
+    assert [c["message"] for c in commits] == ["First commit", "Second commit", "Third commit"]
+    assert commits[0]["sha"] == "aaaaaaa"  # truncated to 7 chars
+    assert commits[2]["message"] == "Third commit"  # first line only, body dropped
+
+
+def test_fetch_commit_history_returns_empty_on_api_failure(monkeypatch):
+    async def failing_github_api_get(path):
+        raise HTTPException(429, "rate limited")
+
+    monkeypatch.setattr(re_mod, "_github_api_get", failing_github_api_get)
+    assert asyncio.run(_fetch_commit_history("acme", "shop", "main")) == []
