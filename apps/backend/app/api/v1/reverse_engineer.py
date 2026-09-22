@@ -548,6 +548,57 @@ MODEL_PATTERNS: list[tuple[str, re.Pattern]] = [
 _INTERESTING_FILE_RE = re.compile(r"(route|router|url|view|controller|model|schema|entity|api)", re.I)
 _INTERESTING_EXTENSIONS = {"py", "js", "ts", "jsx", "tsx", "rb", "java", "go", "rs", "php", "prisma"}
 
+# The web-backend keyword filter above finds nothing in a shell/wrapper app
+# (Electron/Tauri/Capacitor/...) — its real "core code" lives in differently
+# named files: the main-process entry point, preload script, window/menu/
+# tray setup, and whatever config points it at the site/API it wraps. Caught
+# live testing against a real shell app (sindresorhus/caprine, an Electron
+# wrapper around messenger.com): _INTERESTING_FILE_RE matched nothing in its
+# real source tree (index.ts, menu.ts, tray.ts, browser.ts, config.ts, ...),
+# so 0 code_snippets came back for exactly the "how was this shell built"
+# case this feature is supposed to answer. Only applied when a shell
+# framework was actually detected (via _detect_shell_framework_from_tree /
+# _detect_stack_from_manifest) — a general web-backend repo's "index.ts" or
+# "config.ts" is rarely its architecturally interesting file, so this stays
+# off for every repo that isn't already confirmed to be a shell app.
+_SHELL_CORE_FILE_STEMS = {
+    "main", "index", "preload", "window", "menu", "tray", "app",
+    "browser", "config", "notifications", "notification",
+}
+_SHELL_ENTRY_POINT_STEMS = {"main", "index", "preload"}
+
+
+def _is_shell_core_file(path: str) -> bool:
+    basename = path.rsplit("/", 1)[-1]
+    stem = basename.split(".", 1)[0].lower().split("-")[0]
+    return stem in _SHELL_CORE_FILE_STEMS
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+_SHELL_PACKAGE_NAMES = set(
+    pkg for pkg, name in _PACKAGE_JSON_MAP.items()
+    if name in {"Electron", "Tauri", "React Native", "React Native WebView", "Expo", "Capacitor", "Apache Cordova"}
+)
+
+
+def _package_json_has_shell_dependency(content: str) -> bool:
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return False
+    deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+    return any(name in deps for name in _SHELL_PACKAGE_NAMES)
+
 
 async def _github_api_get(path: str):
     url = f"https://api.github.com/{path}"
@@ -665,7 +716,37 @@ async def _analyze_repo(repo_url: str) -> dict:
     shell_tech = _detect_shell_framework_from_tree(paths)
     commit_history = await _fetch_commit_history(owner, repo, branch)
 
+    # A checked-in config file (tauri.conf.json etc.) isn't the only real
+    # shell signal — Electron apps like sindresorhus/caprine declare it as
+    # a plain package.json dependency instead. Check that up front (one
+    # cheap extra fetch) so it's known before deciding which "interesting"
+    # files to pull below; the main fetch loop re-reads package.json
+    # normally afterward.
+    is_shell_app = bool(shell_tech)
+    if not is_shell_app and "package.json" in paths:
+        pkg_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/package.json"
+        try:
+            _validate_public_url(pkg_url)
+            status_code, _headers, body = await _fetch_raw(pkg_url)
+            if status_code == 200 and body:
+                is_shell_app = _package_json_has_shell_dependency(body[:MAX_REPO_FILE_BYTES].decode("utf-8", errors="replace"))
+        except HTTPException:
+            pass
+
     manifest_paths = [p for p in paths if p.rsplit("/", 1)[-1] in MANIFEST_FILENAMES and p.count("/") <= 1][:6]
+
+    shell_core_paths: list[str] = []
+    if is_shell_app:
+        shell_core_paths = [
+            p
+            for p in paths
+            if p not in manifest_paths
+            and "." in p
+            and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
+            and _is_shell_core_file(p)
+        ]
+        shell_core_paths.sort(key=lambda p: 0 if p.rsplit("/", 1)[-1].split(".")[0].lower() in _SHELL_ENTRY_POINT_STEMS else 1)
+
     interesting_paths = [
         p
         for p in paths
@@ -673,8 +754,9 @@ async def _analyze_repo(repo_url: str) -> dict:
         and _INTERESTING_FILE_RE.search(p)
         and "." in p
         and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
-    ][:MAX_REPO_FILES_FETCHED]
-    fetch_paths = (manifest_paths + interesting_paths)[:MAX_REPO_FILES_FETCHED]
+    ]
+    combined_interesting = _dedupe_strings(shell_core_paths + interesting_paths)[:MAX_REPO_FILES_FETCHED]
+    fetch_paths = (manifest_paths + combined_interesting)[:MAX_REPO_FILES_FETCHED]
 
     tech_stack: list[dict] = list(shell_tech)
     routes: list[dict] = []

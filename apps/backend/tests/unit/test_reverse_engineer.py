@@ -19,6 +19,8 @@ from app.api.v1.reverse_engineer import (
     _detect_stack_from_manifest,
     _fetch_commit_history,
     _infer_data_model,
+    _is_shell_core_file,
+    _package_json_has_shell_dependency,
     _validate_public_url,
     build_reverse_engineering_directive,
     fingerprint_tech_stack,
@@ -295,3 +297,36 @@ def test_fetch_commit_history_returns_empty_on_api_failure(monkeypatch):
 
     monkeypatch.setattr(re_mod, "_github_api_get", failing_github_api_get)
     assert asyncio.run(_fetch_commit_history("acme", "shop", "main")) == []
+
+
+# ─── Shell core-file selection (a shell app's real code isn't named like a
+# web backend's routes/models) ───
+@pytest.mark.parametrize(
+    "path",
+    [
+        "source/index.ts", "source/main.ts", "src/preload.js", "source/menu.ts",
+        "source/tray.ts", "source/browser.ts", "source/browser-call.ts",
+        "source/config.ts", "source/notifications.ts", "source/menu-bar-mode.ts",
+    ],
+)
+def test_is_shell_core_file_matches_real_electron_file_names(path):
+    # Real file names from sindresorhus/caprine (an actual Electron wrapper
+    # around messenger.com) that _INTERESTING_FILE_RE alone would all miss.
+    assert _is_shell_core_file(path) is True
+
+
+@pytest.mark.parametrize("path", ["source/emoji.ts", "source/util.ts", "source/types.ts", "source/spell-checker.ts"])
+def test_is_shell_core_file_does_not_match_secondary_utility_files(path):
+    assert _is_shell_core_file(path) is False
+
+
+def test_package_json_has_shell_dependency_detects_electron():
+    assert _package_json_has_shell_dependency('{"dependencies": {"electron-context-menu": "1.0.0"}, "devDependencies": {"electron": "^28.0.0"}}') is True
+
+
+def test_package_json_has_shell_dependency_false_for_ordinary_web_app():
+    assert _package_json_has_shell_dependency('{"dependencies": {"react": "^18.0.0", "express": "^4.0.0"}}') is False
+
+
+def test_package_json_has_shell_dependency_false_for_malformed_json():
+    assert _package_json_has_shell_dependency("{not json") is False
