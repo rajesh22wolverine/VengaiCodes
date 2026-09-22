@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Globe, Image as ImageIcon, FileText, Loader2, Sparkles, X, RotateCcw } from "lucide-react";
+import { Globe, Image as ImageIcon, FileText, Loader2, Sparkles, X, RotateCcw, Github, Wrench } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { AppDispatch, RootState } from "@/store";
@@ -11,20 +11,34 @@ import { setTigerExpression } from "@/store/slices/uiSlice";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 
-type SourceType = "description" | "url" | "screenshots";
+type SourceType = "description" | "url" | "repo" | "screenshots";
 
 const SOURCE_TABS: { id: SourceType; label: string; icon: React.ElementType }[] = [
   { id: "description", label: "Describe it", icon: FileText },
   { id: "url", label: "Website URL", icon: Globe },
+  { id: "repo", label: "GitHub repo", icon: Github },
   { id: "screenshots", label: "Screenshots", icon: ImageIcon },
 ];
 
 const MAX_SCREENSHOTS = 5;
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
+interface ReverseEngineering {
+  mode: string;
+  tech_stack?: { name: string; category: string; evidence: string }[];
+  pages?: { url: string; title: string }[];
+  pages_crawled?: number;
+  repo?: string;
+  files_scanned?: number;
+  data_model?: { name: string }[];
+  api_endpoints?: { method: string; path: string }[];
+  code_snippets?: { source: string; language: string }[];
+}
+
 interface Analysis {
   raw_idea: string;
   suggested_name: string;
+  reverse_engineering: ReverseEngineering;
 }
 
 export default function ReverseAppTab() {
@@ -36,6 +50,7 @@ export default function ReverseAppTab() {
   const [sourceType, setSourceType] = useState<SourceType>("description");
   const [description, setDescription] = useState("");
   const [url, setUrl] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -68,6 +83,10 @@ export default function ReverseAppTab() {
       toast.error("Paste a website URL first! 🐯");
       return;
     }
+    if (sourceType === "repo" && !repoUrl.trim()) {
+      toast.error("Paste a GitHub repo URL first! 🐯");
+      return;
+    }
     if (sourceType === "screenshots" && files.length === 0) {
       toast.error("Upload at least one screenshot first! 🐯");
       return;
@@ -81,6 +100,7 @@ export default function ReverseAppTab() {
       form.append("source_type", sourceType);
       if (sourceType === "description") form.append("description", description.trim());
       if (sourceType === "url") form.append("url", url.trim());
+      if (sourceType === "repo") form.append("repo_url", repoUrl.trim());
       if (sourceType === "screenshots") files.forEach((f) => form.append("files", f));
 
       const { data } = await apiClient.post("/reverse/analyze", form, {
@@ -88,7 +108,11 @@ export default function ReverseAppTab() {
         timeout: 120_000,
       });
 
-      setAnalysis({ raw_idea: data.raw_idea, suggested_name: data.suggested_name });
+      setAnalysis({
+        raw_idea: data.raw_idea,
+        suggested_name: data.suggested_name,
+        reverse_engineering: data.reverse_engineering,
+      });
       dispatch(setTigerExpression("excited"));
       toast.success("Got it! Review the idea below 🐯");
     } catch (error: any) {
@@ -107,7 +131,11 @@ export default function ReverseAppTab() {
     }
 
     const result = await dispatch(
-      createProject({ name: analysis.suggested_name, rawIdea: analysis.raw_idea })
+      createProject({
+        name: analysis.suggested_name,
+        rawIdea: analysis.raw_idea,
+        reverseEngineeringData: analysis.reverse_engineering,
+      })
     );
 
     if (createProject.fulfilled.match(result)) {
@@ -121,6 +149,7 @@ export default function ReverseAppTab() {
     setAnalysis(null);
     setDescription("");
     setUrl("");
+    setRepoUrl("");
     setFiles([]);
   };
 
@@ -192,6 +221,21 @@ export default function ReverseAppTab() {
                   />
                 )}
 
+                {sourceType === "repo" && (
+                  <div>
+                    <input
+                      type="url"
+                      value={repoUrl}
+                      onChange={(e) => setRepoUrl(e.target.value)}
+                      placeholder="https://github.com/owner/repo"
+                      className="w-full px-4 py-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:ring-2 focus:ring-[var(--color-primary)] focus:border-[var(--color-primary)] outline-none transition-all text-sm"
+                    />
+                    <p className="text-xs text-[var(--color-text-tertiary)] mt-2">
+                      Public repos only. Baby Tiger scans real source files — routes, models, dependencies — not just the README.
+                    </p>
+                  </div>
+                )}
+
                 {sourceType === "screenshots" && (
                   <div>
                     <label className="flex flex-col items-center justify-center gap-2 px-4 py-8 rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-tertiary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] cursor-pointer transition-colors">
@@ -251,6 +295,8 @@ export default function ReverseAppTab() {
             </motion.div>
           ) : (
             <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <ReverseFindings re={analysis.reverse_engineering} />
+
               <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-4">
                 <label className="block text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider mb-2">
                   App name
@@ -301,6 +347,55 @@ export default function ReverseAppTab() {
             </motion.div>
           )}
         </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+/** Shows the REAL facts Baby Tiger extracted (tech stack, pages/files scanned,
+ * data entities, endpoints, code snippets pulled) — not the AI-written idea
+ * paragraph, which is edited separately above. Nothing renders for
+ * description mode since there's nothing to extract from free text. */
+function ReverseFindings({ re }: { re: ReverseEngineering }) {
+  if (!re || re.mode === "description") return null;
+
+  const techNames = (re.tech_stack || []).map((t) => t.name);
+  const snippetCount = re.code_snippets?.length || 0;
+
+  const scopeLine =
+    re.mode === "url"
+      ? `${re.pages_crawled ?? re.pages?.length ?? 0} real page${(re.pages_crawled ?? 0) === 1 ? "" : "s"} crawled`
+      : re.mode === "repo"
+      ? `${re.files_scanned ?? 0} real source file${re.files_scanned === 1 ? "" : "s"} scanned in ${re.repo}`
+      : re.mode === "screenshots"
+      ? "Screens analyzed with vision AI"
+      : "";
+
+  if (!scopeLine && techNames.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 mb-4">
+      <div className="flex items-center gap-2 mb-2 text-[var(--color-text-primary)]">
+        <Wrench className="w-4 h-4 text-[var(--color-primary)]" />
+        <span className="text-sm font-semibold">What Baby Tiger actually found</span>
+      </div>
+      {scopeLine && <p className="text-xs text-[var(--color-text-secondary)] mb-2">{scopeLine}</p>}
+      {techNames.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {techNames.map((name) => (
+            <span
+              key={name}
+              className="px-2 py-0.5 rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)] text-xs font-medium"
+            >
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-tertiary)]">
+        {re.data_model && re.data_model.length > 0 && <span>{re.data_model.length} data entities found</span>}
+        {re.api_endpoints && re.api_endpoints.length > 0 && <span>{re.api_endpoints.length} real endpoints found</span>}
+        {snippetCount > 0 && <span>{snippetCount} real source file{snippetCount === 1 ? "" : "s"} pulled</span>}
       </div>
     </div>
   );

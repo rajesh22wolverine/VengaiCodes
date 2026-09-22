@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.orchestrator import AIError, generate_text
 from app.api.v1.auth import get_current_active_user
+from app.api.v1.reverse_engineer import build_reverse_engineering_directive
 from app.core.database import get_db
 from app.models.project import Project
 from app.models.user import User
@@ -50,7 +51,7 @@ class ApproveRequirementsRequest(BaseModel):
 
 
 # ─── Prompt builder ───
-def build_frd_prompt(project_name: str, raw_idea: str, conversation: list) -> str:
+def build_frd_prompt(project_name: str, raw_idea: str, conversation: list, reverse_data: dict | None = None) -> str:
     convo_text = ""
     for msg in conversation:
         role = "User" if msg["role"] == "user" else "Baby Tiger"
@@ -60,6 +61,7 @@ def build_frd_prompt(project_name: str, raw_idea: str, conversation: list) -> st
 
 Project: {project_name}
 Original idea: {raw_idea}
+{build_reverse_engineering_directive(reverse_data)}
 
 Full conversation:
 {convo_text}
@@ -132,7 +134,7 @@ async def generate_requirements(
     conversation = project.ai_conversation_history or []
 
     try:
-        prompt = build_frd_prompt(project.name, project.raw_idea or project.name, conversation)
+        prompt = build_frd_prompt(project.name, project.raw_idea or project.name, conversation, project.reverse_engineering_data)
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:

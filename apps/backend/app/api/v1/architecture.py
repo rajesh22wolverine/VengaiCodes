@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.codegen_shared import get_ordered_pages
 from app.ai.orchestrator import AIError, generate_text
 from app.api.v1.auth import get_current_active_user
+from app.api.v1.reverse_engineer import build_reverse_engineering_directive
 from app.core.database import get_db
 from app.models.project import Project, SDLCPhase
 from app.models.user import User
@@ -96,13 +97,21 @@ def build_stack_directive(selected_stack: dict | None) -> str:
 
 
 def build_architecture_prompt(
-    project_name: str, requirements: dict, pages: list[dict], selected_stack: dict | None = None
+    project_name: str, requirements: dict, pages: list[dict], selected_stack: dict | None = None,
+    reverse_data: dict | None = None,
 ) -> str:
     features = ", ".join(requirements.get("key_features", []))
     platforms = ", ".join(requirements.get("platforms", []))
     screen_names = ", ".join(p.get("name", "") for p in pages)
     tech_hint = requirements.get("tech_recommendations", "")
     stack_directive = build_stack_directive(selected_stack)
+    reverse_directive = build_reverse_engineering_directive(reverse_data)
+    if reverse_directive:
+        reverse_directive += (
+            "Prefer recommending the SAME or a directly compatible technology to what was detected above, "
+            "rather than inventing an unrelated stack — and base database_tables/api_endpoints on the real "
+            "data entities/endpoints found above when they exist.\n"
+        )
 
     return f"""You are Baby Tiger 🐯, VengaiCode's AI architecture assistant. Based on this app's approved requirements and UI/UX design, propose a simple, open-source technical architecture.
 
@@ -113,6 +122,7 @@ Platforms: {platforms}
 Screens: {screen_names}
 Complexity hint: {tech_hint}
 {stack_directive}
+{reverse_directive}
 If the app is a game, favor Godot Engine for the tech stack — it's fully open-source, capable of high-end 2D/3D games, and VengaiCode can build it into a real installable APK automatically. Only suggest Open 3D Engine (O3DE) instead if the user explicitly asked for an AAA-grade engine by name — O3DE has no automated build pipeline here, so it stays a downloadable project template the user builds themselves. If the app is not a game, favor simple open-source web or mobile technologies.
 
 Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
@@ -185,7 +195,7 @@ async def generate_architecture(
     pages = get_ordered_pages(project.uiux_data)
 
     try:
-        prompt = build_architecture_prompt(project.name, frd, pages, project.selected_stack)
+        prompt = build_architecture_prompt(project.name, frd, pages, project.selected_stack, project.reverse_engineering_data)
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:

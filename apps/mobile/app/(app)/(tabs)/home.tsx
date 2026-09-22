@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { CheckCircle2, Clock, Globe, FileText, ImagePlus, Plus, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react-native";
+import { CheckCircle2, Clock, Globe, FileText, ImagePlus, Plus, RefreshCw, RotateCcw, Sparkles, X, GitBranch, Wrench } from "lucide-react-native";
 
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { createProject, deleteProject, fetchProjects, Project } from "@/store/slices/projectSlice";
@@ -189,13 +189,25 @@ function CreateTab() {
   );
 }
 
-type SourceType = "description" | "url" | "screenshots";
+type SourceType = "description" | "url" | "repo" | "screenshots";
 
 const SOURCE_TABS: { id: SourceType; label: string; icon: React.ElementType }[] = [
   { id: "description", label: "Describe", icon: FileText },
   { id: "url", label: "URL", icon: Globe },
+  { id: "repo", label: "GitHub", icon: GitBranch },
   { id: "screenshots", label: "Screenshots", icon: ImagePlus },
 ];
+
+interface ReverseEngineering {
+  mode: string;
+  tech_stack?: { name: string; category: string; evidence: string }[];
+  pages_crawled?: number;
+  repo?: string;
+  files_scanned?: number;
+  data_model?: { name: string }[];
+  api_endpoints?: { method: string; path: string }[];
+  code_snippets?: { source: string; language: string }[];
+}
 
 const MAX_SCREENSHOTS = 5;
 
@@ -217,9 +229,10 @@ function ReverseAppTab() {
   const [sourceType, setSourceType] = useState<SourceType>("description");
   const [description, setDescription] = useState("");
   const [url, setUrl] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
   const [assets, setAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysis, setAnalysis] = useState<{ raw_idea: string; suggested_name: string } | null>(null);
+  const [analysis, setAnalysis] = useState<{ raw_idea: string; suggested_name: string; reverse_engineering: ReverseEngineering } | null>(null);
 
   const canCreate = user ? user.projects_remaining > 0 : true;
 
@@ -251,6 +264,10 @@ function ReverseAppTab() {
       showToast("Paste a website URL first! 🐯", "error");
       return;
     }
+    if (sourceType === "repo" && !repoUrl.trim()) {
+      showToast("Paste a GitHub repo URL first! 🐯", "error");
+      return;
+    }
     if (sourceType === "screenshots" && assets.length === 0) {
       showToast("Add at least one screenshot first! 🐯", "error");
       return;
@@ -262,6 +279,7 @@ function ReverseAppTab() {
       formData.append("source_type", sourceType);
       if (sourceType === "description") formData.append("description", description.trim());
       if (sourceType === "url") formData.append("url", url.trim());
+      if (sourceType === "repo") formData.append("repo_url", repoUrl.trim());
       if (sourceType === "screenshots") {
         assets.forEach((asset, i) => {
           formData.append(
@@ -280,7 +298,7 @@ function ReverseAppTab() {
         timeout: 120000,
       });
 
-      setAnalysis({ raw_idea: data.raw_idea, suggested_name: data.suggested_name });
+      setAnalysis({ raw_idea: data.raw_idea, suggested_name: data.suggested_name, reverse_engineering: data.reverse_engineering });
       showToast("Got it! Review the idea below 🐯");
     } catch (error: any) {
       showToast(error.message || "Couldn't analyze that. Please try again!", "error");
@@ -297,7 +315,11 @@ function ReverseAppTab() {
     }
 
     const result = await dispatch(
-      createProject({ name: analysis.suggested_name, rawIdea: analysis.raw_idea })
+      createProject({
+        name: analysis.suggested_name,
+        rawIdea: analysis.raw_idea,
+        reverseEngineeringData: analysis.reverse_engineering,
+      })
     );
 
     if (createProject.fulfilled.match(result)) {
@@ -310,6 +332,7 @@ function ReverseAppTab() {
     setAnalysis(null);
     setDescription("");
     setUrl("");
+    setRepoUrl("");
     setAssets([]);
   };
 
@@ -320,6 +343,8 @@ function ReverseAppTab() {
           <BabyTiger size={56} expression="excited" style={styles.heroEmoji} />
           <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>Review your app idea</Text>
         </View>
+
+        <ReverseFindings re={analysis.reverse_engineering} />
 
         <Text style={[styles.reviewLabel, { color: colors.textTertiary }]}>APP NAME</Text>
         <TextInput
@@ -419,6 +444,24 @@ function ReverseAppTab() {
         />
       )}
 
+      {sourceType === "repo" && (
+        <View>
+          <TextInput
+            value={repoUrl}
+            onChangeText={setRepoUrl}
+            placeholder="https://github.com/owner/repo"
+            placeholderTextColor={colors.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            style={[styles.urlInput, { color: colors.textPrimary, backgroundColor: colors.surface, borderColor: colors.border }]}
+          />
+          <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 8 }}>
+            Public repos only. Baby Tiger scans real source files — routes, models, dependencies — not just the README.
+          </Text>
+        </View>
+      )}
+
       {sourceType === "screenshots" && (
         <View>
           <Pressable
@@ -464,6 +507,61 @@ function ReverseAppTab() {
         )}
       </Pressable>
     </ScrollView>
+  );
+}
+
+/** Shows the REAL facts Baby Tiger extracted (tech stack, pages/files scanned,
+ * data entities, endpoints, code snippets pulled) — not the AI-written idea
+ * paragraph, which is edited separately below. Renders nothing for
+ * description mode since there's nothing to extract from free text. */
+function ReverseFindings({ re }: { re: ReverseEngineering }) {
+  const { colors } = useTheme();
+  if (!re || re.mode === "description") return null;
+
+  const techNames = (re.tech_stack || []).map((t) => t.name);
+  const snippetCount = re.code_snippets?.length || 0;
+
+  const scopeLine =
+    re.mode === "url"
+      ? `${re.pages_crawled ?? 0} real page${(re.pages_crawled ?? 0) === 1 ? "" : "s"} crawled`
+      : re.mode === "repo"
+      ? `${re.files_scanned ?? 0} real source file${re.files_scanned === 1 ? "" : "s"} scanned in ${re.repo}`
+      : re.mode === "screenshots"
+      ? "Screens analyzed with vision AI"
+      : "";
+
+  if (!scopeLine && techNames.length === 0) return null;
+
+  return (
+    <View style={[styles.findingsCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <Wrench size={14} color={colors.primary} />
+        <Text style={{ color: colors.textPrimary, fontSize: 13, fontWeight: "700" }}>What Baby Tiger actually found</Text>
+      </View>
+      {scopeLine ? <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 6 }}>{scopeLine}</Text> : null}
+      {techNames.length > 0 && (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+          {techNames.map((name) => (
+            <View key={name} style={[styles.findingsChip, { backgroundColor: colors.primaryLight }]}>
+              <Text style={{ color: colors.primary, fontSize: 11, fontWeight: "600" }}>{name}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+        {re.data_model && re.data_model.length > 0 && (
+          <Text style={{ color: colors.textTertiary, fontSize: 11 }}>{re.data_model.length} data entities found</Text>
+        )}
+        {re.api_endpoints && re.api_endpoints.length > 0 && (
+          <Text style={{ color: colors.textTertiary, fontSize: 11 }}>{re.api_endpoints.length} real endpoints found</Text>
+        )}
+        {snippetCount > 0 && (
+          <Text style={{ color: colors.textTertiary, fontSize: 11 }}>
+            {snippetCount} real source file{snippetCount === 1 ? "" : "s"} pulled
+          </Text>
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -541,6 +639,8 @@ const styles = StyleSheet.create({
   screenshotThumbWrap: { position: "relative" },
   screenshotThumb: { width: 64, height: 64, borderRadius: 10 },
   screenshotRemove: { position: "absolute", top: -6, right: -6, borderRadius: 999, padding: 3 },
+  findingsCard: { borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 14 },
+  findingsChip: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
   reviewLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5, marginBottom: 6, marginTop: 4 },
   reviewNameInput: { borderWidth: 1, borderRadius: 12, padding: 12, fontSize: 14, fontWeight: "600", marginBottom: 16 },
   reviewButtonRow: { flexDirection: "row", gap: 10, marginTop: 16 },

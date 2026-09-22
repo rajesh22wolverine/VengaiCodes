@@ -27,6 +27,7 @@ export interface Project {
   understanding_score: number;
   estimated_build_time_minutes?: number | null;
   thumbnail_url?: string | null;
+  reverse_engineering_data?: Record<string, any> | null;
   created_at: string;
   updated_at: string;
   completed_at?: string | null;
@@ -59,9 +60,16 @@ export const fetchProjects = createAsyncThunk("project/fetchAll", async (_, { re
 /** POST /projects — create a new project from raw idea text */
 export const createProject = createAsyncThunk(
   "project/create",
-  async ({ name, rawIdea }: { name: string; rawIdea: string }, { rejectWithValue }) => {
+  async (
+    { name, rawIdea, reverseEngineeringData }: { name: string; rawIdea: string; reverseEngineeringData?: Record<string, any> | null },
+    { rejectWithValue }
+  ) => {
     try {
-      const { data } = await apiClient.post("/projects", { name, raw_idea: rawIdea });
+      const { data } = await apiClient.post("/projects", {
+        name,
+        raw_idea: rawIdea,
+        reverse_engineering_data: reverseEngineeringData ?? undefined,
+      });
       return data.project as Project;
     } catch (error: any) {
       return rejectWithValue(error.message || "Failed to create project");

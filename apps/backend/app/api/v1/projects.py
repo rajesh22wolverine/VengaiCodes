@@ -80,6 +80,7 @@ async def create_project(
         name=payload.name,
         description=payload.description,
         raw_idea=payload.raw_idea,
+        reverse_engineering_data=payload.reverse_engineering_data,
         category=AppCategory.OTHER,
         platforms=[],
         status=ProjectStatus.DRAFT,

@@ -214,6 +214,24 @@ class Project(Base):
     #   "adrs": [...]           — Architecture Decision Records
     # }
 
+    # ── Reverse Engineering Data (Reverse App feature) ──
+    reverse_engineering_data: Optional[dict] = Column(JSON, nullable=True)
+    # Set by POST /reverse/analyze -> echoed back into POST /projects.
+    # Real, non-AI-invented facts extracted from an existing app the user
+    # pointed Baby Tiger at — grounds the Requirements/Architecture AI
+    # prompts (see build_reverse_engineering_directive in reverse_engineer.py)
+    # instead of those phases guessing from prose alone.
+    # {
+    #   "mode": "url" | "repo" | "screenshots" | "description",
+    #   "tech_stack": [{"name", "category", "evidence"}],   — fingerprinted/detected, not guessed
+    #   "pages": [{"url", "title", "text_excerpt", "form_count", "link_count"}],   — url mode
+    #   "repo": "owner/repo", "files_scanned": int,                                — repo mode
+    #   "data_model": [{"name", "kind", "fields": [...]}] (url, from real <form> fields)
+    #                 | [{"orm", "name", "file"}] (repo, from real model/schema declarations)
+    #   "api_endpoints": [{"framework"|"method", "path", "file"?}],   — repo mode, regex-matched real routes
+    #   "code_snippets": [{"source", "language", "content"}]          — real downloaded/fetched source, truncated
+    # }
+
     # ── Structured Stack Selection (distinct from architecture_data's free-text tech_stack) ──
     selected_stack: Optional[dict] = Column(JSON, nullable=True)
     # {

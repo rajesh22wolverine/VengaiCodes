@@ -17,6 +17,11 @@ class CreateProjectRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     raw_idea: str = Field(..., min_length=1, max_length=5000)
     description: Optional[str] = None
+    reverse_engineering_data: Optional[dict] = None
+    # Echoed straight back from POST /reverse/analyze's `reverse_engineering`
+    # field when this project was created via the Reverse App tab — real
+    # extracted facts (tech stack, routes, data model, code snippets), not
+    # re-derived here. See models/project.py for the shape.
 
 
 # ───────────────────────────────────────────────
@@ -37,6 +42,7 @@ class ProjectResponse(BaseModel):
     understanding_score: float
     estimated_build_time_minutes: Optional[int] = None
     thumbnail_url: Optional[str] = None
+    reverse_engineering_data: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
@@ -61,6 +67,7 @@ class ProjectResponse(BaseModel):
             understanding_score=project.understanding_score,
             estimated_build_time_minutes=project.estimated_build_time_minutes,
             thumbnail_url=project.thumbnail_url,
+            reverse_engineering_data=project.reverse_engineering_data,
             created_at=project.created_at,
             updated_at=project.updated_at,
             completed_at=project.completed_at,
