@@ -165,6 +165,14 @@ api_router.include_router(
     tags=["UI/UX Design"],
 )
 
+# ── Page Editor — deterministic page analysis/editing, no AI involved ──
+from app.api.v1 import page_editor
+api_router.include_router(
+    page_editor.router,
+    prefix="/page",
+    tags=["Page Editor"],
+)
+
 # ── Notifications ──
 from app.api.v1 import notifications
 api_router.include_router(
