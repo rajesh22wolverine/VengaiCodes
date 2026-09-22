@@ -1,6 +1,6 @@
 [package]
 name = "vengaicode-desktop"
-version = "1.0.0"
+version = "1.1.0"
 description = "VengaiCode desktop app"
 authors = ["VengaiCode"]
 license = ""
