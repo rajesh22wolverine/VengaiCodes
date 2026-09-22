@@ -307,7 +307,18 @@ def _infer_data_model(forms: list[dict]) -> list[dict]:
     seen: set[tuple[str, str]] = set()
 
     for form in forms:
-        field_names = [f["name"] for f in form.get("fields", []) if f.get("name")]
+        # Dedupe (radio/checkbox groups repeat one name per option) and drop
+        # dunder-prefixed names -- real-world false positive caught live on
+        # fastapi.tiangolo.com's MkDocs theme, whose light/dark toggle is a
+        # <form> of three radios all named "__palette": UI chrome, not data.
+        seen_names: set[str] = set()
+        field_names = []
+        for f in form.get("fields", []):
+            name = f.get("name")
+            if not name or name.startswith("__") or name in seen_names:
+                continue
+            seen_names.add(name)
+            field_names.append(name)
         if not field_names:
             continue
         lowered = [n.lower() for n in field_names]

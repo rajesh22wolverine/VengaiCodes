@@ -100,6 +100,21 @@ def test_infer_data_model_ignores_forms_with_no_named_fields():
     assert _infer_data_model(forms) == []
 
 
+def test_infer_data_model_ignores_dunder_prefixed_ui_chrome_fields():
+    # Real bug caught live against fastapi.tiangolo.com: MkDocs' light/dark
+    # theme toggle is a <form> of three radios all named "__palette" --
+    # UI chrome, not a real data entity.
+    forms = [{"action": "https://example.com/", "method": "POST", "fields": [{"name": "__palette"}, {"name": "__palette"}, {"name": "__palette"}]}]
+    assert _infer_data_model(forms) == []
+
+
+def test_infer_data_model_dedupes_repeated_field_names_within_a_form():
+    forms = [{"action": "/vote", "method": "POST", "fields": [{"name": "choice"}, {"name": "choice"}, {"name": "choice"}]}]
+    entities = _infer_data_model(forms)
+    assert len(entities) == 1
+    assert entities[0]["fields"] == ["choice"]
+
+
 # ─── GitHub repo URL parsing ───
 @pytest.mark.parametrize(
     "url,expected",
