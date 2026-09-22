@@ -6,7 +6,7 @@ import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, 
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import DraggableFlatList, { type RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 import {
-  BookOpen, Camera, Code2, Eye, FileAudio, Frame, GripVertical, ImageIcon, Layout, LayoutTemplate, Mic,
+  BookOpen, Camera, Code2, Eye, FileAudio, FileCode, Frame, GripVertical, ImageIcon, Layout, LayoutTemplate, Mic,
   Navigation, Palette, Puzzle, Save, Square, ThumbsUp, Trash2, Type, Upload, Wand2, X,
 } from "lucide-react-native";
 
@@ -27,6 +27,7 @@ import Section from "@/components/ui/Section";
 import TextField from "@/components/ui/TextField";
 import { buildPreviewDocument, type PreviewSelection } from "@/lib/designPreview";
 import DesignStudioModal from "@/components/design-studio/DesignStudioModal";
+import PageInspector from "@/components/page-inspector/PageInspector";
 
 interface ScreenDefinition {
   id: string;
@@ -149,6 +150,8 @@ export default function UIUXScreen() {
 
   const [uploadedDesigns, setUploadedDesigns] = useState<UploadedDesign[]>([]);
   const [uploadPageName, setUploadPageName] = useState("");
+  const [isPasteHtmlOpen, setIsPasteHtmlOpen] = useState(false);
+  const [pastedHtml, setPastedHtml] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [generatingCodeFor, setGeneratingCodeFor] = useState<string | null>(null);
   const [expandedPageId, setExpandedPageId] = useState<string | null>(null);
@@ -464,6 +467,35 @@ export default function UIUXScreen() {
     }
   };
 
+  // Importing real markup skips the vision model entirely — the HTML is
+  // already the thing the design upload above pays an AI call to
+  // reconstruct from a picture. Mobile pastes rather than picking a file:
+  // an arbitrary-file picker would need an extra native module.
+  const handleImportPastedHtml = async () => {
+    if (!pastedHtml.trim()) return;
+    const formData = new FormData();
+    formData.append("project_id", String(projectId));
+    formData.append("page_name", uploadPageName.trim() || "Imported page");
+    formData.append("html", pastedHtml);
+
+    setIsUploading(true);
+    try {
+      const { data } = await apiClient.post("/page/import", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setUploadedDesigns((prev) => [...prev, data.design]);
+      setPageOrder((prev) => [...prev, data.design.id]);
+      setUploadPageName("");
+      setPastedHtml("");
+      setIsPasteHtmlOpen(false);
+      showToast(`Imported ${data.summary.element_count} elements — no AI needed 🐯`);
+    } catch (error: any) {
+      showToast(error.message || "Failed to import that HTML.", "error");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const pickFromLibrary = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -763,6 +795,48 @@ export default function UIUXScreen() {
                 <Frame size={15} color={colors.primary} />
                 <Text style={[styles.uploadButtonText, { color: colors.primary }]}>Import from Figma</Text>
               </Pressable>
+
+              <Pressable
+                onPress={() => setIsPasteHtmlOpen((open) => !open)}
+                disabled={isUploading}
+                style={[styles.cameraButton, { borderColor: colors.border, marginTop: 10 }, isUploading && { opacity: 0.6 }]}
+              >
+                <FileCode size={15} color={colors.textPrimary} />
+                <Text style={[styles.uploadButtonText, { color: colors.textPrimary }]}>
+                  {isPasteHtmlOpen ? "Cancel HTML import" : "Paste HTML"}
+                </Text>
+              </Pressable>
+
+              {isPasteHtmlOpen && (
+                <View style={{ marginTop: 10 }}>
+                  <Text style={{ color: colors.textTertiary, fontSize: 11, marginBottom: 6, lineHeight: 16 }}>
+                    Already have the page's HTML? Paste it here — it goes straight in and becomes
+                    editable, with no AI step at all.
+                  </Text>
+                  <TextInput
+                    value={pastedHtml}
+                    onChangeText={setPastedHtml}
+                    placeholder="<html>..."
+                    placeholderTextColor={colors.textTertiary}
+                    multiline
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={[styles.codeInput, { color: colors.textPrimary, backgroundColor: colors.surface, borderColor: colors.border }]}
+                  />
+                  <Pressable
+                    onPress={handleImportPastedHtml}
+                    disabled={isUploading || !pastedHtml.trim()}
+                    style={[
+                      styles.uploadButton,
+                      { backgroundColor: colors.primary, marginTop: 8 },
+                      (isUploading || !pastedHtml.trim()) && { opacity: 0.6 },
+                    ]}
+                  >
+                    {isUploading ? <ActivityIndicator size="small" color="#fff" /> : <FileCode size={15} color="#fff" />}
+                    <Text style={styles.uploadButtonText}>Import this HTML</Text>
+                  </Pressable>
+                </View>
+              )}
             </Section>
           </>
         }
@@ -1077,6 +1151,14 @@ function PageCard({
                 onChangeText={onEditCss}
                 multiline
                 style={[styles.codeInput, { color: colors.textPrimary, backgroundColor: colors.surface, borderColor: colors.border }]}
+              />
+              <PageInspector
+                html={editedHtml}
+                css={editedCss}
+                onApply={(nextHtml, nextCss) => {
+                  onEditHtml(nextHtml);
+                  onEditCss(nextCss);
+                }}
               />
             </>
           ) : (

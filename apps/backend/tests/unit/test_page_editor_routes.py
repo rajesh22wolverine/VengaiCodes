@@ -119,6 +119,64 @@ def test_command_reports_what_it_could_not_understand(client):
     assert body["supported_phrasings"]
 
 
+def test_import_accepts_a_real_html_file_and_returns_its_analysis(client):
+    response = client.post(
+        "/api/v1/page/import",
+        files={"file": ("landing.html", PAGE.encode(), "text/html")},
+        data={"page_name": "Landing"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["html"] == PAGE
+    assert body["summary"]["by_tag"]["h1"] == 1
+    assert body["design"] is None  # no project_id, so nothing was stored
+
+
+def test_import_accepts_an_optional_stylesheet(client):
+    response = client.post(
+        "/api/v1/page/import",
+        files={
+            "file": ("landing.html", PAGE.encode(), "text/html"),
+            "css_file": ("landing.css", b".p { color: red; }", "text/css"),
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["stylesheet"]["rule_count"] == 1
+
+
+def test_import_accepts_pasted_html_without_a_file(client):
+    # The mobile app has no file picker, so it posts the markup directly.
+    response = client.post("/api/v1/page/import", data={"html": PAGE, "page_name": "Pasted"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["html"] == PAGE
+    assert body["summary"]["element_count"] > 0
+
+
+def test_import_rejects_when_neither_file_nor_html_is_given(client):
+    response = client.post("/api/v1/page/import", data={"page_name": "Nothing"})
+    assert response.status_code == 400
+    assert "paste the page's HTML" in response.json()["detail"]
+
+
+def test_import_rejects_a_non_html_file(client):
+    response = client.post(
+        "/api/v1/page/import",
+        files={"file": ("shot.png", b"\x89PNG\r\n", "image/png")},
+    )
+    assert response.status_code == 400
+    assert ".html" in response.json()["detail"]
+
+
+def test_import_rejects_a_file_with_no_elements(client):
+    response = client.post(
+        "/api/v1/page/import",
+        files={"file": ("empty.html", b"just some loose text", "text/html")},
+    )
+    assert response.status_code == 400
+    assert "doesn't contain any HTML elements" in response.json()["detail"]
+
+
 def test_command_handles_a_mix_of_understood_and_not(client):
     response = client.post(
         "/api/v1/page/command",

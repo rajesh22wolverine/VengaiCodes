@@ -19,10 +19,11 @@
 # ═══════════════════════════════════════════════════════════════
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,6 +116,94 @@ async def _save_design(db: AsyncSession, stored: tuple[Project, dict, dict], htm
 
 
 # ─── Routes ───
+@router.post("/import", summary="Upload a real .html file as a page (no AI)")
+async def import_page(
+    project_id: Optional[str] = Form(None),
+    page_name: str = Form("Imported page"),
+    file: Optional[UploadFile] = File(None),
+    css_file: Optional[UploadFile] = File(None),
+    html: Optional[str] = Form(None),
+    css: Optional[str] = Form(None),
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Takes actual HTML — an uploaded .html file, or markup pasted
+    straight in — rather than a screenshot.
+
+    The existing design upload (POST /uiux/{id}/design/upload) accepts
+    images only and needs a vision model to turn a picture of a page into
+    markup. When the user already HAS the page's HTML, that whole step is
+    pointless: the markup goes straight in, gets parsed, and is editable
+    immediately with zero AI involved anywhere in the chain.
+
+    Both input shapes exist because the desktop app can open a native file
+    picker, while the mobile app would need an extra native module to pick
+    an arbitrary file — pasting works there today with no new dependency.
+    """
+    if file is not None and file.filename:
+        filename = (file.filename or "").lower()
+        if not filename.endswith((".html", ".htm")):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please upload an .html file.")
+        raw = await file.read()
+        if len(raw) > MAX_PAGE_BYTES:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That page is too large to import here.")
+        html = raw.decode("utf-8", errors="replace")
+    elif not (html or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Upload an .html file or paste the page's HTML.")
+
+    html = html or ""
+    if len(html) > MAX_PAGE_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That page is too large to import here.")
+
+    css = css or ""
+    if css_file is not None and css_file.filename:
+        css_raw = await css_file.read()
+        if len(css_raw) > MAX_PAGE_BYTES:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That stylesheet is too large to import here.")
+        css = css_raw.decode("utf-8", errors="replace")
+
+    page = Page(html, css)
+    if not page.elements:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That file doesn't contain any HTML elements.")
+
+    design: Optional[dict] = None
+    if project_id:
+        result = await db.execute(select(Project).where(Project.id == project_id, Project.user_id == user.id))
+        project = result.scalar_one_or_none()
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found.")
+
+        uiux_data = dict(project.uiux_data or {})
+        designs = list(uiux_data.get("uploaded_designs", []))
+        now = datetime.now(timezone.utc).isoformat()
+        design = {
+            "id": uuid.uuid4().hex,
+            "page_name": page_name,
+            # No screenshot: this page arrived as real markup, so there's
+            # nothing to render a preview image from.
+            "image_url": None,
+            "uploaded_at": now,
+            "generated_html": html,
+            "generated_css": css,
+            "generation_notes": "Imported from an uploaded .html file — no AI was used.",
+            "modules": [],
+            "code_generated_at": now,
+            "code_updated_at": now,
+        }
+        designs.append(design)
+        uiux_data["uploaded_designs"] = designs
+        project.uiux_data = uiux_data
+        await db.commit()
+
+    return {
+        "success": True,
+        "html": html,
+        "css": css,
+        "design": design,
+        **page.analyze(),
+    }
+
+
 @router.post("/analyze", summary="Inventory everything on a page (no AI)")
 async def analyze(
     payload: AnalyzeRequest,

@@ -5,7 +5,7 @@ import {
   ArrowLeft, Palette, Type, Layout, Puzzle,
   Navigation, Loader2, ThumbsUp, BookOpen, Upload,
   Wand2, Save, Trash2, ImageIcon, Code2, Camera, X,
-  Mic, Square, FileAudio, GripVertical, Figma, LayoutTemplate,
+  Mic, Square, FileAudio, GripVertical, Figma, LayoutTemplate, FileCode,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
@@ -26,6 +26,7 @@ import GenerationProgress from "@/components/generation/GenerationProgress";
 import ChatPanel from "@/components/chat/ChatPanel";
 import { buildPreviewDocument, sendEditorCommand, type PreviewSelection } from "@/lib/designPreview";
 import DesignStudio from "@/components/design-studio/DesignStudio";
+import PageInspector from "@/components/page-inspector/PageInspector";
 
 interface ScreenDefinition {
   id: string;
@@ -147,6 +148,7 @@ export default function UIUXScreen() {
   const [editedHtml, setEditedHtml] = useState("");
   const [editedCss, setEditedCss] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const htmlInputRef = useRef<HTMLInputElement>(null);
 
   // Authoritative page order (wizard screens + uploads, mixed together).
   // Drag-and-drop only ever updates this — nothing is persisted until Save.
@@ -498,6 +500,34 @@ export default function UIUXScreen() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  // Importing a real .html file skips the vision model entirely — the
+  // markup is already the thing the design upload above pays an AI call
+  // to reconstruct from a picture.
+  const handleHtmlFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("project_id", projectId || "");
+    formData.append("page_name", uploadPageName.trim() || file.name.replace(/\.[^.]+$/, ""));
+    formData.append("file", file);
+
+    setIsUploading(true);
+    try {
+      const { data } = await apiClient.post("/page/import", formData, {
+        headers: { "Content-Type": undefined },
+      });
+      setUploadedDesigns((prev) => [...prev, data.design]);
+      setPageOrder((prev) => [...prev, data.design.id]);
+      setUploadPageName("");
+      toast.success(`Imported ${data.summary.element_count} elements — no AI needed 🐯`);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to import that HTML file.");
+    } finally {
+      setIsUploading(false);
+      if (htmlInputRef.current) htmlInputRef.current.value = "";
+    }
+  };
+
   // ── Import from Figma ──
 
   const importFromFigma = async () => {
@@ -814,6 +844,23 @@ export default function UIUXScreen() {
                   <Upload className="w-4 h-4" />
                 )}
                 Upload Design
+              </button>
+              <input
+                ref={htmlInputRef}
+                type="file"
+                accept=".html,.htm,text/html"
+                onChange={handleHtmlFileSelected}
+                className="hidden"
+                id="page-html-import-input"
+              />
+              <button
+                onClick={() => htmlInputRef.current?.click()}
+                disabled={isUploading}
+                title="Already have the page's HTML? Import it directly — no AI step needed."
+                className="px-4 py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-primary)] font-semibold text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                <FileCode className="w-4 h-4" />
+                Import HTML
               </button>
               <button
                 onClick={openCamera}
@@ -1313,6 +1360,15 @@ function PageCard({
                     className="w-full h-40 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-xs font-mono text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)] resize-y"
                   />
                 </div>
+
+                <PageInspector
+                  html={editedHtml}
+                  css={editedCss}
+                  onApply={(nextHtml, nextCss) => {
+                    onEditHtml(nextHtml);
+                    onEditCss(nextCss);
+                  }}
+                />
               </div>
 
               <div>

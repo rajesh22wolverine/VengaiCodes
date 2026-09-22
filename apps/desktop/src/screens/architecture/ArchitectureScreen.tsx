@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowLeft, Layers, Database, Webhook, Package,
-  Loader2, ThumbsUp, BookOpen
+  Loader2, ThumbsUp, BookOpen, GitBranch, Network, Copy, Check
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
@@ -29,12 +29,27 @@ interface APIEndpoint {
   purpose: string;
 }
 
+interface ADR {
+  title: string;
+  decision: string;
+  rationale: string;
+  alternatives_considered: string[];
+}
+
 interface ArchitectureDesign {
   architecture_summary: string;
   tech_stack: TechStack;
   database_tables: DatabaseTable[];
   api_endpoints: APIEndpoint[];
   third_party_services: string[];
+  adrs?: ADR[];
+}
+
+/** Mermaid source built deterministically by the backend from the
+ * architecture above (no second AI call), so it can't contradict it. */
+interface Blueprint {
+  system_diagram?: string | null;
+  erd?: string | null;
 }
 
 const METHOD_COLORS: Record<string, string> = {
@@ -50,6 +65,7 @@ export default function ArchitectureScreen() {
   const navigate = useNavigate();
 
   const [architecture, setArchitecture] = useState<ArchitectureDesign | null>(null);
+  const [blueprint, setBlueprint] = useState<Blueprint>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
@@ -63,6 +79,7 @@ export default function ArchitectureScreen() {
     try {
       const { data } = await apiClient.get(`/architecture/${projectId}`);
       setArchitecture(data.architecture);
+      setBlueprint({ system_diagram: data.system_diagram, erd: data.erd });
       setIsLoading(false);
     } catch {
       await generate();
@@ -77,6 +94,14 @@ export default function ArchitectureScreen() {
         project_id: projectId,
       }, { timeout: AI_REQUEST_TIMEOUT_MS });
       setArchitecture(data.architecture);
+      // The generate response carries the design itself; the deterministic
+      // diagrams are built alongside it and come back on the GET.
+      try {
+        const { data: saved } = await apiClient.get(`/architecture/${projectId}`);
+        setBlueprint({ system_diagram: saved.system_diagram, erd: saved.erd });
+      } catch {
+        setBlueprint({});
+      }
       toast.success("Your architecture is ready! 🏗️🐯");
     } catch (error: any) {
       toast.error(error.message || "Failed to generate architecture.");
@@ -270,6 +295,64 @@ export default function ArchitectureScreen() {
                   </span>
                 ))}
               </div>
+              <p className="text-xs text-[var(--color-text-tertiary)] mt-3">
+                Open-source and free options are chosen by default — a paid service only appears
+                here if you said you already have your own account for it.
+              </p>
+            </Section>
+          )}
+
+          {/* Architecture Decision Records */}
+          {architecture.adrs && architecture.adrs.length > 0 && (
+            <Section icon={GitBranch} title={`Decision Records (${architecture.adrs.length})`}>
+              <div className="space-y-3">
+                {architecture.adrs.map((adr, i) => (
+                  <div
+                    key={i}
+                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4"
+                  >
+                    <p className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">{adr.title}</p>
+                    <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-2">
+                      <span className="text-[var(--color-primary)] font-medium">Decision: </span>
+                      {adr.decision}
+                    </p>
+                    <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
+                      <span className="text-[var(--color-primary)] font-medium">Why: </span>
+                      {adr.rationale}
+                    </p>
+                    {adr.alternatives_considered?.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-3">
+                        <span className="text-xs text-[var(--color-text-tertiary)] mr-1">Also considered:</span>
+                        {adr.alternatives_considered.map((alt, j) => (
+                          <span
+                            key={j}
+                            className="px-2 py-0.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text-tertiary)]"
+                          >
+                            {alt}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* Blueprint diagrams */}
+          {(blueprint.system_diagram || blueprint.erd) && (
+            <Section icon={Network} title="Blueprint Diagrams">
+              <p className="text-xs text-[var(--color-text-tertiary)] mb-3">
+                Built directly from the architecture above — not a separate AI guess, so they can't
+                disagree with it. This is Mermaid source: it renders as a diagram in GitHub, Notion,
+                or mermaid.live.
+              </p>
+              <div className="space-y-3">
+                {blueprint.system_diagram && (
+                  <DiagramBlock label="System diagram" code={blueprint.system_diagram} />
+                )}
+                {blueprint.erd && <DiagramBlock label="Database ERD" code={blueprint.erd} />}
+              </div>
             </Section>
           )}
         </div>
@@ -310,6 +393,42 @@ export default function ArchitectureScreen() {
         </div>
       </div>
       <ChatPanel projectId={projectId} phase="architecture" />
+    </div>
+  );
+}
+
+/** Shows Mermaid diagram source with a copy button. Deliberately not
+ * rendered to SVG here: that would mean pulling in mermaid.js (~2MB) for
+ * two small diagrams, and the source is directly usable as-is anywhere
+ * Mermaid is supported. */
+function DiagramBlock({ label, code }: { label: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Couldn't copy to the clipboard.");
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)]">
+        <span className="text-xs font-semibold text-[var(--color-text-primary)]">{label}</span>
+        <button
+          onClick={copy}
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-bg)] transition-colors"
+        >
+          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre className="px-4 py-3 text-xs text-[var(--color-text-secondary)] overflow-x-auto font-mono leading-relaxed">
+        {code}
+      </pre>
     </div>
   );
 }

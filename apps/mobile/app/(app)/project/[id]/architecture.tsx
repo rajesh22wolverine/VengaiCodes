@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { BookOpen, Database, Layers, Package, ThumbsUp, Webhook } from "lucide-react-native";
+import { BookOpen, Database, GitBranch, Layers, Network, Package, ThumbsUp, Webhook } from "lucide-react-native";
 
 import apiClient from "@/lib/api";
 import { downloadAndShareFile } from "@/lib/download";
@@ -31,12 +31,27 @@ interface APIEndpoint {
   purpose: string;
 }
 
+interface ADR {
+  title: string;
+  decision: string;
+  rationale: string;
+  alternatives_considered: string[];
+}
+
 interface ArchitectureDesign {
   architecture_summary: string;
   tech_stack: TechStack;
   database_tables: DatabaseTable[];
   api_endpoints: APIEndpoint[];
   third_party_services: string[];
+  adrs?: ADR[];
+}
+
+/** Mermaid source the backend builds deterministically from the
+ * architecture above (no second AI call), so it can't contradict it. */
+interface Blueprint {
+  system_diagram?: string | null;
+  erd?: string | null;
 }
 
 const METHOD_COLORS: Record<string, string> = {
@@ -53,6 +68,7 @@ export default function ArchitectureScreen() {
   const { showToast } = useToast();
 
   const [architecture, setArchitecture] = useState<ArchitectureDesign | null>(null);
+  const [blueprint, setBlueprint] = useState<Blueprint>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
@@ -66,6 +82,7 @@ export default function ArchitectureScreen() {
     try {
       const { data } = await apiClient.get(`/architecture/${projectId}`);
       setArchitecture(data.architecture);
+      setBlueprint({ system_diagram: data.system_diagram, erd: data.erd });
       setIsLoading(false);
     } catch {
       await generate();
@@ -78,6 +95,14 @@ export default function ArchitectureScreen() {
     try {
       const { data } = await apiClient.post("/architecture/generate", { project_id: projectId });
       setArchitecture(data.architecture);
+      // The generate response carries the design itself; the deterministic
+      // diagrams are built alongside it and come back on the GET.
+      try {
+        const { data: saved } = await apiClient.get(`/architecture/${projectId}`);
+        setBlueprint({ system_diagram: saved.system_diagram, erd: saved.erd });
+      } catch {
+        setBlueprint({});
+      }
       showToast("Your architecture is ready! 🏗️🐯");
     } catch (error: any) {
       showToast(error.message || "Failed to generate architecture.", "error");
@@ -187,6 +212,54 @@ export default function ArchitectureScreen() {
                 </View>
               ))}
             </View>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, marginTop: 10, lineHeight: 16 }}>
+              Open-source and free options are chosen by default — a paid service only appears here
+              if you said you already have your own account for it.
+            </Text>
+          </Section>
+        )}
+
+        {architecture.adrs && architecture.adrs.length > 0 && (
+          <Section icon={GitBranch} title={`Decision Records (${architecture.adrs.length})`}>
+            {architecture.adrs.map((adr, i) => (
+              <View key={i} style={[styles.stackCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                <Text style={{ color: colors.textPrimary, fontSize: 13, fontWeight: "700", marginBottom: 6 }}>
+                  {adr.title}
+                </Text>
+                <Text style={[styles.body, { color: colors.textSecondary, marginBottom: 4 }]}>
+                  <Text style={{ color: colors.primary, fontWeight: "600" }}>Decision: </Text>
+                  {adr.decision}
+                </Text>
+                <Text style={[styles.body, { color: colors.textSecondary }]}>
+                  <Text style={{ color: colors.primary, fontWeight: "600" }}>Why: </Text>
+                  {adr.rationale}
+                </Text>
+                {adr.alternatives_considered?.length > 0 && (
+                  <View style={[styles.pillRow, { marginTop: 8 }]}>
+                    <Text style={{ color: colors.textTertiary, fontSize: 11 }}>Also considered:</Text>
+                    {adr.alternatives_considered.map((alt, j) => (
+                      <View key={j} style={[styles.fieldPill, { borderColor: colors.border }]}>
+                        <Text style={{ color: colors.textTertiary, fontSize: 11 }}>{alt}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            ))}
+          </Section>
+        )}
+
+        {(blueprint.system_diagram || blueprint.erd) && (
+          <Section icon={Network} title="Blueprint Diagrams">
+            <Text style={{ color: colors.textTertiary, fontSize: 11, marginBottom: 10, lineHeight: 16 }}>
+              Built directly from the architecture above — not a separate AI guess, so they can't
+              disagree with it. This is Mermaid source: long-press to copy, then paste anywhere
+              Mermaid renders (GitHub, Notion, mermaid.live).
+            </Text>
+            {blueprint.system_diagram ? (
+              <DiagramBlock label="System diagram" code={blueprint.system_diagram} />
+            ) : null}
+            {blueprint.erd ? <DiagramBlock label="Database ERD" code={blueprint.erd} /> : null}
           </Section>
         )}
       </ScrollView>
@@ -203,9 +276,28 @@ export default function ArchitectureScreen() {
   );
 }
 
+/** Mermaid source in a scrollable monospace block. Not rendered to a real
+ * diagram: that would mean shipping mermaid.js in the app bundle for two
+ * small diagrams. `selectable` gives native long-press-to-copy, so no
+ * clipboard dependency is needed either. */
+function DiagramBlock({ label, code }: { label: string; code: string }) {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.diagramBlock, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+      <Text style={{ color: colors.textPrimary, fontSize: 12, fontWeight: "700", marginBottom: 6 }}>{label}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <Text selectable style={[styles.mono, { color: colors.textSecondary, fontSize: 11, lineHeight: 16 }]}>
+          {code}
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { padding: 16 },
+  diagramBlock: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 10 },
   body: { fontSize: 13, lineHeight: 19 },
   mono: { fontFamily: "monospace" },
   stackCard: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 10 },
