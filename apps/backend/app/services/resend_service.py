@@ -29,6 +29,7 @@ RESEND_BASE_URL = "https://api.resend.com"
 
 class ResendError(Exception):
     """Raised when the Resend API call fails."""
+
     pass
 
 

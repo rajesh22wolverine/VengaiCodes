@@ -61,7 +61,9 @@ class CodegenError(RuntimeError):
     """A failure with a message meant for the user, not a stack trace."""
 
 
-def _requirements_context(requirements: dict, backend_framework: Optional[str] = None) -> str:
+def _requirements_context(
+    requirements: dict, backend_framework: Optional[str] = None
+) -> str:
     frd = requirements.get("frd", {}) if requirements else {}
     if not frd:
         return ""
@@ -71,12 +73,18 @@ def _requirements_context(requirements: dict, backend_framework: Optional[str] =
     features_text = "\n".join(f"- {f}" for f in features)
     stories_text = "\n".join(f"- {s}" for s in stories)
 
-    domain_guidance = detect_domain_guidance(f"{features_text} {stories_text}", backend_framework)
-    domain_block = f"\n\nDomain-specific guidance for this app:\n{domain_guidance}\n" if domain_guidance else ""
+    domain_guidance = detect_domain_guidance(
+        f"{features_text} {stories_text}", backend_framework
+    )
+    domain_block = (
+        f"\n\nDomain-specific guidance for this app:\n{domain_guidance}\n"
+        if domain_guidance
+        else ""
+    )
 
     return f"""
-Problem this app solves: {frd.get('problem_statement', '')}
-Target users: {frd.get('target_users', '')}
+Problem this app solves: {frd.get("problem_statement", "")}
+Target users: {frd.get("target_users", "")}
 
 Key features (implement the REAL logic for each of these — not a stub):
 {features_text}
@@ -118,7 +126,9 @@ def build_context(project: Project) -> dict:
         "endpoints": architecture.get("api_endpoints", []),
         "screens": get_ordered_pages(project.uiux_data)
         or [{"name": "Home", "purpose": "Landing screen"}],
-        "requirements_text": _requirements_context(requirements, stack_info.get("backend_framework")),
+        "requirements_text": _requirements_context(
+            requirements, stack_info.get("backend_framework")
+        ),
         "design_style": uiux.get("design_style"),
         "color_palette": uiux.get("color_palette"),
         "typography": uiux.get("typography"),
@@ -313,7 +323,9 @@ async def finalize(project: Project, state: dict) -> None:
         # o3de.py's header.
         wiring_files = o3de.manifest_files(project.name, screen_files)
         wiring_files.append(
-            build_readme_setup(project.name, None, o3de.setup_commands(project.name), None)
+            build_readme_setup(
+                project.name, None, o3de.setup_commands(project.name), None
+            )
         )
         real_files = screen_files
         summary = (
@@ -325,10 +337,14 @@ async def finalize(project: Project, state: dict) -> None:
             screen_files
         )
         wiring_files.append(
-            build_readme_setup(project.name, None, godot.setup_commands(project.name), None)
+            build_readme_setup(
+                project.name, None, godot.setup_commands(project.name), None
+            )
         )
         real_files = screen_files
-        summary = f"Generated {len(real_files)} real Godot scene files plus wiring/config."
+        summary = (
+            f"Generated {len(real_files)} real Godot scene files plus wiring/config."
+        )
     else:
         frontend_adapter = FRONTEND_ADAPTERS[stack_info["frontend_framework"]]
         backend_adapter = BACKEND_ADAPTERS[stack_info["backend_framework"]]
@@ -372,7 +388,9 @@ async def finalize(project: Project, state: dict) -> None:
         # codegen_shared.py. Each packaging workflow writes its own
         # platform-appropriate frontend/src/native/*.js at build time.
         real_files = model_files + routes_files + screen_files
-        summary = f"Generated {len(real_files)} real implementation files plus wiring/config."
+        summary = (
+            f"Generated {len(real_files)} real implementation files plus wiring/config."
+        )
 
     generated_files = [f.model_dump() for f in real_files + wiring_files]
     apply_package_json_name(generated_files, project.name)

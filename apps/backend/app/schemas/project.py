@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 # ───────────────────────────────────────────────
 class CreateProjectRequest(BaseModel):
     """Request to start a new project from a raw idea description."""
+
     name: str = Field(..., min_length=1, max_length=255)
     raw_idea: str = Field(..., min_length=1, max_length=5000)
     description: Optional[str] = None
@@ -56,12 +57,23 @@ class ProjectResponse(BaseModel):
             name=project.name,
             description=project.description,
             raw_idea=project.raw_idea,
-            category=project.category.value if hasattr(project.category, "value") else project.category,
-            complexity=(project.complexity.value if hasattr(project.complexity, "value") else project.complexity)
-                if project.complexity else None,
+            category=project.category.value
+            if hasattr(project.category, "value")
+            else project.category,
+            complexity=(
+                project.complexity.value
+                if hasattr(project.complexity, "value")
+                else project.complexity
+            )
+            if project.complexity
+            else None,
             platforms=project.platforms or [],
-            status=project.status.value if hasattr(project.status, "value") else project.status,
-            current_phase=project.current_phase.value if hasattr(project.current_phase, "value") else project.current_phase,
+            status=project.status.value
+            if hasattr(project.status, "value")
+            else project.status,
+            current_phase=project.current_phase.value
+            if hasattr(project.current_phase, "value")
+            else project.current_phase,
             progress_percent=project.progress_percent,
             phases_completed=project.phases_completed or [],
             understanding_score=project.understanding_score,

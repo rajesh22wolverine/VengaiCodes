@@ -37,7 +37,9 @@ class Api:
         """Follow a run the way the desktop and mobile apps do."""
         deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            job = self.client.get(f"/api/v1/{phase}/{self.project_id}/job").json()["job"]
+            job = self.client.get(f"/api/v1/{phase}/{self.project_id}/job").json()[
+                "job"
+            ]
             if job and job["status"] in ("succeeded", "failed", "cancelled"):
                 return job
             time.sleep(0.1)
@@ -90,7 +92,9 @@ def api(tmp_path, monkeypatch):
                 "api_endpoints": [{"method": "GET", "path": "/orders"}],
             },
         },
-        uiux_data={"design": {"screens": [{"id": "s1", "name": "Home", "purpose": "landing"}]}},
+        uiux_data={
+            "design": {"screens": [{"id": "s1", "name": "Home", "purpose": "landing"}]}
+        },
     )
 
     async def setup():

@@ -12,7 +12,9 @@ ProviderType = Literal["groq", "openai", "anthropic", "xai", "custom", "portable
 # Platform defaults can additionally be "ollama" — a user's own BYO config
 # has no reason to pick that provider_type (they'd just point "custom" at
 # their own Ollama instance instead), so it's admin-only.
-PlatformProviderType = Literal["groq", "openai", "anthropic", "xai", "custom", "portable", "ollama"]
+PlatformProviderType = Literal[
+    "groq", "openai", "anthropic", "xai", "custom", "portable", "ollama"
+]
 PriorityTier = Literal["primary", "secondary", "tertiary"]
 TaskType = Literal["codegen", "general"]
 # NULL/omitted (not part of this Literal) means "matches any request" —

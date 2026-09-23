@@ -65,7 +65,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     )
 
     capabilities_text = "\n".join(
-        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}"
+        for c in ctx.native_capabilities
+        if c in NATIVE_CAPABILITY_DESCRIPTIONS
     )
     native_section = (
         f"\nNative device features available to this app (use the real iOS/Swift API for each, "
@@ -79,7 +81,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real SwiftUI View struct implementing the "{screen_name}" screen of this app.
 
-Screen purpose: {ctx.screen.get('purpose', '')}
+Screen purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this screen can call:
 {endpoints_text}
@@ -100,8 +102,12 @@ Return ONLY the raw Swift code for this one file (imports + the Decodable model(
 the View struct). No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "swift", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "swift",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"frontend/{struct_name}.swift",
@@ -117,7 +123,7 @@ def _screen_struct_from_path(file: GeneratedFile) -> str:
 
 def _build_app_swift(project_name: str, struct_names: list[str]) -> str:
     tab_items = "\n".join(
-        f'            {s}()\n'
+        f"            {s}()\n"
         f'                .tabItem {{ Label("{s.removesuffix("View")}", systemImage: "{i + 1}.circle") }}'
         for i, s in enumerate(struct_names)
     )
@@ -209,7 +215,9 @@ schemes:
 
 def _project_yml(project_name: str) -> str:
     app_name = _app_name(project_name)
-    return _PROJECT_YML_TEMPLATE.format(app_name=app_name, bundle_suffix=app_name.lower())
+    return _PROJECT_YML_TEMPLATE.format(
+        app_name=app_name, bundle_suffix=app_name.lower()
+    )
 
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
@@ -242,7 +250,9 @@ def setup_commands(project_name: str) -> list[str]:
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    struct_names = [_screen_struct_from_path(f) for f in ctx.screen_files] or ["HomeView"]
+    struct_names = [_screen_struct_from_path(f) for f in ctx.screen_files] or [
+        "HomeView"
+    ]
     return [
         GeneratedFile(
             path=f"frontend/{_app_name(ctx.project_name)}App.swift",

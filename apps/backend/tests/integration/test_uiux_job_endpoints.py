@@ -70,7 +70,9 @@ def test_the_step_count_grows_once_the_design_names_its_screens(api) -> None:
 def test_designing_before_requirements_are_approved_is_rejected(api) -> None:
     api.update_project(requirements_data={"user_approved": False})
 
-    response = api.client.post("/api/v1/uiux/start", json={"project_id": api.project_id})
+    response = api.client.post(
+        "/api/v1/uiux/start", json={"project_id": api.project_id}
+    )
 
     assert response.status_code == 400
     assert "Requirements must be approved" in response.json()["detail"]
@@ -79,7 +81,9 @@ def test_designing_before_requirements_are_approved_is_rejected(api) -> None:
 def test_the_legacy_generate_endpoint_still_returns_the_finished_design(api) -> None:
     api.update_project(uiux_data=None)
 
-    response = api.client.post("/api/v1/uiux/generate", json={"project_id": api.project_id})
+    response = api.client.post(
+        "/api/v1/uiux/generate", json={"project_id": api.project_id}
+    )
 
     assert response.status_code == 200
     assert len(response.json()["design"]["screens"]) == 3

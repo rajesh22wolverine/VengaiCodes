@@ -37,7 +37,11 @@ ENDPOINTS = [
     {"method": "GET", "path": "/records", "purpose": "List records"},
     {"method": "POST", "path": "/records", "purpose": "Add a record"},
 ]
-SCREEN = {"name": "Collection", "purpose": "Browse the collection", "key_elements": ["grid"]}
+SCREEN = {
+    "name": "Collection",
+    "purpose": "Browse the collection",
+    "key_elements": ["grid"],
+}
 
 
 @pytest.fixture
@@ -121,7 +125,9 @@ def test_frontend_screen_prompts_send_the_shared_context_separately(key, calls) 
 
 
 @pytest.mark.parametrize("engine,language", [(godot, "gdscript"), (o3de, "lua")])
-def test_game_engine_prompts_keep_calling_the_project_a_game(engine, language, calls) -> None:
+def test_game_engine_prompts_keep_calling_the_project_a_game(
+    engine, language, calls
+) -> None:
     ctx = ScreenCtx(
         project_name="Vinyl Vault",
         screen=SCREEN,
@@ -141,7 +147,9 @@ def test_the_validation_retry_reuses_the_same_context(calls, monkeypatch) -> Non
     identical context — a retry that rebuilt or dropped it would pay
     for the requirements twice."""
     monkeypatch.setattr(
-        codegen_shared, "validate_generated_content", lambda language, content: "looks truncated"
+        codegen_shared,
+        "validate_generated_content",
+        lambda language, content: "looks truncated",
     )
 
     asyncio.run(

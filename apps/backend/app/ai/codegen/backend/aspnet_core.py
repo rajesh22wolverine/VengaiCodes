@@ -27,8 +27,19 @@
 #  own current documented usage instead.
 # ═══════════════════════════════════════════════════════════════
 
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    generate_text_validated,
+)
 
 _NAMESPACE = "GeneratedApp"
 
@@ -39,8 +50,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real EF Core entity class for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Table purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Namespace: `namespace {_NAMESPACE}.Models;`
@@ -55,8 +66,12 @@ Requirements:
 Return ONLY the raw C# code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "csharp", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "csharp",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/Models/{class_name}.cs",
@@ -68,7 +83,8 @@ Return ONLY the raw C# code for this one file. No markdown fences, no explanatio
 
 async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
     entities_text = ", ".join(_pascal(t.get("name", "Item")) for t in ctx.tables)
 
@@ -96,18 +112,24 @@ Requirements:
 Return ONLY the raw C# code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "csharp", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "csharp",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/Controllers/ApiController.cs",
-            language="csharp",
-            content=content,
-            description="ASP.NET Core controller implementing all API endpoints against the real DbContext",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/Controllers/ApiController.cs",
+                language="csharp",
+                content=content,
+                description="ASP.NET Core controller implementing all API endpoints against the real DbContext",
+            ),
+            issue,
+        )
+    ]
 
 
 def _proto_message_for_table(table: dict) -> str:
@@ -117,22 +139,34 @@ def _proto_message_for_table(table: dict) -> str:
 
 
 def _proto_rpc_for_endpoint(e: dict) -> tuple[str, str]:
-    method_name = _pascal(f"{e.get('method', 'get')}_{e.get('path', '/').strip('/')}") or "Call"
-    return f"  rpc {method_name} ({method_name}Request) returns ({method_name}Response);", method_name
+    method_name = (
+        _pascal(f"{e.get('method', 'get')}_{e.get('path', '/').strip('/')}") or "Call"
+    )
+    return (
+        f"  rpc {method_name} ({method_name}Request) returns ({method_name}Response);",
+        method_name,
+    )
 
 
 async def _grpc_routes(ctx: RoutesCtx) -> list[FileResult]:
     """Mirrors nestjs.py's/spring_boot.py's _grpc_routes(): the .proto is
     built deterministically and handed to the AI as a fixed contract, so
     the service implementation can't drift from it."""
-    messages = "\n\n".join(_proto_message_for_table(t) for t in ctx.tables) or "message Empty {}"
+    messages = (
+        "\n\n".join(_proto_message_for_table(t) for t in ctx.tables)
+        or "message Empty {}"
+    )
     rpc_lines = []
     request_response_messages = []
     for e in ctx.endpoints:
         rpc_line, method_name = _proto_rpc_for_endpoint(e)
         rpc_lines.append(rpc_line)
-        request_response_messages.append(f"message {method_name}Request {{\n  string payload = 1;\n}}")
-        request_response_messages.append(f"message {method_name}Response {{\n  string result = 1;\n}}")
+        request_response_messages.append(
+            f"message {method_name}Request {{\n  string payload = 1;\n}}"
+        )
+        request_response_messages.append(
+            f"message {method_name}Response {{\n  string result = 1;\n}}"
+        )
 
     proto_skeleton = f"""syntax = "proto3";
 
@@ -150,7 +184,8 @@ service ApiService {{
 """
 
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
     entities_text = ", ".join(_pascal(t.get("name", "Item")) for t in ctx.tables)
 
@@ -187,8 +222,12 @@ Requirements:
 Return ONLY the raw C# code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "csharp", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "csharp",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return [
         (
@@ -229,7 +268,9 @@ def _entity_class_from_path(file: GeneratedFile) -> str:
 
 def _build_db_context_cs(model_files: list[GeneratedFile]) -> str:
     entities = [_entity_class_from_path(f) for f in model_files]
-    dbsets = "\n".join(f"    public DbSet<{name}> {name}s {{ get; set; }}" for name in entities)
+    dbsets = "\n".join(
+        f"    public DbSet<{name}> {name}s {{ get; set; }}" for name in entities
+    )
     return f"""using Microsoft.EntityFrameworkCore;
 using {_NAMESPACE}.Models;
 
@@ -247,7 +288,11 @@ public class AppDbContext : DbContext
 def _program_cs(project_name: str, grpc: bool) -> str:
     grpc_service = "builder.Services.AddGrpc();\n" if grpc else ""
     controllers_line = "" if grpc else "builder.Services.AddControllers();\n"
-    map_line = f"app.MapGrpcService<{_NAMESPACE}.ApiGrpcService>();\n" if grpc else "app.MapControllers();\n"
+    map_line = (
+        f"app.MapGrpcService<{_NAMESPACE}.ApiGrpcService>();\n"
+        if grpc
+        else "app.MapControllers();\n"
+    )
     return f"""using Microsoft.EntityFrameworkCore;
 using {_NAMESPACE}.Data;
 
@@ -306,14 +351,29 @@ def _csproj(project_name: str, grpc: bool) -> str:
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     return [
-        GeneratedFile(path=f"backend/{_NAMESPACE}.csproj", language="xml", content=_csproj(ctx.project_name, _is_grpc(ctx)), description=".NET project manifest"),
+        GeneratedFile(
+            path=f"backend/{_NAMESPACE}.csproj",
+            language="xml",
+            content=_csproj(ctx.project_name, _is_grpc(ctx)),
+            description=".NET project manifest",
+        ),
     ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     return [
-        GeneratedFile(path="backend/Program.cs", language="csharp", content=_program_cs(ctx.project_name, _is_grpc(ctx)), description="ASP.NET Core entry point"),
-        GeneratedFile(path="backend/Data/AppDbContext.cs", language="csharp", content=_build_db_context_cs(ctx.model_files), description="EF Core DbContext — one DbSet per generated entity"),
+        GeneratedFile(
+            path="backend/Program.cs",
+            language="csharp",
+            content=_program_cs(ctx.project_name, _is_grpc(ctx)),
+            description="ASP.NET Core entry point",
+        ),
+        GeneratedFile(
+            path="backend/Data/AppDbContext.cs",
+            language="csharp",
+            content=_build_db_context_cs(ctx.model_files),
+            description="EF Core DbContext — one DbSet per generated entity",
+        ),
     ]
 
 

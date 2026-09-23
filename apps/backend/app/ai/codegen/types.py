@@ -106,6 +106,7 @@ class WiringCtx:
     to generate the routes/model files, to deterministically wire URL
     patterns to exact view names, or declare exact column types, without
     re-deriving them from AI-authored file content."""
+
     project_name: str
     model_files: list[GeneratedFile]
     routes_files: list[GeneratedFile]

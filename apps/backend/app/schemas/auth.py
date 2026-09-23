@@ -80,6 +80,7 @@ def validate_indian_mobile(mobile: str) -> str:
 # ───────────────────────────────────────────────
 class SignupRequest(BaseModel):
     """User registration request."""
+
     full_name: str = Field(
         ...,
         min_length=2,
@@ -138,7 +139,9 @@ class SignupRequest(BaseModel):
     def check_full_name(cls, v: str) -> str:
         v = v.strip()
         if not re.match(r"^[a-zA-Z\s\.']+$", v):
-            raise ValueError("Full name can only contain letters, spaces, dots and apostrophes")
+            raise ValueError(
+                "Full name can only contain letters, spaces, dots and apostrophes"
+            )
         return v
 
     @model_validator(mode="after")
@@ -158,6 +161,7 @@ class SignupRequest(BaseModel):
 
 class SignupResponse(BaseModel):
     """Response after successful signup initiation."""
+
     success: bool = True
     message: str
     user_id: str
@@ -172,6 +176,7 @@ class SignupResponse(BaseModel):
 # ───────────────────────────────────────────────
 class LoginRequest(BaseModel):
     """User login request."""
+
     username_or_email: str = Field(
         ...,
         description="Username or email address",
@@ -197,6 +202,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     """Response after successful login."""
+
     success: bool = True
     message: str
     access_token: str
@@ -216,6 +222,7 @@ class LoginResponse(BaseModel):
 # ───────────────────────────────────────────────
 class SendOTPRequest(BaseModel):
     """Request to send OTP to email or mobile."""
+
     target: str = Field(
         ...,
         description="Email address or mobile number to send OTP to",
@@ -240,6 +247,7 @@ class SendOTPRequest(BaseModel):
 
 class SendOTPResponse(BaseModel):
     """Response after OTP is sent."""
+
     success: bool = True
     message: str
     otp_sent_to: str
@@ -250,6 +258,7 @@ class SendOTPResponse(BaseModel):
 
 class VerifyOTPRequest(BaseModel):
     """Request to verify OTP code."""
+
     target: str = Field(
         ...,
         description="Email or mobile the OTP was sent to",
@@ -281,6 +290,7 @@ class VerifyOTPRequest(BaseModel):
 
 class VerifyOTPResponse(BaseModel):
     """Response after OTP verification."""
+
     success: bool = True
     message: str
     verified: bool
@@ -296,6 +306,7 @@ class VerifyOTPResponse(BaseModel):
 # ───────────────────────────────────────────────
 class ForgotPasswordRequest(BaseModel):
     """Request to initiate password reset."""
+
     email: EmailStr = Field(
         ...,
         description="Email address of the account",
@@ -304,6 +315,7 @@ class ForgotPasswordRequest(BaseModel):
 
 class ForgotPasswordResponse(BaseModel):
     """Response after password reset is initiated."""
+
     success: bool = True
     message: str
     otp_sent_to: str
@@ -311,6 +323,7 @@ class ForgotPasswordResponse(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     """Request to reset password with OTP verification."""
+
     email: EmailStr
     otp: str = Field(..., min_length=6, max_length=6, pattern="^[0-9]{6}$")
     new_password: str = Field(..., min_length=8)
@@ -330,12 +343,14 @@ class ResetPasswordRequest(BaseModel):
 
 class ResetPasswordResponse(BaseModel):
     """Response after successful password reset."""
+
     success: bool = True
     message: str = "Password reset successfully. Please login with your new password."
 
 
 class ChangePasswordRequest(BaseModel):
     """Request to change password (authenticated user)."""
+
     current_password: str
     new_password: str = Field(..., min_length=8)
     confirm_new_password: str
@@ -357,11 +372,13 @@ class ChangePasswordRequest(BaseModel):
 # ───────────────────────────────────────────────
 class TokenRefreshRequest(BaseModel):
     """Request to refresh access token."""
+
     refresh_token: str = Field(..., description="Valid refresh token")
 
 
 class TokenRefreshResponse(BaseModel):
     """Response with new access token."""
+
     success: bool = True
     access_token: str
     token_type: str = "bearer"
@@ -370,6 +387,7 @@ class TokenRefreshResponse(BaseModel):
 
 class TokenData(BaseModel):
     """Data encoded inside JWT token."""
+
     user_id: str
     username: str
     email: str
@@ -383,6 +401,7 @@ class TokenData(BaseModel):
 # ───────────────────────────────────────────────
 class UserResponse(BaseModel):
     """Public user data returned in API responses."""
+
     id: str
     full_name: str
     username: str
@@ -429,7 +448,7 @@ class UserResponse(BaseModel):
             email=user.email,
             mobile=user.mobile,
             avatar_url=user.avatar_url,
-            tier=user.tier.value if hasattr(user.tier, 'value') else user.tier,
+            tier=user.tier.value if hasattr(user.tier, "value") else user.tier,
             is_admin=user.is_admin,
             is_vip=user.is_vip,
             projects_used=user.projects_used,
@@ -458,8 +477,8 @@ class UserResponse(BaseModel):
             govt_id_verified=user.govt_id_verified,
             biometric_verified=user.biometric_verified,
             verification_status=user.verification_status.value
-                if hasattr(user.verification_status, 'value')
-                else user.verification_status,
+            if hasattr(user.verification_status, "value")
+            else user.verification_status,
             is_seller=user.is_seller,
             seller_verified=user.seller_verified,
             seller_rating=user.seller_rating,
@@ -468,10 +487,10 @@ class UserResponse(BaseModel):
             has_custom_character=user.has_custom_character,
             character_name=user.character_name,
             revenue_sharing_agreed=user.revenue_sharing_agreed,
-            status=user.status.value if hasattr(user.status, 'value') else user.status,
+            status=user.status.value if hasattr(user.status, "value") else user.status,
             restriction_level=user.restriction_level.value
-                if hasattr(user.restriction_level, 'value')
-                else user.restriction_level,
+            if hasattr(user.restriction_level, "value")
+            else user.restriction_level,
             created_at=user.created_at,
             last_login=user.last_login,
             preferences=user.preferences or {},
@@ -483,11 +502,13 @@ class UserResponse(BaseModel):
 # ───────────────────────────────────────────────
 class VerifySessionRequest(BaseModel):
     """Request to verify an existing session token."""
+
     token: str = Field(..., description="JWT access token to verify")
 
 
 class VerifySessionResponse(BaseModel):
     """Response after session verification."""
+
     success: bool = True
     valid: bool
     user: Optional[UserResponse] = None
@@ -499,6 +520,7 @@ class VerifySessionResponse(BaseModel):
 # ───────────────────────────────────────────────
 class LogoutResponse(BaseModel):
     """Response after logout."""
+
     success: bool = True
     message: str = "Logged out successfully. See you next time! 🐯"
 
@@ -508,6 +530,7 @@ class LogoutResponse(BaseModel):
 # ───────────────────────────────────────────────
 class ErrorResponse(BaseModel):
     """Standard error response format."""
+
     success: bool = False
     message: str
     error_code: Optional[str] = None

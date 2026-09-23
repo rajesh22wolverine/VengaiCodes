@@ -34,7 +34,9 @@ def client():
 
 
 def test_analyze_returns_a_full_inventory(client):
-    response = client.post("/api/v1/page/analyze", json={"html": PAGE, "css": ".p { color: red; }"})
+    response = client.post(
+        "/api/v1/page/analyze", json={"html": PAGE, "css": ".p { color: red; }"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
@@ -53,7 +55,12 @@ def test_analyze_requires_a_source(client):
 def test_edit_applies_structured_ops(client):
     response = client.post(
         "/api/v1/page/edit",
-        json={"html": PAGE, "edits": [{"op": "set_text", "target": {"selector": "#h"}, "value": "Hi there"}]},
+        json={
+            "html": PAGE,
+            "edits": [
+                {"op": "set_text", "target": {"selector": "#h"}, "value": "Hi there"}
+            ],
+        },
     )
     assert response.status_code == 200
     body = response.json()
@@ -89,7 +96,10 @@ def test_edit_requires_at_least_one_edit(client):
 
 
 def test_command_previews_without_applying_by_default(client):
-    response = client.post("/api/v1/page/command", json={"html": PAGE, "command": 'change the headline to "Welcome"'})
+    response = client.post(
+        "/api/v1/page/command",
+        json={"html": PAGE, "command": 'change the headline to "Welcome"'},
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["applied"] is False
@@ -102,7 +112,11 @@ def test_command_previews_without_applying_by_default(client):
 def test_command_applies_when_asked(client):
     response = client.post(
         "/api/v1/page/command",
-        json={"html": PAGE, "command": 'change the headline to "Welcome"', "apply": True},
+        json={
+            "html": PAGE,
+            "command": 'change the headline to "Welcome"',
+            "apply": True,
+        },
     )
     body = response.json()
     assert body["applied"] is True
@@ -110,7 +124,10 @@ def test_command_applies_when_asked(client):
 
 
 def test_command_reports_what_it_could_not_understand(client):
-    response = client.post("/api/v1/page/command", json={"html": PAGE, "command": "make it feel more premium"})
+    response = client.post(
+        "/api/v1/page/command",
+        json={"html": PAGE, "command": "make it feel more premium"},
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["understood"] == []
@@ -146,7 +163,9 @@ def test_import_accepts_an_optional_stylesheet(client):
 
 def test_import_accepts_pasted_html_without_a_file(client):
     # The mobile app has no file picker, so it posts the markup directly.
-    response = client.post("/api/v1/page/import", data={"html": PAGE, "page_name": "Pasted"})
+    response = client.post(
+        "/api/v1/page/import", data={"html": PAGE, "page_name": "Pasted"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["html"] == PAGE
@@ -180,7 +199,7 @@ def test_import_rejects_a_file_with_no_elements(client):
 def test_command_handles_a_mix_of_understood_and_not(client):
     response = client.post(
         "/api/v1/page/command",
-        json={"html": PAGE, "command": 'hide the .p\nmake it pop', "apply": True},
+        json={"html": PAGE, "command": "hide the .p\nmake it pop", "apply": True},
     )
     body = response.json()
     assert len(body["understood"]) == 1

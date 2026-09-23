@@ -57,7 +57,10 @@ def _slug(name: str) -> str:
 
 
 def _pascal(name: str) -> str:
-    return "".join(word.capitalize() for word in re.split(r"[^a-zA-Z0-9]+", name) if word) or "Item"
+    return (
+        "".join(word.capitalize() for word in re.split(r"[^a-zA-Z0-9]+", name) if word)
+        or "Item"
+    )
 
 
 # Android/Java package segments can't start with a digit or be a reserved
@@ -69,13 +72,59 @@ def _pascal(name: str) -> str:
 # since that one runs as a standalone CI script with no import access to
 # this module.
 JAVA_RESERVED_WORDS = {
-    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
-    "class", "const", "continue", "default", "do", "double", "else", "enum",
-    "extends", "final", "finally", "float", "for", "goto", "if", "implements",
-    "import", "instanceof", "int", "interface", "long", "native", "new",
-    "package", "private", "protected", "public", "return", "short", "static",
-    "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
-    "transient", "try", "void", "volatile", "while", "true", "false", "null",
+    "abstract",
+    "assert",
+    "boolean",
+    "break",
+    "byte",
+    "case",
+    "catch",
+    "char",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extends",
+    "final",
+    "finally",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "implements",
+    "import",
+    "instanceof",
+    "int",
+    "interface",
+    "long",
+    "native",
+    "new",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "short",
+    "static",
+    "strictfp",
+    "super",
+    "switch",
+    "synchronized",
+    "this",
+    "throw",
+    "throws",
+    "transient",
+    "try",
+    "void",
+    "volatile",
+    "while",
+    "true",
+    "false",
+    "null",
 }
 
 
@@ -125,7 +174,9 @@ def apply_package_json_name(files: list[dict], project_name: str) -> None:
             try:
                 pkg = json.loads(f["content"])
             except (json.JSONDecodeError, TypeError):
-                logger.warning("Could not parse AI-generated package.json to patch its name")
+                logger.warning(
+                    "Could not parse AI-generated package.json to patch its name"
+                )
                 return
             pkg["name"] = slug
             f["content"] = json.dumps(pkg, indent=2)
@@ -169,7 +220,16 @@ def _validate_brace_heuristic(content: str) -> str | None:
 # listed explicitly rather than relying on VALIDATORS.get()'s fallback,
 # so it reads as a reviewed decision, not an accident.
 _BRACE_HEURISTIC_LANGUAGES = {
-    "javascript", "typescript", "csharp", "rust", "go", "kotlin", "swift", "dart", "php", "lua",
+    "javascript",
+    "typescript",
+    "csharp",
+    "rust",
+    "go",
+    "kotlin",
+    "swift",
+    "dart",
+    "php",
+    "lua",
 }
 
 VALIDATORS: dict[str, Callable[[str], str | None]] = {
@@ -185,7 +245,9 @@ def validate_generated_content(language: str, content: str) -> str | None:
     return VALIDATORS.get(language, _validate_brace_heuristic)(content)
 
 
-def build_project_context(project_name: str, requirements_text: str, label: str = "App") -> str:
+def build_project_context(
+    project_name: str, requirements_text: str, label: str = "App"
+) -> str:
     """The part of every codegen prompt that is the same for every file
     in a project: who the model is, which app, and its requirements.
 
@@ -221,7 +283,12 @@ async def generate_text_validated(
     hit the retry was always meant to get.
     """
     result = await generate_text(
-        prompt, max_tokens=max_tokens, user=user, db=db, task_type="codegen", context=context
+        prompt,
+        max_tokens=max_tokens,
+        user=user,
+        db=db,
+        task_type="codegen",
+        context=context,
     )
     content = strip_code_fences(result["text"])
     issue = validate_generated_content(language, content)
@@ -255,10 +322,34 @@ async def generate_text_validated(
 # fixed generic plugin set to every project.
 NATIVE_CAPABILITY_KEYWORDS: dict[str, list[str]] = {
     "camera": ["camera", "photo", "take a picture", "scan a", "upload an image"],
-    "push_notifications": ["push notification", "notify user", "alert user when", "send a notification"],
-    "geolocation": ["location", "gps", "map", "nearby", "distance from", "current position"],
-    "offline_storage": ["offline", "without internet", "local storage", "works without", "sync later"],
-    "share": ["share to", "share this", "share with", "social share", "invite a friend"],
+    "push_notifications": [
+        "push notification",
+        "notify user",
+        "alert user when",
+        "send a notification",
+    ],
+    "geolocation": [
+        "location",
+        "gps",
+        "map",
+        "nearby",
+        "distance from",
+        "current position",
+    ],
+    "offline_storage": [
+        "offline",
+        "without internet",
+        "local storage",
+        "works without",
+        "sync later",
+    ],
+    "share": [
+        "share to",
+        "share this",
+        "share with",
+        "social share",
+        "invite a friend",
+    ],
     # Scanning a user-chosen folder on THEIR OWN disk (a music/photo library
     # importer, a local log viewer, ...) — distinct from "scan a" above,
     # which is camera-based document scanning. Without this, codegen has no
@@ -268,9 +359,17 @@ NATIVE_CAPABILITY_KEYWORDS: dict[str, list[str]] = {
     # generated feature compiles fine but can never actually reach the
     # filesystem once installed.
     "filesystem": [
-        "select a folder", "pick a folder", "choose a folder", "browse for files",
-        "scan a folder", "scan your files", "scan your computer", "local files",
-        "local library", "import from your computer", "select a directory",
+        "select a folder",
+        "pick a folder",
+        "choose a folder",
+        "browse for files",
+        "scan a folder",
+        "scan your files",
+        "scan your computer",
+        "local files",
+        "local library",
+        "import from your computer",
+        "select a directory",
     ],
 }
 
@@ -321,8 +420,15 @@ def detect_native_capabilities(text: str) -> list[str]:
 # code with a guaranteed-broken import.
 DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "music_player": [
-        "music player", "music library", "audio library", "playlist",
-        "mp3", "album", "music streaming", "audio track", "song library",
+        "music player",
+        "music library",
+        "audio library",
+        "playlist",
+        "mp3",
+        "album",
+        "music streaming",
+        "audio track",
+        "song library",
     ],
 }
 
@@ -444,7 +550,9 @@ def build_endpoints_block(endpoints: list[dict], api_style: str) -> str:
             f"(originally described as {e.get('method')} {e.get('path')}): {e.get('purpose')}"
             for e in endpoints
         )
-    return "\n".join(f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in endpoints)
+    return "\n".join(
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in endpoints
+    )
 
 
 # Appended once, right after build_endpoints_block()'s output, whenever
@@ -519,7 +627,9 @@ def build_design_guidance_block(
     if typography:
         lines.append(f"- Typography: {typography}")
     if modules:
-        lines.append(f"- This screen's structural sections, top to bottom: {', '.join(modules)}")
+        lines.append(
+            f"- This screen's structural sections, top to bottom: {', '.join(modules)}"
+        )
     if not lines:
         return ""
     return "\nMatch the app's design system:\n" + "\n".join(lines) + "\n"

@@ -26,7 +26,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
 
     capabilities_text = "\n".join(
-        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}"
+        for c in ctx.native_capabilities
+        if c in NATIVE_CAPABILITY_DESCRIPTIONS
     )
     native_section = (
         f"\nNative device features available to this app (import and use where relevant to "
@@ -39,7 +41,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Svelte component (classic Svelte 4 syntax, NOT Svelte 5 runes) for the "{screen_name}" screen of this app.
 
-Screen purpose: {ctx.screen.get('purpose', '')}
+Screen purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this screen can call:
 {endpoints_text}
@@ -58,8 +60,12 @@ Requirements:
 Return ONLY the raw .svelte file content. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "javascript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"frontend/src/screens/{component_name}.svelte",
@@ -76,9 +82,15 @@ def _screen_import_name(file: GeneratedFile) -> str:
 def _build_app_svelte(names: list[str]) -> str:
     imports = "\n".join(f"import {n} from './screens/{n}.svelte';" for n in names)
     entries = ",\n".join(f"    {{ name: '{n}', component: {n} }}" for n in names)
-    script = "<script>\n" + imports + "\n\n  const screens = [\n" + entries + "\n  ];\n  let active = 0;\n</script>"
+    script = (
+        "<script>\n"
+        + imports
+        + "\n\n  const screens = [\n"
+        + entries
+        + "\n  ];\n  let active = 0;\n</script>"
+    )
     template = (
-        "\n\n<div class=\"min-h-screen flex flex-col\">\n"
+        '\n\n<div class="min-h-screen flex flex-col">\n'
         "  {#if screens.length > 1}\n"
         '    <nav class="flex gap-2 p-3 border-b border-gray-200">\n'
         "      {#each screens as s, i}\n"
@@ -166,19 +178,61 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
             "autoprefixer": "^10.4.17",
         },
     )
-    return [GeneratedFile(path="frontend/package.json", language="json", content=content, description="Frontend dependency manifest")]
+    return [
+        GeneratedFile(
+            path="frontend/package.json",
+            language="json",
+            content=content,
+            description="Frontend dependency manifest",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     names = [_screen_import_name(f) for f in ctx.screen_files] or ["Home"]
     return [
-        GeneratedFile(path="frontend/index.html", language="html", content=_index_html(ctx.project_name), description="Vite HTML entry point"),
-        GeneratedFile(path="frontend/vite.config.js", language="javascript", content=_VITE_CONFIG, description="Vite build config"),
-        GeneratedFile(path="frontend/src/main.js", language="javascript", content=_MAIN_JS, description="Svelte entry point"),
-        GeneratedFile(path="frontend/src/App.svelte", language="javascript", content=_build_app_svelte(names), description="Renders every generated screen"),
-        GeneratedFile(path="frontend/src/index.css", language="css", content=_INDEX_CSS, description="Tailwind directives"),
-        GeneratedFile(path="frontend/tailwind.config.js", language="javascript", content=_TAILWIND_CONFIG, description="Tailwind config"),
-        GeneratedFile(path="frontend/postcss.config.js", language="javascript", content=_POSTCSS_CONFIG, description="PostCSS config"),
+        GeneratedFile(
+            path="frontend/index.html",
+            language="html",
+            content=_index_html(ctx.project_name),
+            description="Vite HTML entry point",
+        ),
+        GeneratedFile(
+            path="frontend/vite.config.js",
+            language="javascript",
+            content=_VITE_CONFIG,
+            description="Vite build config",
+        ),
+        GeneratedFile(
+            path="frontend/src/main.js",
+            language="javascript",
+            content=_MAIN_JS,
+            description="Svelte entry point",
+        ),
+        GeneratedFile(
+            path="frontend/src/App.svelte",
+            language="javascript",
+            content=_build_app_svelte(names),
+            description="Renders every generated screen",
+        ),
+        GeneratedFile(
+            path="frontend/src/index.css",
+            language="css",
+            content=_INDEX_CSS,
+            description="Tailwind directives",
+        ),
+        GeneratedFile(
+            path="frontend/tailwind.config.js",
+            language="javascript",
+            content=_TAILWIND_CONFIG,
+            description="Tailwind config",
+        ),
+        GeneratedFile(
+            path="frontend/postcss.config.js",
+            language="javascript",
+            content=_POSTCSS_CONFIG,
+            description="PostCSS config",
+        ),
     ]
 
 

@@ -22,7 +22,9 @@ def stub_ai(monkeypatch):
 
 
 def test_start_returns_immediately_and_the_run_finishes_in_the_background(api) -> None:
-    started = api.client.post("/api/v1/codegen/start", json={"project_id": api.project_id})
+    started = api.client.post(
+        "/api/v1/codegen/start", json={"project_id": api.project_id}
+    )
 
     assert started.status_code == 202
     job = started.json()["job"]
@@ -64,7 +66,9 @@ def test_the_legacy_generate_endpoint_still_returns_the_finished_code(api) -> No
     """Already-installed clients POST /generate and wait. It now waits on
     the same background job — and if it gives up, the run still finishes
     and saves rather than being lost with the request."""
-    response = api.client.post("/api/v1/codegen/generate", json={"project_id": api.project_id})
+    response = api.client.post(
+        "/api/v1/codegen/generate", json={"project_id": api.project_id}
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -77,7 +81,9 @@ def test_generating_before_the_architecture_is_approved_is_rejected(api) -> None
     job — otherwise it would start a run with nothing to build from."""
     api.update_project(architecture_data={"user_approved": False})
 
-    response = api.client.post("/api/v1/codegen/start", json={"project_id": api.project_id})
+    response = api.client.post(
+        "/api/v1/codegen/start", json={"project_id": api.project_id}
+    )
 
     assert response.status_code == 400
     assert "Architecture must be approved" in response.json()["detail"]

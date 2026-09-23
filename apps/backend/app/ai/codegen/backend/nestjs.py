@@ -12,8 +12,20 @@
 # ═══════════════════════════════════════════════════════════════
 
 from app.ai.codegen.manifests.package_json import build_package_json
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 
 async def generate_model(ctx: ModelCtx) -> FileResult:
@@ -22,8 +34,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real TypeORM entity file for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Table purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Real column types, constraints (nullable, unique, default) matching the fields above.
@@ -36,8 +48,12 @@ Requirements:
 Return ONLY the raw TypeScript code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "typescript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/src/{_slug(table_name)}/{_slug(table_name)}.entity.ts",
@@ -49,7 +65,8 @@ Return ONLY the raw TypeScript code for this one file. No markdown fences, no ex
 
 async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
     entity_imports = "\n".join(
         f"- backend/src/{_slug(t.get('name', 'item'))}/{_slug(t.get('name', 'item'))}.entity.ts defines the {_pascal(t.get('name', 'Item'))} entity"
@@ -83,18 +100,24 @@ Requirements:
 Return ONLY the raw TypeScript code for this one file (imports + the @Controller class). No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "typescript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/src/api/api.controller.ts",
-            language="typescript",
-            content=content,
-            description="NestJS controller implementing all API endpoints against the real entities",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/src/api/api.controller.ts",
+                language="typescript",
+                content=content,
+                description="NestJS controller implementing all API endpoints against the real entities",
+            ),
+            issue,
+        )
+    ]
 
 
 def _proto_message_for_table(table: dict) -> str:
@@ -105,8 +128,13 @@ def _proto_message_for_table(table: dict) -> str:
 
 def _proto_rpc_for_endpoint(e: dict) -> tuple[str, str]:
     """Returns (rpc line, request/response message pair) for one endpoint."""
-    method_name = _pascal(f"{e.get('method', 'get')}_{e.get('path', '/').strip('/')}") or "Call"
-    return f"  rpc {method_name} ({method_name}Request) returns ({method_name}Response);", method_name
+    method_name = (
+        _pascal(f"{e.get('method', 'get')}_{e.get('path', '/').strip('/')}") or "Call"
+    )
+    return (
+        f"  rpc {method_name} ({method_name}Request) returns ({method_name}Response);",
+        method_name,
+    )
 
 
 async def _grpc_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -117,14 +145,21 @@ async def _grpc_routes(ctx: RoutesCtx) -> list[FileResult]:
     generating both together (with the .proto skeleton handed in
     pre-built) avoids the AI inventing mismatched method names.
     """
-    messages = "\n\n".join(_proto_message_for_table(t) for t in ctx.tables) or "message Empty {}"
+    messages = (
+        "\n\n".join(_proto_message_for_table(t) for t in ctx.tables)
+        or "message Empty {}"
+    )
     rpc_lines = []
     request_response_messages = []
     for e in ctx.endpoints:
         rpc_line, method_name = _proto_rpc_for_endpoint(e)
         rpc_lines.append(rpc_line)
-        request_response_messages.append(f"message {method_name}Request {{\n  string payload = 1;\n}}")
-        request_response_messages.append(f"message {method_name}Response {{\n  string result = 1;\n}}")
+        request_response_messages.append(
+            f"message {method_name}Request {{\n  string payload = 1;\n}}"
+        )
+        request_response_messages.append(
+            f"message {method_name}Response {{\n  string result = 1;\n}}"
+        )
 
     proto_skeleton = f"""syntax = "proto3";
 
@@ -140,7 +175,8 @@ service ApiService {{
 """
 
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
 
     prompt = f"""A .proto file (below) has ALREADY been generated deterministically for this app's gRPC service — do not change its message/rpc names. Write the NestJS gRPC service IMPLEMENTATION file that implements every rpc method declared in it.
@@ -162,12 +198,32 @@ Return ONLY the raw TypeScript code for this one file (imports + a service class
 @GrpcMethod per rpc). No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "typescript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return [
-        (GeneratedFile(path="backend/src/api/api.proto", language="text", content=proto_skeleton, description="gRPC service contract (deterministic)"), None),
-        (GeneratedFile(path="backend/src/api/api.grpc.service.ts", language="typescript", content=content, description="gRPC service implementation"), issue),
+        (
+            GeneratedFile(
+                path="backend/src/api/api.proto",
+                language="text",
+                content=proto_skeleton,
+                description="gRPC service contract (deterministic)",
+            ),
+            None,
+        ),
+        (
+            GeneratedFile(
+                path="backend/src/api/api.grpc.service.ts",
+                language="typescript",
+                content=content,
+                description="gRPC service implementation",
+            ),
+            issue,
+        ),
     ]
 
 
@@ -265,15 +321,35 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         },
     )
     return [
-        GeneratedFile(path="backend/package.json", language="json", content=content, description="Backend dependency manifest"),
-        GeneratedFile(path="backend/tsconfig.json", language="json", content=_TSCONFIG_JSON, description="TypeScript config (decorator metadata required by NestJS DI)"),
+        GeneratedFile(
+            path="backend/package.json",
+            language="json",
+            content=content,
+            description="Backend dependency manifest",
+        ),
+        GeneratedFile(
+            path="backend/tsconfig.json",
+            language="json",
+            content=_TSCONFIG_JSON,
+            description="TypeScript config (decorator metadata required by NestJS DI)",
+        ),
     ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     return [
-        GeneratedFile(path="backend/src/main.ts", language="typescript", content=_MAIN_TS, description="NestJS entry point"),
-        GeneratedFile(path="backend/src/app.module.ts", language="typescript", content=_build_app_module_ts(ctx.model_files), description="Root NestJS module — wires every entity + the controller"),
+        GeneratedFile(
+            path="backend/src/main.ts",
+            language="typescript",
+            content=_MAIN_TS,
+            description="NestJS entry point",
+        ),
+        GeneratedFile(
+            path="backend/src/app.module.ts",
+            language="typescript",
+            content=_build_app_module_ts(ctx.model_files),
+            description="Root NestJS module — wires every entity + the controller",
+        ),
     ]
 
 

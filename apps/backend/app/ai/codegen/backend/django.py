@@ -26,8 +26,20 @@
 import re
 
 from app.ai.codegen.manifests.requirements_txt import build_requirements_txt
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 _SETTINGS_PACKAGE = "config"
 
@@ -48,8 +60,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Django model file for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Table purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Real field types and constraints (null, blank, unique, default) matching the fields above.
@@ -61,8 +73,12 @@ Requirements:
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "python", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "python",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/api/models/{_slug(table_name)}.py",
@@ -108,18 +124,24 @@ Requirements:
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "python", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "python",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/api/views.py",
-            language="python",
-            content=content,
-            description="DRF views implementing all API endpoints against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/api/views.py",
+                language="python",
+                content=content,
+                description="DRF views implementing all API endpoints against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -162,18 +184,24 @@ Requirements:
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "python", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "python",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path=_GRAPHQL_SCHEMA_PATH,
-            language="python",
-            content=content,
-            description="Graphene-Django GraphQL schema implementing every capability against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path=_GRAPHQL_SCHEMA_PATH,
+                language="python",
+                content=content,
+                description="Graphene-Django GraphQL schema implementing every capability against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes}
@@ -191,10 +219,13 @@ def _is_graphql(ctx: WiringCtx) -> bool:
 
 
 def _build_api_urls_py(endpoints: list[dict]) -> str:
-    entries = "\n".join(
-        f"    path('{_django_path(e.get('path', '/'))}', views.{_view_name(e.get('method', 'GET'), e.get('path', '/'))}),"
-        for e in endpoints
-    ) or "    # no endpoints defined"
+    entries = (
+        "\n".join(
+            f"    path('{_django_path(e.get('path', '/'))}', views.{_view_name(e.get('method', 'GET'), e.get('path', '/'))}),"
+            for e in endpoints
+        )
+        or "    # no endpoints defined"
+    )
     return f"""from django.urls import path
 
 from . import views
@@ -369,32 +400,86 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     else:
         packages.append("djangorestframework==3.14.0")
     content = build_requirements_txt(packages)
-    return [GeneratedFile(path="backend/requirements.txt", language="text", content=content, description="Backend Python dependencies")]
+    return [
+        GeneratedFile(
+            path="backend/requirements.txt",
+            language="text",
+            content=content,
+            description="Backend Python dependencies",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     graphql = _is_graphql(ctx)
     files = [
-        GeneratedFile(path="backend/manage.py", language="python", content=_manage_py(), description="Django management entry point"),
-        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/__init__.py", language="python", content="", description="Settings package marker"),
-        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/settings.py", language="python", content=_settings_py(ctx.project_name, graphql), description="Django settings"),
-        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/urls.py", language="python", content=_root_urls_py(graphql), description="Root URL config"),
-        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/wsgi.py", language="python", content=_wsgi_py(), description="WSGI entry point"),
-        GeneratedFile(path=f"backend/{_SETTINGS_PACKAGE}/asgi.py", language="python", content=_asgi_py(), description="ASGI entry point"),
-        GeneratedFile(path="backend/api/__init__.py", language="python", content="", description="API app package marker"),
-        GeneratedFile(path="backend/api/apps.py", language="python", content=_APPS_PY, description="API app config"),
-        GeneratedFile(path="backend/api/models/__init__.py", language="python", content=_build_models_init_py(ctx.model_files), description="Aggregates every generated model"),
+        GeneratedFile(
+            path="backend/manage.py",
+            language="python",
+            content=_manage_py(),
+            description="Django management entry point",
+        ),
+        GeneratedFile(
+            path=f"backend/{_SETTINGS_PACKAGE}/__init__.py",
+            language="python",
+            content="",
+            description="Settings package marker",
+        ),
+        GeneratedFile(
+            path=f"backend/{_SETTINGS_PACKAGE}/settings.py",
+            language="python",
+            content=_settings_py(ctx.project_name, graphql),
+            description="Django settings",
+        ),
+        GeneratedFile(
+            path=f"backend/{_SETTINGS_PACKAGE}/urls.py",
+            language="python",
+            content=_root_urls_py(graphql),
+            description="Root URL config",
+        ),
+        GeneratedFile(
+            path=f"backend/{_SETTINGS_PACKAGE}/wsgi.py",
+            language="python",
+            content=_wsgi_py(),
+            description="WSGI entry point",
+        ),
+        GeneratedFile(
+            path=f"backend/{_SETTINGS_PACKAGE}/asgi.py",
+            language="python",
+            content=_asgi_py(),
+            description="ASGI entry point",
+        ),
+        GeneratedFile(
+            path="backend/api/__init__.py",
+            language="python",
+            content="",
+            description="API app package marker",
+        ),
+        GeneratedFile(
+            path="backend/api/apps.py",
+            language="python",
+            content=_APPS_PY,
+            description="API app config",
+        ),
+        GeneratedFile(
+            path="backend/api/models/__init__.py",
+            language="python",
+            content=_build_models_init_py(ctx.model_files),
+            description="Aggregates every generated model",
+        ),
     ]
     # REST needs a deterministic urls.py wiring each view to its exact
     # dictated name; GraphQL doesn't — graphene_django.schema.py's single
     # /graphql endpoint IS the routing, no per-capability URL entries.
     if ctx.endpoints and not graphql:
-        files.append(GeneratedFile(
-            path="backend/api/urls.py",
-            language="python",
-            content=_build_api_urls_py(ctx.endpoints),
-            description="URL routing, deterministically wired to the exact view names dictated to the AI",
-        ))
+        files.append(
+            GeneratedFile(
+                path="backend/api/urls.py",
+                language="python",
+                content=_build_api_urls_py(ctx.endpoints),
+                description="URL routing, deterministically wired to the exact view names dictated to the AI",
+            )
+        )
     return files
 
 

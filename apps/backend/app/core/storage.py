@@ -37,7 +37,12 @@ def _require_configured():
 
 
 async def _upload_to_bucket(
-    bucket: str, project_id: str, subfolder: str, filename: str, content: bytes, content_type: str
+    bucket: str,
+    project_id: str,
+    subfolder: str,
+    filename: str,
+    content: bytes,
+    content_type: str,
 ) -> str:
     _require_configured()
 
@@ -56,8 +61,12 @@ async def _upload_to_bucket(
         )
 
     if response.status_code not in (200, 201):
-        logger.error(f"Supabase Storage upload failed: {response.status_code} {response.text}")
-        raise StorageError(f"Upload failed ({response.status_code}). Is the bucket public?")
+        logger.error(
+            f"Supabase Storage upload failed: {response.status_code} {response.text}"
+        )
+        raise StorageError(
+            f"Upload failed ({response.status_code}). Is the bucket public?"
+        )
 
     return f"{settings.SUPABASE_URL}/storage/v1/object/public/{bucket}/{object_path}"
 
@@ -70,7 +79,12 @@ async def upload_design_image(
     design-uploads bucket and returns its public URL.
     """
     return await _upload_to_bucket(
-        settings.SUPABASE_DESIGN_UPLOADS_BUCKET, project_id, "images", filename, content, content_type
+        settings.SUPABASE_DESIGN_UPLOADS_BUCKET,
+        project_id,
+        "images",
+        filename,
+        content,
+        content_type,
     )
 
 
@@ -82,7 +96,12 @@ async def upload_voice_note(
     (same bucket, separate subfolder) and returns its public URL.
     """
     return await _upload_to_bucket(
-        settings.SUPABASE_DESIGN_UPLOADS_BUCKET, project_id, "voice-notes", filename, content, content_type
+        settings.SUPABASE_DESIGN_UPLOADS_BUCKET,
+        project_id,
+        "voice-notes",
+        filename,
+        content,
+        content_type,
     )
 
 

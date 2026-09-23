@@ -92,13 +92,13 @@ def build_prompt(
 
 Project: {project_name}
 User's idea: {raw_idea}
-Current question layer: {current_layer}/8 ({layer['label']})
+Current question layer: {current_layer}/8 ({layer["label"]})
 
 Conversation so far:
 {history_text}
 User just said: {user_message}
 
-Your task: {layer['prompt_suffix']}
+Your task: {layer["prompt_suffix"]}
 
 Rules:
 - Be warm, encouraging and conversational
@@ -145,18 +145,35 @@ async def wizard_message(
     history = project.ai_conversation_history or []
 
     # Add user message to history
-    history.append({
-        "role": "user",
-        "content": payload.user_message,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "layer": payload.current_layer,
-    })
+    history.append(
+        {
+            "role": "user",
+            "content": payload.user_message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "layer": payload.current_layer,
+        }
+    )
 
     # Detect game intent and mark project category if appropriate
     user_text = payload.user_message.lower()
     if project.category != AppCategory.GAME and any(
         term in user_text
-        for term in ["game", "gameplay", "fps", "rpg", "puzzle", "platformer", "strategy", "simulation", "adventure", "match-3", "o3de", "open 3d engine", "open3dengine", "godot"]
+        for term in [
+            "game",
+            "gameplay",
+            "fps",
+            "rpg",
+            "puzzle",
+            "platformer",
+            "strategy",
+            "simulation",
+            "adventure",
+            "match-3",
+            "o3de",
+            "open 3d engine",
+            "open3dengine",
+            "godot",
+        ]
     ):
         project.category = AppCategory.GAME
 
@@ -191,12 +208,14 @@ async def wizard_message(
         )
 
     # Add AI response to history
-    history.append({
-        "role": "ai",
-        "content": ai_response,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "layer": payload.current_layer,
-    })
+    history.append(
+        {
+            "role": "ai",
+            "content": ai_response,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "layer": payload.current_layer,
+        }
+    )
 
     # Update project
     project.ai_conversation_history = history
@@ -249,8 +268,12 @@ async def get_wizard_history(
         "raw_idea": project.raw_idea,
         "conversation": project.ai_conversation_history or [],
         "understanding_score": project.understanding_score,
-        "current_layer": len([
-            m for m in (project.ai_conversation_history or [])
-            if m.get("role") == "user"
-        ]) + 1,
+        "current_layer": len(
+            [
+                m
+                for m in (project.ai_conversation_history or [])
+                if m.get("role") == "user"
+            ]
+        )
+        + 1,
     }

@@ -48,7 +48,14 @@ TABLES = [
     {
         "name": "Book",
         "purpose": "A book in the library",
-        "key_fields": ["title", "author", "isbn", "price", "is_available", "published_at"],
+        "key_fields": [
+            "title",
+            "author",
+            "isbn",
+            "price",
+            "is_available",
+            "published_at",
+        ],
     },
     {
         "name": "Member",
@@ -65,11 +72,17 @@ class FakeProject:
 
     def __init__(self, tables=TABLES, codegen_data=None, features=None, stories=None):
         self.name = "Library Manager"
-        self.architecture_data = {"architecture": {"database_tables": tables, "api_endpoints": []}}
+        self.architecture_data = {
+            "architecture": {"database_tables": tables, "api_endpoints": []}
+        }
         self.requirements_data = {
             "frd": {
-                "key_features": features if features is not None else ["users can scan a book cover"],
-                "user_stories": stories if stories is not None else ["as a member I want to see my borrowed books"],
+                "key_features": features
+                if features is not None
+                else ["users can scan a book cover"],
+                "user_stories": stories
+                if stories is not None
+                else ["as a member I want to see my borrowed books"],
             }
         }
         self.codegen_data = codegen_data
@@ -107,7 +120,15 @@ def test_matches_ai_path_codegen_data_shape(stack_info):
     this is what makes deterministic output packaging-transparent,
     for BOTH pairings, not just the first one built."""
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
-    for key in ("codegen", "files_generated", "native_capabilities", "validation_warnings", "stack_used", "user_approved", "generated_at"):
+    for key in (
+        "codegen",
+        "files_generated",
+        "native_capabilities",
+        "validation_warnings",
+        "stack_used",
+        "user_approved",
+        "generated_at",
+    ):
         assert key in data
     assert data["generation_mode"] == "deterministic"
     assert data["user_approved"] is False
@@ -139,15 +160,26 @@ def test_custom_slot_survives_regeneration_while_schema_change_applies(stack_inf
 
     is_fastapi = stack_info["backend_framework"] == "fastapi"
     model_path = "backend/models/book.py" if is_fastapi else "backend/models/book.js"
-    marker = "# This block is preserved across future regenerations.\n" if is_fastapi else "// This block is preserved across future regenerations.\n"
-    hand_edit = "    # a real hand-written addition\n" if is_fastapi else "// a real hand-written addition\n"
+    marker = (
+        "# This block is preserved across future regenerations.\n"
+        if is_fastapi
+        else "// This block is preserved across future regenerations.\n"
+    )
+    hand_edit = (
+        "    # a real hand-written addition\n"
+        if is_fastapi
+        else "// a real hand-written addition\n"
+    )
 
     edited_files = [dict(f) for f in files]
     for f in edited_files:
         if f["path"] == model_path:
             f["content"] = f["content"].replace(marker, marker + hand_edit)
 
-    changed_tables = [dict(TABLES[0], key_fields=TABLES[0]["key_fields"] + ["genre"]), TABLES[1]]
+    changed_tables = [
+        dict(TABLES[0], key_fields=TABLES[0]["key_fields"] + ["genre"]),
+        TABLES[1],
+    ]
     project = FakeProject(
         tables=changed_tables,
         codegen_data={"codegen": {"summary": "", "files": edited_files}},
@@ -156,7 +188,9 @@ def test_custom_slot_survives_regeneration_while_schema_change_applies(stack_inf
     second = dc.build_deterministic_codegen_data(project, stack_info)
     regenerated = _by_path(second)[model_path]
 
-    assert "a real hand-written addition" in regenerated, "hand-edit inside VENGAI:CUSTOM must survive"
+    assert "a real hand-written addition" in regenerated, (
+        "hand-edit inside VENGAI:CUSTOM must survive"
+    )
     assert "genre" in regenerated, "schema change must still apply"
 
 
@@ -209,7 +243,12 @@ def test_fastapi_model_file_has_correctly_typed_columns_and_a_custom_slot():
 def test_fastapi_routes_file_has_crud_for_every_table_and_a_custom_slot():
     data = dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
     routes = _by_path(data)["backend/routes/api.py"]
-    for path_fragment in ('"/books"', '"/books/{item_id}"', '"/members"', '"/members/{item_id}"'):
+    for path_fragment in (
+        '"/books"',
+        '"/books/{item_id}"',
+        '"/members"',
+        '"/members/{item_id}"',
+    ):
         assert path_fragment in routes
     assert "from models.book import Book" in routes
     assert "from models.member import Member" in routes
@@ -258,7 +297,12 @@ def test_express_model_file_has_correctly_typed_fields_and_a_custom_slot():
 def test_express_routes_file_has_crud_for_every_table_and_a_custom_slot():
     data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
     routes = _by_path(data)["backend/routes/api.js"]
-    for fragment in ("router.get('/books'", "router.get('/books/:id'", "router.get('/members'", "router.get('/members/:id'"):
+    for fragment in (
+        "router.get('/books'",
+        "router.get('/books/:id'",
+        "router.get('/members'",
+        "router.get('/members/:id'",
+    ):
         assert fragment in routes
     assert "const Book = require('../models/book');" in routes
     assert "VENGAI:CUSTOM:extra_routes:start" in routes
@@ -286,7 +330,9 @@ def test_express_backend_package_json_has_express_and_mongoose():
 
 # ─── Custom-slot extraction/reinjection, backend-agnostic ───
 def test_extract_and_reinject_custom_slots_directly():
-    original = "before\n# VENGAI:CUSTOM:x:start\nold body\n# VENGAI:CUSTOM:x:end\nafter\n"
+    original = (
+        "before\n# VENGAI:CUSTOM:x:start\nold body\n# VENGAI:CUSTOM:x:end\nafter\n"
+    )
     slots = dc.extract_custom_slots(original)
     assert slots == {"x": "old body\n"}
 

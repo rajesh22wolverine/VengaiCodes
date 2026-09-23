@@ -101,7 +101,12 @@ class SelectStackResponse(BaseModel):
 # ─── Helpers ───
 def _pickable_frontend_frameworks() -> list[FrontendFrameworkOption]:
     return [
-        FrontendFrameworkOption(key=key, label=meta["label"], languages=meta["languages"], category=meta["category"])
+        FrontendFrameworkOption(
+            key=key,
+            label=meta["label"],
+            languages=meta["languages"],
+            category=meta["category"],
+        )
         for key, meta in FRONTEND_FRAMEWORKS.items()
     ]
 
@@ -138,12 +143,23 @@ async def get_stack_options(
         )
         project = result.scalar_one_or_none()
         if project is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+            )
         if project.category == AppCategory.GAME:
             recommended = DEFAULT_GAME_COMBO
 
-    frontend_languages = sorted({lang for meta in FRONTEND_FRAMEWORKS.values() for lang in meta["languages"]})
-    backend_languages = sorted({lang for meta in BACKEND_FRAMEWORKS.values() for lang in meta["languages"] if lang != "none"})
+    frontend_languages = sorted(
+        {lang for meta in FRONTEND_FRAMEWORKS.values() for lang in meta["languages"]}
+    )
+    backend_languages = sorted(
+        {
+            lang
+            for meta in BACKEND_FRAMEWORKS.values()
+            for lang in meta["languages"]
+            if lang != "none"
+        }
+    )
 
     return StackOptionsResponse(
         frontend_languages=frontend_languages,
@@ -193,11 +209,15 @@ async def select_stack(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Project).where(Project.id == payload.project_id, Project.user_id == user.id)
+        select(Project).where(
+            Project.id == payload.project_id, Project.user_id == user.id
+        )
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     # Re-validate server-side — never trust the picker alone. The frontend
     # already calls POST /stack/validate on every picker change and disables
@@ -262,9 +282,13 @@ async def get_project_stack_selection(
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.selected_stack:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No stack selected yet.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No stack selected yet."
+        )
 
     return {"success": True, "selected_stack": project.selected_stack}

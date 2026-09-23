@@ -4,9 +4,11 @@ table must come back understood=False rather than mutating the page on a
 guess, which is the whole reason this layer exists instead of an AI call.
 """
 
-import pytest
-
-from app.services.page_commands import SUPPORTED_PHRASINGS, parse_command, parse_commands
+from app.services.page_commands import (
+    SUPPORTED_PHRASINGS,
+    parse_command,
+    parse_commands,
+)
 from app.services.page_engine import Page, edit_page
 
 SAMPLE = """<html lang="en">
@@ -46,11 +48,15 @@ def test_change_text_by_friendly_name():
 
 
 def test_change_text_by_selector():
-    assert '<p class="price" style="font-size: 14px">$49/month</p>' in _apply('set the .price text to "$49/month"')
+    assert '<p class="price" style="font-size: 14px">$49/month</p>' in _apply(
+        'set the .price text to "$49/month"'
+    )
 
 
 def test_change_text_of_phrasing():
-    assert "<h2>Professional</h2>" in _apply('change the text of the h2 to "Professional"')
+    assert "<h2>Professional</h2>" in _apply(
+        'change the text of the h2 to "Professional"'
+    )
 
 
 def test_rename_phrasing():
@@ -79,7 +85,9 @@ def test_the_literal_title_tag_is_still_reachable_via_a_css_selector():
 
 
 def test_the_word_link_means_an_anchor_not_a_stylesheet_link_tag():
-    page = Page('<html><head><link rel="stylesheet" href="/a.css"></head><body><a href="/x">X</a></body></html>')
+    page = Page(
+        '<html><head><link rel="stylesheet" href="/a.css"></head><body><a href="/x">X</a></body></html>'
+    )
     result = parse_command('change the link to "Y"', page)
     assert result.understood, result.error
     html = edit_page(page.source, "", result.edits)["html"]
@@ -98,7 +106,9 @@ def test_background_colour_named():
 
 
 def test_background_colour_hex_with_of_phrasing():
-    assert "background-color: #2563eb" in _apply("change the background color of the footer to #2563eb")
+    assert "background-color: #2563eb" in _apply(
+        "change the background color of the footer to #2563eb"
+    )
 
 
 def test_text_colour_merges_with_existing_inline_style():
@@ -182,7 +192,9 @@ def test_set_attribute_href():
 
 
 def test_set_attribute_alt_with_of_phrasing():
-    assert 'alt="Product photo"' in _apply('set the alt of the image to "Product photo"')
+    assert 'alt="Product photo"' in _apply(
+        'set the alt of the image to "Product photo"'
+    )
 
 
 # ─── targeting ───
@@ -238,7 +250,12 @@ def test_empty_instruction_is_refused():
 
 def test_refused_command_produces_no_edits_at_all():
     page = _page()
-    for bad in ["redesign the page", "make it pop", "improve the layout", "fix the spacing vibes"]:
+    for bad in [
+        "redesign the page",
+        "make it pop",
+        "improve the layout",
+        "fix the spacing vibes",
+    ]:
         result = parse_command(bad, page)
         assert result.understood is False
         assert result.edits == []
@@ -247,7 +264,9 @@ def test_refused_command_produces_no_edits_at_all():
 # ─── multiple commands ───
 def test_multiple_commands_split_on_newlines_and_semicolons():
     page = _page()
-    results = parse_commands('change the headline to "Plans"\nhide the footer; center the h2', page)
+    results = parse_commands(
+        'change the headline to "Plans"\nhide the footer; center the h2', page
+    )
     assert len(results) == 3
     assert all(r.understood for r in results)
 
@@ -259,6 +278,6 @@ def test_multiple_commands_split_on_newlines_and_semicolons():
 
 
 def test_one_bad_command_does_not_invalidate_the_good_ones():
-    results = parse_commands('hide the footer\nmake it beautiful', _page())
+    results = parse_commands("hide the footer\nmake it beautiful", _page())
     assert [r.understood for r in results] == [True, False]
     assert results[1].edits == []

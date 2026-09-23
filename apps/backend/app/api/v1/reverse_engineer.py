@@ -126,18 +126,31 @@ class ReverseAnalyzeResponse(BaseModel):
 def _validate_public_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only http:// and https:// URLs are supported.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Only http:// and https:// URLs are supported."
+        )
     if not parsed.hostname:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That doesn't look like a valid URL.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "That doesn't look like a valid URL."
+        )
 
     try:
         addrinfo = socket.getaddrinfo(parsed.hostname, None)
     except socket.gaierror:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Could not resolve that URL's hostname.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Could not resolve that URL's hostname."
+        )
 
     for _family, _type, _proto, _canonname, sockaddr in addrinfo:
         ip = ipaddress.ip_address(sockaddr[0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 "That URL points at a private or internal address, which isn't allowed.",
@@ -152,7 +165,9 @@ async def _fetch_raw(url: str) -> tuple[int, dict, bytes]:
         async with httpx.AsyncClient(
             timeout=10.0,
             follow_redirects=False,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; VengaiCodeBot/1.0; +https://vengaicode.com)"},
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; VengaiCodeBot/1.0; +https://vengaicode.com)"
+            },
         ) as client:
             async with client.stream("GET", url) as response:
                 if response.status_code >= 300:
@@ -176,16 +191,36 @@ _HTML_SIGNATURES: list[tuple[str, str, list[str]]] = [
     ("Next.js", "meta_framework", [r"__NEXT_DATA__", r"/_next/static/"]),
     ("Nuxt.js", "meta_framework", [r"__NUXT__", r"/_nuxt/"]),
     ("SvelteKit", "meta_framework", [r"/_app/immutable/"]),
-    ("React", "frontend_framework", [r"react-dom(\.production)?(\.min)?\.js", r"data-reactroot"]),
-    ("Vue.js", "frontend_framework", [r"vue(\.global)?(\.runtime)?(\.min)?\.js", r"data-v-[0-9a-f]{6,10}="]),
+    (
+        "React",
+        "frontend_framework",
+        [r"react-dom(\.production)?(\.min)?\.js", r"data-reactroot"],
+    ),
+    (
+        "Vue.js",
+        "frontend_framework",
+        [r"vue(\.global)?(\.runtime)?(\.min)?\.js", r"data-v-[0-9a-f]{6,10}="],
+    ),
     ("Angular", "frontend_framework", [r"ng-version="]),
     ("jQuery", "frontend_library", [r"jquery(-[\d.]+)?(\.min)?\.js"]),
-    ("Bootstrap", "css_framework", [r"bootstrap(\.min)?\.css", r"bootstrap(\.bundle)?(\.min)?\.js"]),
-    ("WordPress", "cms", [r"/wp-content/", r"/wp-includes/", r'generator["\']\s*content=["\']WordPress']),
+    (
+        "Bootstrap",
+        "css_framework",
+        [r"bootstrap(\.min)?\.css", r"bootstrap(\.bundle)?(\.min)?\.js"],
+    ),
+    (
+        "WordPress",
+        "cms",
+        [r"/wp-content/", r"/wp-includes/", r'generator["\']\s*content=["\']WordPress'],
+    ),
     ("Shopify", "ecommerce_platform", [r"cdn\.shopify\.com", r"Shopify\.theme"]),
     ("Wix", "website_builder", [r"static\.wixstatic\.com"]),
     ("Squarespace", "website_builder", [r"static1\.squarespace\.com"]),
-    ("Webflow", "website_builder", [r"assets-global\.website-files\.com", r'content=["\']Webflow']),
+    (
+        "Webflow",
+        "website_builder",
+        [r"assets-global\.website-files\.com", r'content=["\']Webflow'],
+    ),
 ]
 
 _HEADER_SIGNATURES: list[tuple[str, str, str]] = [
@@ -213,24 +248,44 @@ _COOKIE_SIGNATURES: list[tuple[str, str, str]] = [
 ]
 
 
-def fingerprint_tech_stack(html_evidence: str, headers: dict, cookie_names: list[str]) -> list[dict]:
+def fingerprint_tech_stack(
+    html_evidence: str, headers: dict, cookie_names: list[str]
+) -> list[dict]:
     found: dict[str, dict] = {}
 
     for name, category, patterns in _HTML_SIGNATURES:
         for pattern in patterns:
             if re.search(pattern, html_evidence, re.I):
-                found[name] = {"name": name, "category": category, "evidence": f'matched "{pattern}" in page source'}
+                found[name] = {
+                    "name": name,
+                    "category": category,
+                    "evidence": f'matched "{pattern}" in page source',
+                }
                 break
 
     header_blob = " ".join(f"{k}:{v}" for k, v in headers.items())
     for name, category, pattern in _HEADER_SIGNATURES:
         if re.search(pattern, header_blob, re.I):
-            found.setdefault(name, {"name": name, "category": category, "evidence": "matched in response headers"})
+            found.setdefault(
+                name,
+                {
+                    "name": name,
+                    "category": category,
+                    "evidence": "matched in response headers",
+                },
+            )
 
     lowered_cookies = [c.lower() for c in cookie_names]
     for name, category, needle in _COOKIE_SIGNATURES:
         if any(needle in c for c in lowered_cookies):
-            found.setdefault(name, {"name": name, "category": category, "evidence": "matched cookie name set by the server"})
+            found.setdefault(
+                name,
+                {
+                    "name": name,
+                    "category": category,
+                    "evidence": "matched cookie name set by the server",
+                },
+            )
 
     return list(found.values())
 
@@ -272,11 +327,17 @@ class _PageExtractor(html.parser.HTMLParser):
                 pass
         if tag == "script" and attrs_d.get("src"):
             self.scripts.append(urljoin(self.base_url, attrs_d["src"]))
-        if tag == "link" and (attrs_d.get("rel") or "").lower() == "stylesheet" and attrs_d.get("href"):
+        if (
+            tag == "link"
+            and (attrs_d.get("rel") or "").lower() == "stylesheet"
+            and attrs_d.get("href")
+        ):
             self.stylesheets.append(urljoin(self.base_url, attrs_d["href"]))
         if tag == "form":
             self._current_form = {
-                "action": urljoin(self.base_url, attrs_d.get("action") or self.base_url),
+                "action": urljoin(
+                    self.base_url, attrs_d.get("action") or self.base_url
+                ),
                 "method": (attrs_d.get("method") or "get").upper(),
                 "fields": [],
             }
@@ -284,13 +345,20 @@ class _PageExtractor(html.parser.HTMLParser):
             name = attrs_d.get("name")
             if name:
                 self._current_form["fields"].append(
-                    {"name": name, "type": attrs_d.get("type") or ("text" if tag == "input" else tag)}
+                    {
+                        "name": name,
+                        "type": attrs_d.get("type")
+                        or ("text" if tag == "input" else tag),
+                    }
                 )
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "title":
             self._in_title = False
-        if tag in ("script", "style", "noscript", "svg", "head") and self._skip_depth > 0:
+        if (
+            tag in ("script", "style", "noscript", "svg", "head")
+            and self._skip_depth > 0
+        ):
             self._skip_depth -= 1
         if tag == "form" and self._current_form is not None:
             self.forms.append(self._current_form)
@@ -335,14 +403,18 @@ def _infer_data_model(forms: list[dict]) -> list[dict]:
 
         if any(n in ("password", "pwd", "pass", "passwd") for n in lowered):
             kind = "auth"
-        elif len(field_names) <= 2 and any(n in ("q", "query", "search", "s") for n in lowered):
+        elif len(field_names) <= 2 and any(
+            n in ("q", "query", "search", "s") for n in lowered
+        ):
             continue
         else:
             kind = "record"
 
         action_path = urlparse(form.get("action", "")).path.strip("/")
         segments = [s for s in action_path.split("/") if s and not s.isdigit()]
-        name_guess = (segments[-1] if segments else "entry").replace("-", "_").replace(".", "_")
+        name_guess = (
+            (segments[-1] if segments else "entry").replace("-", "_").replace(".", "_")
+        )
         if kind == "auth":
             name_guess = "user_auth"
 
@@ -350,7 +422,14 @@ def _infer_data_model(forms: list[dict]) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        entities.append({"name": name_guess, "kind": kind, "fields": field_names, "source_form_action": form.get("action")})
+        entities.append(
+            {
+                "name": name_guess,
+                "kind": kind,
+                "fields": field_names,
+                "source_form_action": form.get("action"),
+            }
+        )
 
     return entities[:15]
 
@@ -367,7 +446,13 @@ async def _download_asset_snippets(urls: list[str]) -> list[dict]:
             continue
         text = body[:MAX_ASSET_BYTES].decode("utf-8", errors="replace")
         language = "css" if asset_url.split("?")[0].endswith(".css") else "javascript"
-        snippets.append({"source": asset_url, "language": language, "content": text[:ASSET_SNIPPET_CHARS]})
+        snippets.append(
+            {
+                "source": asset_url,
+                "language": language,
+                "content": text[:ASSET_SNIPPET_CHARS],
+            }
+        )
     return snippets
 
 
@@ -445,16 +530,24 @@ async def _crawl_site(seed_url: str) -> dict:
         if depth < MAX_CRAWL_DEPTH:
             for link in extractor.links:
                 link_parsed = urlparse(link)
-                if link_parsed.hostname != origin_host or link_parsed.scheme not in ("http", "https"):
+                if link_parsed.hostname != origin_host or link_parsed.scheme not in (
+                    "http",
+                    "https",
+                ):
                     continue
                 norm_link = link.split("#")[0].rstrip("/")
                 if norm_link not in visited:
                     queue.append((link, depth + 1))
 
     if not pages:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Couldn't fetch any readable pages from that URL.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Couldn't fetch any readable pages from that URL.",
+        )
 
-    tech_stack = fingerprint_tech_stack(raw_html_evidence, headers_evidence, cookies_evidence)
+    tech_stack = fingerprint_tech_stack(
+        raw_html_evidence, headers_evidence, cookies_evidence
+    )
     data_model = _infer_data_model(all_forms)
     code_snippets = await _download_asset_snippets(script_urls + style_urls)
 
@@ -473,33 +566,60 @@ def _material_from_site_analysis(site: dict) -> str:
     for p in site["pages"][:8]:
         lines.append(f"- {p['title'] or p['url']}: {p['text_excerpt'][:200]}")
     if site["tech_stack"]:
-        lines.append("\nDetected technology: " + ", ".join(t["name"] for t in site["tech_stack"]))
+        lines.append(
+            "\nDetected technology: " + ", ".join(t["name"] for t in site["tech_stack"])
+        )
     if site["data_model"]:
-        lines.append("\nData entities observed (from real page forms): " + ", ".join(e["name"] for e in site["data_model"]))
+        lines.append(
+            "\nData entities observed (from real page forms): "
+            + ", ".join(e["name"] for e in site["data_model"])
+        )
     return "\n".join(lines)
 
 
 # ─── Repo mode: real source-code analysis via the GitHub API ───
-GITHUB_REPO_RE = re.compile(r"^https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+GITHUB_REPO_RE = re.compile(
+    r"^https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"
+)
 
 MANIFEST_FILENAMES = {
-    "package.json", "requirements.txt", "pyproject.toml", "Pipfile",
-    "go.mod", "Cargo.toml", "pom.xml", "build.gradle", "Gemfile", "composer.json",
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml",
+    "Pipfile",
+    "go.mod",
+    "Cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "Gemfile",
+    "composer.json",
 }
 
 _PACKAGE_JSON_MAP = {
-    "react": "React", "next": "Next.js", "vue": "Vue.js", "nuxt": "Nuxt.js",
-    "@angular/core": "Angular", "svelte": "Svelte", "express": "Express",
-    "fastify": "Fastify", "@nestjs/core": "NestJS", "koa": "Koa",
+    "react": "React",
+    "next": "Next.js",
+    "vue": "Vue.js",
+    "nuxt": "Nuxt.js",
+    "@angular/core": "Angular",
+    "svelte": "Svelte",
+    "express": "Express",
+    "fastify": "Fastify",
+    "@nestjs/core": "NestJS",
+    "koa": "Koa",
     # Shell/wrapper frameworks — a "shell app" that just wraps a website or
     # API behind a native window is built with one of these. Detecting them
     # tells you HOW the wrapper itself was built, distinct from whatever
     # site/API it wraps (which url mode would separately analyze if you
     # know the URL it loads).
-    "electron": "Electron", "electron-builder": "Electron",
-    "@tauri-apps/api": "Tauri", "@tauri-apps/cli": "Tauri",
-    "react-native": "React Native", "react-native-webview": "React Native WebView",
-    "expo": "Expo", "@capacitor/core": "Capacitor", "cordova-lib": "Apache Cordova",
+    "electron": "Electron",
+    "electron-builder": "Electron",
+    "@tauri-apps/api": "Tauri",
+    "@tauri-apps/cli": "Tauri",
+    "react-native": "React Native",
+    "react-native-webview": "React Native WebView",
+    "expo": "Expo",
+    "@capacitor/core": "Capacitor",
+    "cordova-lib": "Apache Cordova",
 }
 
 # Config files whose mere presence in a repo's file tree is itself real
@@ -519,32 +639,70 @@ def _detect_shell_framework_from_tree(paths: list[str]) -> list[dict]:
     basenames = {p.rsplit("/", 1)[-1] for p in paths}
     for filename, name in _SHELL_CONFIG_FILE_SIGNATURES:
         if filename in basenames:
-            found.append({"name": name, "category": "shell_framework", "evidence": f"found {filename} in the repo"})
+            found.append(
+                {
+                    "name": name,
+                    "category": "shell_framework",
+                    "evidence": f"found {filename} in the repo",
+                }
+            )
     return found
+
 
 _MANIFEST_TEXT_PATTERNS: dict[str, list[tuple[re.Pattern, str]]] = {
     "requirements.txt": [
-        (re.compile(r"(?im)^fastapi"), "FastAPI"), (re.compile(r"(?im)^flask"), "Flask"),
-        (re.compile(r"(?im)^django"), "Django"), (re.compile(r"(?im)^celery"), "Celery"),
+        (re.compile(r"(?im)^fastapi"), "FastAPI"),
+        (re.compile(r"(?im)^flask"), "Flask"),
+        (re.compile(r"(?im)^django"), "Django"),
+        (re.compile(r"(?im)^celery"), "Celery"),
     ],
     "pyproject.toml": [
-        (re.compile(r"fastapi"), "FastAPI"), (re.compile(r"\bflask\b"), "Flask"), (re.compile(r"\bdjango\b"), "Django"),
+        (re.compile(r"fastapi"), "FastAPI"),
+        (re.compile(r"\bflask\b"), "Flask"),
+        (re.compile(r"\bdjango\b"), "Django"),
     ],
-    "Cargo.toml": [(re.compile(r"actix-web"), "Actix Web"), (re.compile(r"\baxum\b"), "Axum")],
+    "Cargo.toml": [
+        (re.compile(r"actix-web"), "Actix Web"),
+        (re.compile(r"\baxum\b"), "Axum"),
+    ],
     "Gemfile": [(re.compile(r"gem\s+['\"]rails['\"]"), "Ruby on Rails")],
     "pom.xml": [(re.compile(r"spring-boot"), "Spring Boot")],
     "build.gradle": [(re.compile(r"spring-boot"), "Spring Boot")],
     "composer.json": [(re.compile(r"laravel/framework"), "Laravel")],
-    "go.mod": [(re.compile(r"gin-gonic/gin"), "Gin"), (re.compile(r"labstack/echo"), "Echo")],
+    "go.mod": [
+        (re.compile(r"gin-gonic/gin"), "Gin"),
+        (re.compile(r"labstack/echo"), "Echo"),
+    ],
 }
 
 ROUTE_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("Express/Node", re.compile(r"(?:app|router)\.(get|post|put|delete|patch)\(\s*[\"']([^\"']+)[\"']", re.I)),
-    ("FastAPI/Flask", re.compile(r"@\w+\.(get|post|put|delete|patch)\(\s*[\"']([^\"']+)[\"']", re.I)),
+    (
+        "Express/Node",
+        re.compile(
+            r"(?:app|router)\.(get|post|put|delete|patch)\(\s*[\"']([^\"']+)[\"']", re.I
+        ),
+    ),
+    (
+        "FastAPI/Flask",
+        re.compile(r"@\w+\.(get|post|put|delete|patch)\(\s*[\"']([^\"']+)[\"']", re.I),
+    ),
     ("Django", re.compile(r"\bpath\(\s*[\"']([^\"']*)[\"']")),
-    ("Rails", re.compile(r"^\s*(get|post|put|patch|delete)\s+[\"']([^\"']+)[\"']", re.M | re.I)),
-    ("Spring", re.compile(r"@(Get|Post|Put|Delete|Patch)Mapping\(\s*(?:value\s*=\s*)?[\"']([^\"']+)[\"']")),
-    ("Laravel", re.compile(r"Route::(get|post|put|delete|patch)\(\s*[\"']([^\"']+)[\"']", re.I)),
+    (
+        "Rails",
+        re.compile(
+            r"^\s*(get|post|put|patch|delete)\s+[\"']([^\"']+)[\"']", re.M | re.I
+        ),
+    ),
+    (
+        "Spring",
+        re.compile(
+            r"@(Get|Post|Put|Delete|Patch)Mapping\(\s*(?:value\s*=\s*)?[\"']([^\"']+)[\"']"
+        ),
+    ),
+    (
+        "Laravel",
+        re.compile(r"Route::(get|post|put|delete|patch)\(\s*[\"']([^\"']+)[\"']", re.I),
+    ),
 ]
 
 MODEL_PATTERNS: list[tuple[str, re.Pattern]] = [
@@ -555,8 +713,22 @@ MODEL_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("Mongoose", re.compile(r"const\s+(\w+)Schema\s*=\s*new\s+mongoose\.Schema")),
 ]
 
-_INTERESTING_FILE_RE = re.compile(r"(route|router|url|view|controller|model|schema|entity|api)", re.I)
-_INTERESTING_EXTENSIONS = {"py", "js", "ts", "jsx", "tsx", "rb", "java", "go", "rs", "php", "prisma"}
+_INTERESTING_FILE_RE = re.compile(
+    r"(route|router|url|view|controller|model|schema|entity|api)", re.I
+)
+_INTERESTING_EXTENSIONS = {
+    "py",
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "rb",
+    "java",
+    "go",
+    "rs",
+    "php",
+    "prisma",
+}
 
 # The web-backend keyword filter above finds nothing in a shell/wrapper app
 # (Electron/Tauri/Capacitor/...) — its real "core code" lives in differently
@@ -572,8 +744,17 @@ _INTERESTING_EXTENSIONS = {"py", "js", "ts", "jsx", "tsx", "rb", "java", "go", "
 # "config.ts" is rarely its architecturally interesting file, so this stays
 # off for every repo that isn't already confirmed to be a shell app.
 _SHELL_CORE_FILE_STEMS = {
-    "main", "index", "preload", "window", "menu", "tray", "app",
-    "browser", "config", "notifications", "notification",
+    "main",
+    "index",
+    "preload",
+    "window",
+    "menu",
+    "tray",
+    "app",
+    "browser",
+    "config",
+    "notifications",
+    "notification",
 }
 _SHELL_ENTRY_POINT_STEMS = {"main", "index", "preload"}
 
@@ -596,8 +777,18 @@ def _dedupe_strings(items: list[str]) -> list[str]:
 
 
 _SHELL_PACKAGE_NAMES = set(
-    pkg for pkg, name in _PACKAGE_JSON_MAP.items()
-    if name in {"Electron", "Tauri", "React Native", "React Native WebView", "Expo", "Capacitor", "Apache Cordova"}
+    pkg
+    for pkg, name in _PACKAGE_JSON_MAP.items()
+    if name
+    in {
+        "Electron",
+        "Tauri",
+        "React Native",
+        "React Native WebView",
+        "Expo",
+        "Capacitor",
+        "Apache Cordova",
+    }
 )
 
 
@@ -634,7 +825,9 @@ def _read_pickle_uint32(buf: bytes, offset: int) -> int:
         raise AsarParseError("truncated pickle uint32 header")
     payload_size = struct.unpack_from("<I", buf, offset)[0]
     if payload_size != 4:
-        raise AsarParseError(f"unexpected pickle payload size for a uint32 field: {payload_size}")
+        raise AsarParseError(
+            f"unexpected pickle payload size for a uint32 field: {payload_size}"
+        )
     return struct.unpack_from("<I", buf, offset + 4)[0]
 
 
@@ -735,7 +928,10 @@ async def _github_api_get(path: str):
             # Permanently"} stub in place of real data for any renamed repo
             # (caught live against electron/electron-quick-start).
             follow_redirects=True,
-            headers={"User-Agent": "VengaiCodeBot/1.0", "Accept": "application/vnd.github+json"},
+            headers={
+                "User-Agent": "VengaiCodeBot/1.0",
+                "Accept": "application/vnd.github+json",
+            },
         ) as client:
             resp = await client.get(url)
     except httpx.HTTPError as e:
@@ -747,9 +943,13 @@ async def _github_api_get(path: str):
             "GitHub's API rate limit was hit — please try again in a bit, or use the URL/screenshots mode instead.",
         )
     if resp.status_code == 404:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "That GitHub repo wasn't found, or it's private.")
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "That GitHub repo wasn't found, or it's private."
+        )
     if resp.status_code >= 400:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"GitHub returned HTTP {resp.status_code}.")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"GitHub returned HTTP {resp.status_code}."
+        )
     return resp.json()
 
 
@@ -763,11 +963,23 @@ def _detect_stack_from_manifest(filename: str, content: str) -> list[dict]:
         deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
         for pkg, name in _PACKAGE_JSON_MAP.items():
             if pkg in deps:
-                found.append({"name": name, "category": "framework", "evidence": f'package.json dependency "{pkg}"'})
+                found.append(
+                    {
+                        "name": name,
+                        "category": "framework",
+                        "evidence": f'package.json dependency "{pkg}"',
+                    }
+                )
     else:
         for pattern, name in _MANIFEST_TEXT_PATTERNS.get(filename, []):
             if pattern.search(content):
-                found.append({"name": name, "category": "framework", "evidence": f"matched in {filename}"})
+                found.append(
+                    {
+                        "name": name,
+                        "category": "framework",
+                        "evidence": f"matched in {filename}",
+                    }
+                )
     return found
 
 
@@ -795,7 +1007,9 @@ async def _fetch_commit_history(owner: str, repo: str, branch: str) -> list[dict
     requests against a 60/hr unauthenticated rate limit) — labeled as such
     in the returned dict rather than implied to be the full project history."""
     try:
-        data = await _github_api_get(f"repos/{owner}/{repo}/commits?sha={branch}&per_page={MAX_COMMITS_FETCHED}")
+        data = await _github_api_get(
+            f"repos/{owner}/{repo}/commits?sha={branch}&per_page={MAX_COMMITS_FETCHED}"
+        )
     except HTTPException:
         return []
     if not isinstance(data, list):
@@ -818,7 +1032,14 @@ async def _fetch_commit_history(owner: str, repo: str, branch: str) -> list[dict
     return commits
 
 
-def _analyze_source_text(path: str, text: str, tech_stack: list[dict], routes: list[dict], db_models: list[dict], code_snippets: list[dict]) -> None:
+def _analyze_source_text(
+    path: str,
+    text: str,
+    tech_stack: list[dict],
+    routes: list[dict],
+    db_models: list[dict],
+    code_snippets: list[dict],
+) -> None:
     """Shared per-file regex extraction — real manifest/route/model
     matching against real fetched text, whether that text came from
     GitHub (repo mode) or an uploaded/unpacked local folder (local_folder
@@ -832,7 +1053,14 @@ def _analyze_source_text(path: str, text: str, tech_stack: list[dict], routes: l
         for m in pattern.finditer(text):
             method = m.group(1).upper() if m.re.groups >= 2 else "GET"
             route_path = m.group(m.re.groups)
-            routes.append({"framework": framework_name, "method": method, "path": route_path, "file": path})
+            routes.append(
+                {
+                    "framework": framework_name,
+                    "method": method,
+                    "path": route_path,
+                    "file": path,
+                }
+            )
 
     for orm_name, pattern in MODEL_PATTERNS:
         for m in pattern.finditer(text):
@@ -840,23 +1068,36 @@ def _analyze_source_text(path: str, text: str, tech_stack: list[dict], routes: l
 
     if len(code_snippets) < MAX_REPO_SNIPPETS:
         language = filename.rsplit(".", 1)[-1] if "." in filename else "text"
-        code_snippets.append({"source": path, "language": language, "content": text[:REPO_SNIPPET_CHARS]})
+        code_snippets.append(
+            {"source": path, "language": language, "content": text[:REPO_SNIPPET_CHARS]}
+        )
 
 
 async def _analyze_repo(repo_url: str) -> dict:
     match = GITHUB_REPO_RE.match(repo_url.strip())
     if not match:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please paste a public GitHub repo URL, like https://github.com/owner/repo.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Please paste a public GitHub repo URL, like https://github.com/owner/repo.",
+        )
     owner, repo = match.group(1), match.group(2)
 
     meta = await _github_api_get(f"repos/{owner}/{repo}")
     branch = meta.get("default_branch") or "main"
     language = meta.get("language")
 
-    tree_data = await _github_api_get(f"repos/{owner}/{repo}/git/trees/{branch}?recursive=1")
-    entries = [e for e in tree_data.get("tree", []) if e.get("type") == "blob" and e.get("path")]
+    tree_data = await _github_api_get(
+        f"repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+    )
+    entries = [
+        e
+        for e in tree_data.get("tree", [])
+        if e.get("type") == "blob" and e.get("path")
+    ]
     if not entries:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That repo's file tree looks empty.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "That repo's file tree looks empty."
+        )
 
     paths = [e["path"] for e in entries]
     shell_tech = _detect_shell_framework_from_tree(paths)
@@ -870,16 +1111,24 @@ async def _analyze_repo(repo_url: str) -> dict:
     # normally afterward.
     is_shell_app = bool(shell_tech)
     if not is_shell_app and "package.json" in paths:
-        pkg_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/package.json"
+        pkg_url = (
+            f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/package.json"
+        )
         try:
             _validate_public_url(pkg_url)
             status_code, _headers, body = await _fetch_raw(pkg_url)
             if status_code == 200 and body:
-                is_shell_app = _package_json_has_shell_dependency(body[:MAX_REPO_FILE_BYTES].decode("utf-8", errors="replace"))
+                is_shell_app = _package_json_has_shell_dependency(
+                    body[:MAX_REPO_FILE_BYTES].decode("utf-8", errors="replace")
+                )
         except HTTPException:
             pass
 
-    manifest_paths = [p for p in paths if p.rsplit("/", 1)[-1] in MANIFEST_FILENAMES and p.count("/") <= 1][:6]
+    manifest_paths = [
+        p
+        for p in paths
+        if p.rsplit("/", 1)[-1] in MANIFEST_FILENAMES and p.count("/") <= 1
+    ][:6]
 
     shell_core_paths: list[str] = []
     if is_shell_app:
@@ -891,7 +1140,14 @@ async def _analyze_repo(repo_url: str) -> dict:
             and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
             and _is_shell_core_file(p)
         ]
-        shell_core_paths.sort(key=lambda p: 0 if p.rsplit("/", 1)[-1].split(".")[0].lower() in _SHELL_ENTRY_POINT_STEMS else 1)
+        shell_core_paths.sort(
+            key=lambda p: (
+                0
+                if p.rsplit("/", 1)[-1].split(".")[0].lower()
+                in _SHELL_ENTRY_POINT_STEMS
+                else 1
+            )
+        )
 
     interesting_paths = [
         p
@@ -901,7 +1157,9 @@ async def _analyze_repo(repo_url: str) -> dict:
         and "." in p
         and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
     ]
-    combined_interesting = _dedupe_strings(shell_core_paths + interesting_paths)[:MAX_REPO_FILES_FETCHED]
+    combined_interesting = _dedupe_strings(shell_core_paths + interesting_paths)[
+        :MAX_REPO_FILES_FETCHED
+    ]
     fetch_paths = (manifest_paths + combined_interesting)[:MAX_REPO_FILES_FETCHED]
 
     tech_stack: list[dict] = list(shell_tech)
@@ -926,7 +1184,14 @@ async def _analyze_repo(repo_url: str) -> dict:
     db_models = _dedupe(db_models, lambda m_: m_["name"])[:20]
 
     if language and not any(t["name"].lower() == language.lower() for t in tech_stack):
-        tech_stack.insert(0, {"name": language, "category": "language", "evidence": "GitHub-reported primary language"})
+        tech_stack.insert(
+            0,
+            {
+                "name": language,
+                "category": "language",
+                "evidence": "GitHub-reported primary language",
+            },
+        )
 
     return {
         "mode": "repo",
@@ -942,18 +1207,34 @@ async def _analyze_repo(repo_url: str) -> dict:
 
 
 def _material_from_repo_analysis(repo_analysis: dict) -> str:
-    lines = [f"Repo: {repo_analysis['repo']} ({repo_analysis['files_scanned']} source files scanned)"]
+    lines = [
+        f"Repo: {repo_analysis['repo']} ({repo_analysis['files_scanned']} source files scanned)"
+    ]
     if repo_analysis["tech_stack"]:
-        lines.append("Detected technology: " + ", ".join(t["name"] for t in repo_analysis["tech_stack"]))
+        lines.append(
+            "Detected technology: "
+            + ", ".join(t["name"] for t in repo_analysis["tech_stack"])
+        )
     if repo_analysis["api_endpoints"]:
-        sample = ", ".join(f"{e['method']} {e['path']}" for e in repo_analysis["api_endpoints"][:12])
+        sample = ", ".join(
+            f"{e['method']} {e['path']}" for e in repo_analysis["api_endpoints"][:12]
+        )
         lines.append(f"Real API endpoints found: {sample}")
     if repo_analysis["data_model"]:
-        lines.append("Real data models found: " + ", ".join(m["name"] for m in repo_analysis["data_model"][:12]))
+        lines.append(
+            "Real data models found: "
+            + ", ".join(m["name"] for m in repo_analysis["data_model"][:12])
+        )
     commits = repo_analysis.get("commit_history") or []
     if commits:
-        span = f"{commits[0]['date'][:10]} to {commits[-1]['date'][:10]}" if commits[0].get("date") and commits[-1].get("date") else ""
-        lines.append(f"Recent real build history ({len(commits)} commits{', ' + span if span else ''}):")
+        span = (
+            f"{commits[0]['date'][:10]} to {commits[-1]['date'][:10]}"
+            if commits[0].get("date") and commits[-1].get("date")
+            else ""
+        )
+        lines.append(
+            f"Recent real build history ({len(commits)} commits{', ' + span if span else ''}):"
+        )
         for c in commits[-5:]:
             lines.append(f"  - {c['message']}")
     return "\n".join(lines)
@@ -973,13 +1254,23 @@ MAX_LOCAL_FILE_BYTES = 200_000
 MAX_ASAR_BYTES = 80 * 1024 * 1024
 
 
-async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_label: str) -> dict:
+async def _analyze_local_folder(
+    files: list[UploadFile], paths: list[str], root_label: str
+) -> dict:
     if len(files) != len(paths):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Each uploaded file needs a matching relative path.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Each uploaded file needs a matching relative path.",
+        )
     if len(files) > MAX_LOCAL_FILES:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Please limit this to {MAX_LOCAL_FILES} files.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Please limit this to {MAX_LOCAL_FILES} files.",
+        )
     if not files:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No files were uploaded from that folder.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No files were uploaded from that folder."
+        )
 
     collected: dict[str, bytes] = {}
     asar_unpacked = False
@@ -991,7 +1282,9 @@ async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_
             continue
         if clean_path.lower().endswith(".asar"):
             if len(content) > MAX_ASAR_BYTES:
-                logger.warning(f"Skipping {clean_path}: {len(content)} bytes exceeds the asar unpack cap")
+                logger.warning(
+                    f"Skipping {clean_path}: {len(content)} bytes exceeds the asar unpack cap"
+                )
                 continue
             try:
                 unpacked = parse_asar(content)
@@ -1000,12 +1293,17 @@ async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_
                 continue
             asar_unpacked = True
             for inner_path, inner_content in unpacked.items():
-                collected[f"{clean_path}!/{inner_path}"] = inner_content[:MAX_LOCAL_FILE_BYTES]
+                collected[f"{clean_path}!/{inner_path}"] = inner_content[
+                    :MAX_LOCAL_FILE_BYTES
+                ]
         else:
             collected[clean_path] = content[:MAX_LOCAL_FILE_BYTES]
 
     if not collected:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Couldn't find any readable files in that folder.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Couldn't find any readable files in that folder.",
+        )
 
     all_paths = list(collected.keys())
     shell_tech = _detect_shell_framework_from_tree(all_paths)
@@ -1013,11 +1311,15 @@ async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_
     if not is_shell_app:
         for path, content in collected.items():
             if path.rsplit("/", 1)[-1] == "package.json":
-                if _package_json_has_shell_dependency(content.decode("utf-8", errors="replace")):
+                if _package_json_has_shell_dependency(
+                    content.decode("utf-8", errors="replace")
+                ):
                     is_shell_app = True
                 break
 
-    manifest_paths = [p for p in all_paths if p.rsplit("/", 1)[-1] in MANIFEST_FILENAMES][:6]
+    manifest_paths = [
+        p for p in all_paths if p.rsplit("/", 1)[-1] in MANIFEST_FILENAMES
+    ][:6]
 
     shell_core_paths: list[str] = []
     if is_shell_app:
@@ -1029,7 +1331,14 @@ async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_
             and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
             and _is_shell_core_file(p)
         ]
-        shell_core_paths.sort(key=lambda p: 0 if p.rsplit("/", 1)[-1].split(".")[0].lower() in _SHELL_ENTRY_POINT_STEMS else 1)
+        shell_core_paths.sort(
+            key=lambda p: (
+                0
+                if p.rsplit("/", 1)[-1].split(".")[0].lower()
+                in _SHELL_ENTRY_POINT_STEMS
+                else 1
+            )
+        )
 
     interesting_paths = [
         p
@@ -1039,7 +1348,9 @@ async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_
         and "." in p
         and p.rsplit(".", 1)[-1] in _INTERESTING_EXTENSIONS
     ]
-    combined_interesting = _dedupe_strings(shell_core_paths + interesting_paths)[:MAX_REPO_FILES_FETCHED]
+    combined_interesting = _dedupe_strings(shell_core_paths + interesting_paths)[
+        :MAX_REPO_FILES_FETCHED
+    ]
     scan_paths = (manifest_paths + combined_interesting)[:MAX_REPO_FILES_FETCHED]
 
     tech_stack: list[dict] = list(shell_tech)
@@ -1069,23 +1380,38 @@ async def _analyze_local_folder(files: list[UploadFile], paths: list[str], root_
 
 
 def _material_from_local_folder_analysis(analysis: dict) -> str:
-    lines = [f"Local install: {analysis['root_label']} ({analysis['files_scanned']} of {analysis['files_uploaded']} uploaded files scanned)"]
+    lines = [
+        f"Local install: {analysis['root_label']} ({analysis['files_scanned']} of {analysis['files_uploaded']} uploaded files scanned)"
+    ]
     if analysis.get("asar_unpacked"):
-        lines.append("An Electron app.asar archive was found and unpacked to reach its real bundled source.")
+        lines.append(
+            "An Electron app.asar archive was found and unpacked to reach its real bundled source."
+        )
     if analysis["tech_stack"]:
-        lines.append("Detected technology: " + ", ".join(t["name"] for t in analysis["tech_stack"]))
+        lines.append(
+            "Detected technology: "
+            + ", ".join(t["name"] for t in analysis["tech_stack"])
+        )
     if analysis["api_endpoints"]:
-        sample = ", ".join(f"{e['method']} {e['path']}" for e in analysis["api_endpoints"][:12])
+        sample = ", ".join(
+            f"{e['method']} {e['path']}" for e in analysis["api_endpoints"][:12]
+        )
         lines.append(f"Real API endpoints found: {sample}")
     if analysis["data_model"]:
-        lines.append("Real data models found: " + ", ".join(m["name"] for m in analysis["data_model"][:12]))
+        lines.append(
+            "Real data models found: "
+            + ", ".join(m["name"] for m in analysis["data_model"][:12])
+        )
     return "\n".join(lines)
 
 
 # ─── Screenshots mode ───
 async def _analyze_screenshots(files: list[UploadFile]) -> tuple[str, dict]:
     if len(files) > MAX_SCREENSHOTS:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Please upload at most {MAX_SCREENSHOTS} screenshots.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Please upload at most {MAX_SCREENSHOTS} screenshots.",
+        )
 
     descriptions = []
     screens = []
@@ -1097,7 +1423,10 @@ async def _analyze_screenshots(files: list[UploadFile]) -> tuple[str, dict]:
             )
         content = await file.read()
         if len(content) > MAX_SCREENSHOT_BYTES:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"'{file.filename}' is too large (8 MB max).")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"'{file.filename}' is too large (8 MB max).",
+            )
 
         image_b64 = base64.b64encode(content).decode("ascii")
         try:
@@ -1111,11 +1440,17 @@ async def _analyze_screenshots(files: list[UploadFile]) -> tuple[str, dict]:
         except AIError as e:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
 
-        descriptions.append(f"Screenshot {index + 1} ({file.filename}): {result['text']}")
+        descriptions.append(
+            f"Screenshot {index + 1} ({file.filename}): {result['text']}"
+        )
         screens.append({"filename": file.filename, "description": result["text"][:600]})
 
     material = "\n\n".join(descriptions)
-    reverse_engineering = {"mode": "screenshots", "screens_analyzed": len(files), "screens": screens}
+    reverse_engineering = {
+        "mode": "screenshots",
+        "screens_analyzed": len(files),
+        "screens": screens,
+    }
     return material, reverse_engineering
 
 
@@ -1155,13 +1490,29 @@ def build_reverse_engineering_directive(reverse_data: dict | None) -> str:
         parts.append("Detected technology: " + ", ".join(t["name"] for t in tech[:10]))
     pages = reverse_data.get("pages") or []
     if pages:
-        parts.append("Real pages/screens found: " + ", ".join((p.get("title") or p.get("url", ""))[:60] for p in pages[:10] if (p.get("title") or p.get("url"))))
+        parts.append(
+            "Real pages/screens found: "
+            + ", ".join(
+                (p.get("title") or p.get("url", ""))[:60]
+                for p in pages[:10]
+                if (p.get("title") or p.get("url"))
+            )
+        )
     data_model = reverse_data.get("data_model") or []
     if data_model:
-        parts.append("Real data entities/models found: " + ", ".join(e.get("name", "") for e in data_model[:10]))
+        parts.append(
+            "Real data entities/models found: "
+            + ", ".join(e.get("name", "") for e in data_model[:10])
+        )
     endpoints = reverse_data.get("api_endpoints") or []
     if endpoints:
-        parts.append("Real API endpoints found: " + ", ".join(f"{e.get('method', '')} {e.get('path', '')}".strip() for e in endpoints[:10]))
+        parts.append(
+            "Real API endpoints found: "
+            + ", ".join(
+                f"{e.get('method', '')} {e.get('path', '')}".strip()
+                for e in endpoints[:10]
+            )
+        )
     if reverse_data.get("repo"):
         parts.append(f"Source repo scanned: {reverse_data['repo']}")
     commits = reverse_data.get("commit_history") or []
@@ -1200,31 +1551,47 @@ async def analyze(
         source_kind = f"a website ({url.strip()}) — {reverse_engineering['pages_crawled']} real pages were crawled"
     elif source_type == "repo":
         if not repo_url or not repo_url.strip():
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please provide a GitHub repo URL.")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Please provide a GitHub repo URL."
+            )
         reverse_engineering = await _analyze_repo(repo_url.strip())
         material = _material_from_repo_analysis(reverse_engineering)
         source_kind = f"a GitHub repository ({reverse_engineering['repo']}) — its real source code was scanned"
     elif source_type == "local_folder":
         if not files:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No files were uploaded from that folder.")
-        reverse_engineering = await _analyze_local_folder(files, paths, (root_label or "").strip())
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "No files were uploaded from that folder."
+            )
+        reverse_engineering = await _analyze_local_folder(
+            files, paths, (root_label or "").strip()
+        )
         material = _material_from_local_folder_analysis(reverse_engineering)
         source_kind = f"a real installed desktop app ({reverse_engineering['root_label']}) — its real local files were scanned"
     elif source_type == "screenshots":
         if not files:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please upload at least one screenshot.")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Please upload at least one screenshot."
+            )
         material, reverse_engineering = await _analyze_screenshots(files)
         source_kind = "screenshots of an existing app"
     elif source_type == "description":
         if not description or not description.strip():
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please describe the app you want to clone.")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Please describe the app you want to clone.",
+            )
         material = description.strip()
         source_kind = "a text description of an existing app, written by the user"
         reverse_engineering = {"mode": "description"}
     else:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "source_type must be 'url', 'repo', 'local_folder', 'screenshots', or 'description'.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "source_type must be 'url', 'repo', 'local_folder', 'screenshots', or 'description'.",
+        )
 
-    prompt = _SYNTHESIS_PROMPT.format(source_kind=source_kind, material=material[:MAX_MATERIAL_CHARS_IN_PROMPT])
+    prompt = _SYNTHESIS_PROMPT.format(
+        source_kind=source_kind, material=material[:MAX_MATERIAL_CHARS_IN_PROMPT]
+    )
 
     try:
         ai_result = await generate_text(prompt, user=user, db=db)
@@ -1243,7 +1610,10 @@ async def analyze(
         )
 
     if not raw_idea:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Baby Tiger couldn't come up with an idea from that. Please try again!")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Baby Tiger couldn't come up with an idea from that. Please try again!",
+        )
 
     return ReverseAnalyzeResponse(
         raw_idea=raw_idea,

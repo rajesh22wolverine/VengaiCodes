@@ -26,10 +26,9 @@ class UserAIConfig(Base):
     orderable together — see User.ai_bag_order for the per-user ordering
     override.
     """
+
     __tablename__ = "user_ai_configs"
-    __table_args__ = (
-        Index("ix_user_ai_configs_user_id", "user_id"),
-    )
+    __table_args__ = (Index("ix_user_ai_configs_user_id", "user_id"),)
 
     id: str = Column(
         String(36),

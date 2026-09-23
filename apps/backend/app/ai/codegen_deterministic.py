@@ -94,8 +94,16 @@ class DeterministicCodegenError(RuntimeError):
 _CATEGORY_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"email"), "email"),
     (re.compile(r"url|link|href|website"), "url"),
-    (re.compile(r"price|amount|total|cost|rating|score|percent|rate|weight|latitude|longitude"), "float"),
-    (re.compile(r"count|quantity|qty|number|num|age|year|stock|inventory|duration"), "int"),
+    (
+        re.compile(
+            r"price|amount|total|cost|rating|score|percent|rate|weight|latitude|longitude"
+        ),
+        "float",
+    ),
+    (
+        re.compile(r"count|quantity|qty|number|num|age|year|stock|inventory|duration"),
+        "int",
+    ),
     (re.compile(r"^is_|^has_"), "bool"),
     (re.compile(r"_at$|_date$|^date|^time|timestamp"), "datetime"),
     (re.compile(r"description|bio|notes|content|body|summary|address"), "text"),
@@ -274,7 +282,9 @@ def generate_model_file_fastapi(table: dict) -> GeneratedFile:
         "    id = Column(Integer, primary_key=True, autoincrement=True)",
     ]
     for field in fields:
-        lines.append(f"    {_slug(field)} = Column({_infer_sa_type(field)}, nullable=True)")
+        lines.append(
+            f"    {_slug(field)} = Column({_infer_sa_type(field)}, nullable=True)"
+        )
     lines += [
         "    created_at = Column(DateTime(timezone=True), server_default=func.now())",
         "    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())",
@@ -299,7 +309,9 @@ def _crud_block_fastapi(table: dict) -> list[str]:
     table_slug = _table_slug_plural(name)
     fields = _real_fields(table)
 
-    schema_lines = [f"    {_slug(f)}: {_pydantic_type(_infer_sa_type(f))} = None" for f in fields] or ["    pass"]
+    schema_lines = [
+        f"    {_slug(f)}: {_pydantic_type(_infer_sa_type(f))} = None" for f in fields
+    ] or ["    pass"]
 
     return [
         f"class {class_name}In(BaseModel):",
@@ -379,7 +391,7 @@ def generate_routes_file_fastapi(tables: list[dict]) -> GeneratedFile:
     lines += [
         "# VENGAI:CUSTOM:extra_routes:start",
         "# Add custom, non-CRUD endpoints here — this block is preserved across regenerations.",
-        "# Example: @router.get(\"/reports/summary\") ...",
+        '# Example: @router.get("/reports/summary") ...',
         "# VENGAI:CUSTOM:extra_routes:end",
     ]
     return GeneratedFile(
@@ -396,7 +408,9 @@ def generate_routes_file_fastapi(tables: list[dict]) -> GeneratedFile:
 def _field_input_line_react(field: str) -> str:
     slug = _slug(field)
     return (
-        '          <input className="border rounded px-2 py-1 text-sm" placeholder="' + field + '" '
+        '          <input className="border rounded px-2 py-1 text-sm" placeholder="'
+        + field
+        + '" '
         "value={form." + slug + " || ''} "
         "onChange={(e) => setForm({ ...form, " + slug + ": e.target.value })} />"
     )
@@ -488,12 +502,13 @@ def generate_screen_file_react(table: dict) -> GeneratedFile:
     component_name = f"{class_name}Screen"
 
     content = (
-        _SCREEN_TEMPLATE_REACT
-        .replace("__COMPONENT__", component_name)
+        _SCREEN_TEMPLATE_REACT.replace("__COMPONENT__", component_name)
         .replace("__TABLE_SLUG__", table_slug)
         .replace("__DISPLAY_NAME__", name)
         .replace("__SLOT_NAME__", f"{slug}_screen")
-        .replace("__FIELD_INPUTS__", "\n".join(_field_input_line_react(f) for f in fields))
+        .replace(
+            "__FIELD_INPUTS__", "\n".join(_field_input_line_react(f) for f in fields)
+        )
         .replace("__HEADER_CELLS__", "\n".join(_header_cell_line(f) for f in fields))
         .replace("__ROW_CELLS__", "\n".join(_row_cell_line_react(f) for f in fields))
     )
@@ -515,9 +530,14 @@ def generate_model_file_express(table: dict) -> GeneratedFile:
     fields = _real_fields(table)
 
     field_lines = [
-        f"  {_slug(f)}: {{ type: {_infer_mongoose_type(f)}, required: false }}," for f in fields
+        f"  {_slug(f)}: {{ type: {_infer_mongoose_type(f)}, required: false }},"
+        for f in fields
     ]
-    schema_body = "\n".join(field_lines) if field_lines else "  // no fields beyond the standard _id/timestamps"
+    schema_body = (
+        "\n".join(field_lines)
+        if field_lines
+        else "  // no fields beyond the standard _id/timestamps"
+    )
 
     content = (
         "const mongoose = require('mongoose');\n\n"
@@ -614,7 +634,9 @@ def generate_routes_file_express(tables: list[dict]) -> GeneratedFile:
 def _field_input_line_vue(field: str) -> str:
     slug = _slug(field)
     return (
-        '        <input class="border rounded px-2 py-1 text-sm" placeholder="' + field + '" '
+        '        <input class="border rounded px-2 py-1 text-sm" placeholder="'
+        + field
+        + '" '
         'v-model="form.' + slug + '" />'
     )
 
@@ -700,11 +722,12 @@ def generate_screen_file_vue(table: dict) -> GeneratedFile:
     component_name = f"{class_name}Screen"
 
     content = (
-        _SCREEN_TEMPLATE_VUE
-        .replace("__TABLE_SLUG__", table_slug)
+        _SCREEN_TEMPLATE_VUE.replace("__TABLE_SLUG__", table_slug)
         .replace("__DISPLAY_NAME__", name)
         .replace("__SLOT_NAME__", f"{slug}_screen")
-        .replace("__FIELD_INPUTS__", "\n".join(_field_input_line_vue(f) for f in fields))
+        .replace(
+            "__FIELD_INPUTS__", "\n".join(_field_input_line_vue(f) for f in fields)
+        )
         .replace("__HEADER_CELLS__", "\n".join(_header_cell_line(f) for f in fields))
         .replace("__ROW_CELLS__", "\n".join(_row_cell_line_vue(f) for f in fields))
     )
@@ -780,8 +803,16 @@ def build_deterministic_codegen_data(project: Project, stack_info: dict) -> dict
         if adapter.entry_point_files:
             wiring_files += adapter.entry_point_files(wiring_ctx)
 
-    backend_commands = backend_adapter.setup_commands(project.name) if backend_adapter.setup_commands else None
-    frontend_commands = frontend_adapter.setup_commands(project.name) if frontend_adapter.setup_commands else None
+    backend_commands = (
+        backend_adapter.setup_commands(project.name)
+        if backend_adapter.setup_commands
+        else None
+    )
+    frontend_commands = (
+        frontend_adapter.setup_commands(project.name)
+        if frontend_adapter.setup_commands
+        else None
+    )
     wiring_files.append(
         build_readme_setup(
             project.name,
@@ -842,7 +873,10 @@ def is_supported_stack(stack_info: dict) -> bool:
 
 
 _DISPLAY_LABELS = {
-    "react": "React", "vue": "Vue", "fastapi": "FastAPI", "express": "Express",
+    "react": "React",
+    "vue": "Vue",
+    "fastapi": "FastAPI",
+    "express": "Express",
 }
 
 

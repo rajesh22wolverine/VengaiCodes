@@ -44,6 +44,7 @@ MAX_PAGE_BYTES = 2_000_000
 # ─── Schemas ───
 class PageSource(BaseModel):
     """Either inline html/css, or a pointer at a stored design."""
+
     html: Optional[str] = None
     css: Optional[str] = ""
     project_id: Optional[str] = None
@@ -68,8 +69,12 @@ class CommandRequest(PageSource):
 
 
 # ─── Loading / saving a stored design ───
-async def _load_design(db: AsyncSession, user: User, project_id: str, design_id: str) -> tuple[Project, dict, dict]:
-    result = await db.execute(select(Project).where(Project.id == project_id, Project.user_id == user.id))
+async def _load_design(
+    db: AsyncSession, user: User, project_id: str, design_id: str
+) -> tuple[Project, dict, dict]:
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == user.id)
+    )
     project = result.scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found.")
@@ -85,7 +90,9 @@ async def _resolve_source(
     payload: PageSource, db: AsyncSession, user: User
 ) -> tuple[str, str, Optional[tuple[Project, dict, dict]]]:
     if payload.project_id and payload.design_id:
-        project, uiux_data, design = await _load_design(db, user, payload.project_id, payload.design_id)
+        project, uiux_data, design = await _load_design(
+            db, user, payload.project_id, payload.design_id
+        )
         html = design.get("generated_html") or ""
         if not html.strip():
             raise HTTPException(
@@ -100,11 +107,16 @@ async def _resolve_source(
             "Send either html (with optional css), or project_id + design_id.",
         )
     if len(payload.html) > MAX_PAGE_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That page is too large to edit here.")
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "That page is too large to edit here.",
+        )
     return payload.html, payload.css or "", None
 
 
-async def _save_design(db: AsyncSession, stored: tuple[Project, dict, dict], html: str, css: str) -> dict:
+async def _save_design(
+    db: AsyncSession, stored: tuple[Project, dict, dict], html: str, css: str
+) -> dict:
     project, uiux_data, design = stored
     design["generated_html"] = html
     design["generated_css"] = css
@@ -143,32 +155,50 @@ async def import_page(
     if file is not None and file.filename:
         filename = (file.filename or "").lower()
         if not filename.endswith((".html", ".htm")):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please upload an .html file.")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Please upload an .html file."
+            )
         raw = await file.read()
         if len(raw) > MAX_PAGE_BYTES:
-            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That page is too large to import here.")
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                "That page is too large to import here.",
+            )
         html = raw.decode("utf-8", errors="replace")
     elif not (html or "").strip():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Upload an .html file or paste the page's HTML.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Upload an .html file or paste the page's HTML.",
+        )
 
     html = html or ""
     if len(html) > MAX_PAGE_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That page is too large to import here.")
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "That page is too large to import here.",
+        )
 
     css = css or ""
     if css_file is not None and css_file.filename:
         css_raw = await css_file.read()
         if len(css_raw) > MAX_PAGE_BYTES:
-            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That stylesheet is too large to import here.")
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                "That stylesheet is too large to import here.",
+            )
         css = css_raw.decode("utf-8", errors="replace")
 
     page = Page(html, css)
     if not page.elements:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That file doesn't contain any HTML elements.")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "That file doesn't contain any HTML elements."
+        )
 
     design: Optional[dict] = None
     if project_id:
-        result = await db.execute(select(Project).where(Project.id == project_id, Project.user_id == user.id))
+        result = await db.execute(
+            select(Project).where(Project.id == project_id, Project.user_id == user.id)
+        )
         project = result.scalar_one_or_none()
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found.")
@@ -240,7 +270,9 @@ async def edit(
     return {"success": True, "saved": saved, **result}
 
 
-@router.post("/command", summary="Turn a plain-English change into edits and apply it (no AI)")
+@router.post(
+    "/command", summary="Turn a plain-English change into edits and apply it (no AI)"
+)
 async def command(
     payload: CommandRequest,
     user: User = Depends(get_current_active_user),
@@ -255,7 +287,9 @@ async def command(
 
     response: dict[str, Any] = {
         "success": True,
-        "understood": [{"explanation": p.explanation, "edits": p.edits} for p in understood],
+        "understood": [
+            {"explanation": p.explanation, "edits": p.edits} for p in understood
+        ],
         "not_understood": [
             {"error": p.error, "suggestions": p.suggestions} for p in rejected
         ],
@@ -273,7 +307,12 @@ async def command(
     except PageEditError as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error))
 
-    response["preview"] = {"html": result["html"], "css": result["css"], "html_changed": result["html_changed"], "css_changed": result["css_changed"]}
+    response["preview"] = {
+        "html": result["html"],
+        "css": result["css"],
+        "html_changed": result["html_changed"],
+        "css_changed": result["css_changed"],
+    }
 
     if payload.apply:
         response["applied"] = True

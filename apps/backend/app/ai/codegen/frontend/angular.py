@@ -40,7 +40,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
 
     capabilities_text = "\n".join(
-        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}"
+        for c in ctx.native_capabilities
+        if c in NATIVE_CAPABILITY_DESCRIPTIONS
     )
     native_section = (
         f"\nNative device features available to this app (import and use where relevant to "
@@ -53,7 +55,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Angular STANDALONE component (Angular 17+ style — `standalone: true`, inline `template` and `styles`, NO separate .html/.css files, NO NgModule) for the "{screen_name}" screen of this app.
 
-Screen purpose: {ctx.screen.get('purpose', '')}
+Screen purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this screen can call:
 {endpoints_text}
@@ -75,8 +77,12 @@ Requirements:
 Return ONLY the raw TypeScript file content (imports + @Component decorator + class). No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "typescript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "typescript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"frontend/src/app/screens/{kebab}.component.ts",
@@ -91,15 +97,20 @@ def _screen_kebab_from_path(file: GeneratedFile) -> str:
 
 
 def _build_app_component_ts(kebabs: list[str]) -> str:
-    imports = "\n".join(f"import {{ {_pascal(k)}Component }} from './screens/{k}.component';" for k in kebabs)
+    imports = "\n".join(
+        f"import {{ {_pascal(k)}Component }} from './screens/{k}.component';"
+        for k in kebabs
+    )
     import_names = ", ".join(f"{_pascal(k)}Component" for k in kebabs)
-    tags = "\n".join(f'        <app-{k} *ngIf="active === {i}"></app-{k}>' for i, k in enumerate(kebabs))
+    tags = "\n".join(
+        f'        <app-{k} *ngIf="active === {i}"></app-{k}>'
+        for i, k in enumerate(kebabs)
+    )
     screens_array = ", ".join(f"{{ name: '{_pascal(k)}' }}" for k in kebabs)
 
     return (
         "import { Component } from '@angular/core';\n"
-        "import { CommonModule } from '@angular/common';\n"
-        + imports + "\n\n"
+        "import { CommonModule } from '@angular/common';\n" + imports + "\n\n"
         "@Component({\n"
         "  selector: 'app-root',\n"
         "  standalone: true,\n"
@@ -115,8 +126,7 @@ def _build_app_component_ts(kebabs: list[str]) -> str:
         "          {{ s.name }}\n"
         "        </button>\n"
         "      </nav>\n"
-        '      <main class="flex-1">\n'
-        + tags + "\n"
+        '      <main class="flex-1">\n' + tags + "\n"
         "      </main>\n"
         "    </div>\n"
         "  `,\n"
@@ -320,24 +330,84 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         },
     )
     return [
-        GeneratedFile(path="frontend/package.json", language="json", content=package_json, description="Frontend dependency manifest"),
-        GeneratedFile(path="frontend/angular.json", language="json", content=_angular_json(slug), description="Angular CLI project config"),
-        GeneratedFile(path="frontend/tsconfig.json", language="json", content=_TSCONFIG_JSON, description="Base TypeScript config"),
-        GeneratedFile(path="frontend/tsconfig.app.json", language="json", content=_TSCONFIG_APP_JSON, description="App TypeScript config"),
-        GeneratedFile(path="frontend/tsconfig.spec.json", language="json", content=_TSCONFIG_SPEC_JSON, description="Test TypeScript config (used by `ng test`)"),
-        GeneratedFile(path="frontend/tailwind.config.js", language="javascript", content=_TAILWIND_CONFIG, description="Tailwind config"),
-        GeneratedFile(path="frontend/postcss.config.js", language="javascript", content=_POSTCSS_CONFIG, description="PostCSS config"),
+        GeneratedFile(
+            path="frontend/package.json",
+            language="json",
+            content=package_json,
+            description="Frontend dependency manifest",
+        ),
+        GeneratedFile(
+            path="frontend/angular.json",
+            language="json",
+            content=_angular_json(slug),
+            description="Angular CLI project config",
+        ),
+        GeneratedFile(
+            path="frontend/tsconfig.json",
+            language="json",
+            content=_TSCONFIG_JSON,
+            description="Base TypeScript config",
+        ),
+        GeneratedFile(
+            path="frontend/tsconfig.app.json",
+            language="json",
+            content=_TSCONFIG_APP_JSON,
+            description="App TypeScript config",
+        ),
+        GeneratedFile(
+            path="frontend/tsconfig.spec.json",
+            language="json",
+            content=_TSCONFIG_SPEC_JSON,
+            description="Test TypeScript config (used by `ng test`)",
+        ),
+        GeneratedFile(
+            path="frontend/tailwind.config.js",
+            language="javascript",
+            content=_TAILWIND_CONFIG,
+            description="Tailwind config",
+        ),
+        GeneratedFile(
+            path="frontend/postcss.config.js",
+            language="javascript",
+            content=_POSTCSS_CONFIG,
+            description="PostCSS config",
+        ),
     ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     kebabs = [_screen_kebab_from_path(f) for f in ctx.screen_files] or ["home"]
     return [
-        GeneratedFile(path="frontend/src/index.html", language="html", content=_index_html(ctx.project_name), description="Angular HTML entry point"),
-        GeneratedFile(path="frontend/src/main.ts", language="typescript", content=_MAIN_TS, description="Angular bootstrap entry point"),
-        GeneratedFile(path="frontend/src/app/app.config.ts", language="typescript", content=_APP_CONFIG_TS, description="Angular application config"),
-        GeneratedFile(path="frontend/src/app/app.component.ts", language="typescript", content=_build_app_component_ts(kebabs), description="Renders every generated screen"),
-        GeneratedFile(path="frontend/src/styles.css", language="css", content=_STYLES_CSS, description="Tailwind directives"),
+        GeneratedFile(
+            path="frontend/src/index.html",
+            language="html",
+            content=_index_html(ctx.project_name),
+            description="Angular HTML entry point",
+        ),
+        GeneratedFile(
+            path="frontend/src/main.ts",
+            language="typescript",
+            content=_MAIN_TS,
+            description="Angular bootstrap entry point",
+        ),
+        GeneratedFile(
+            path="frontend/src/app/app.config.ts",
+            language="typescript",
+            content=_APP_CONFIG_TS,
+            description="Angular application config",
+        ),
+        GeneratedFile(
+            path="frontend/src/app/app.component.ts",
+            language="typescript",
+            content=_build_app_component_ts(kebabs),
+            description="Renders every generated screen",
+        ),
+        GeneratedFile(
+            path="frontend/src/styles.css",
+            language="css",
+            content=_STYLES_CSS,
+            description="Tailwind directives",
+        ),
     ]
 
 

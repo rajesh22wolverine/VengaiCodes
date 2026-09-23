@@ -20,10 +20,10 @@ def build_uiux_prompt(project_name: str, requirements: dict) -> str:
     return f"""You are Baby Tiger 🐯, VengaiCode's AI design assistant. Based on this app's approved requirements, design a UI/UX system.
 
 App: {project_name}
-Overview: {requirements.get('overview', '')}
+Overview: {requirements.get("overview", "")}
 Key features: {features}
 Platforms: {platforms}
-Target users: {requirements.get('target_users', '')}
+Target users: {requirements.get("target_users", "")}
 
 Generate a JSON object with EXACTLY these fields (no markdown, no extra text, just valid JSON):
 {{
@@ -48,7 +48,9 @@ Generate 4-6 screens covering the core user journey. Pick colors that suit the a
 Respond with ONLY the JSON object, nothing else."""
 
 
-def build_design_to_code_prompt(page_name: str, voice_instructions: Optional[str] = None) -> str:
+def build_design_to_code_prompt(
+    page_name: str, voice_instructions: Optional[str] = None
+) -> str:
     voice_section = ""
     if voice_instructions:
         voice_section = f"""
@@ -93,9 +95,9 @@ def build_screen_to_code_prompt(
     palette_text = ", ".join(f"{k}: {v}" for k, v in color_palette.items())
 
     return f"""You are Baby Tiger 🐯, VengaiCode's AI design assistant. Design a single \
-page mockup, as HTML + CSS, for the "{screen.get('name', 'Screen')}" screen of this app.
+page mockup, as HTML + CSS, for the "{screen.get("name", "Screen")}" screen of this app.
 
-Screen purpose: {screen.get('purpose', '')}
+Screen purpose: {screen.get("purpose", "")}
 Key elements this screen needs: {key_elements}
 
 Match the app's design system:
@@ -143,8 +145,8 @@ Respond with ONLY a JSON object, no markdown, no extra text:
 # call; the provider's model maximum is the limit, and a truncated mockup
 # now means the model genuinely ran out of room rather than that we
 # guessed a number too low. See settings.AI_MAX_TOKENS.
-UIUX_DESIGN_MAX_TOKENS: int | None = None   # compact JSON: palette, typography, screens
-UIUX_MOCKUP_MAX_TOKENS: int | None = None   # a full HTML page + CSS, JSON-escaped
+UIUX_DESIGN_MAX_TOKENS: int | None = None  # compact JSON: palette, typography, screens
+UIUX_MOCKUP_MAX_TOKENS: int | None = None  # a full HTML page + CSS, JSON-escaped
 
 
 def parse_ai_json(text: str) -> dict:

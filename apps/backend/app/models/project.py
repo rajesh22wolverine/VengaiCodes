@@ -10,9 +10,17 @@ from enum import Enum as PyEnum
 from typing import Optional
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Enum, Float,
-    ForeignKey, Integer, String, Text, JSON,
-    Index
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    JSON,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -84,6 +92,7 @@ class Project(Base):
     Each project goes through all SDLC phases:
     Requirements → UI/UX → Architecture → API → CodeGen → Testing → Export
     """
+
     __tablename__ = "projects"
     __table_args__ = (
         Index("ix_projects_user_id", "user_id"),
@@ -345,11 +354,17 @@ class Project(Base):
     # If published to marketplace
 
     # ── Baby Tiger Stamp Config 🐯 ──
-    tiger_stamp_position: str = Column(String(50), default="bottom_right", nullable=False)
+    tiger_stamp_position: str = Column(
+        String(50), default="bottom_right", nullable=False
+    )
     tiger_stamp_size: str = Column(String(20), default="small", nullable=False)
     tiger_stamp_style: str = Column(String(20), default="minimal", nullable=False)
-    tiger_stamp_animation: str = Column(String(30), default="subtle_wink", nullable=False)
-    tiger_stamp_visibility: str = Column(String(30), default="always_visible", nullable=False)
+    tiger_stamp_animation: str = Column(
+        String(30), default="subtle_wink", nullable=False
+    )
+    tiger_stamp_visibility: str = Column(
+        String(30), default="always_visible", nullable=False
+    )
     # Seller can configure appearance — NOT presence
 
     # ── Thumbnail ──
@@ -397,8 +412,7 @@ class Project(Base):
             SDLCPhase.EXPORT: 10,
         }
         total = sum(
-            phase_weights.get(SDLCPhase(phase), 0)
-            for phase in self.phases_completed
+            phase_weights.get(SDLCPhase(phase), 0) for phase in self.phases_completed
         )
         return min(100.0, float(total))
 
@@ -450,6 +464,7 @@ class SDLCPhaseHistory(Base):
     Tracks every time a phase was started, completed, or revisited.
     Enables full phase revisit and change tracking.
     """
+
     __tablename__ = "sdlc_phase_history"
     __table_args__ = (
         Index("ix_phase_history_project_id", "project_id"),

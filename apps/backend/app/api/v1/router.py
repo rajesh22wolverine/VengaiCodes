@@ -31,6 +31,7 @@ api_router.include_router(
 
 # ── Reverse App — analyze an existing app/website into a project idea ──
 from app.api.v1 import reverse_engineer
+
 api_router.include_router(
     reverse_engineer.router,
     prefix="/reverse",
@@ -56,6 +57,7 @@ api_router.include_router(
 # ── AI Engine ──
 # /api/v1/ai/status, /api/v1/ai/ask
 from app.api.v1 import ai
+
 api_router.include_router(
     ai.router,
     prefix="/ai",
@@ -65,6 +67,7 @@ api_router.include_router(
 # ── AI Engine — BYO model configs ──
 # /api/v1/ai/configs, /api/v1/ai/configs/{id}
 from app.api.v1 import ai_config
+
 api_router.include_router(
     ai_config.router,
     prefix="/ai/configs",
@@ -74,6 +77,7 @@ api_router.include_router(
 # ── Figma — connect account + import designs (used by the UI/UX phase) ──
 # /api/v1/figma/connection
 from app.api.v1 import figma
+
 api_router.include_router(
     figma.router,
     prefix="/figma",
@@ -128,6 +132,7 @@ api_router.include_router(
 # )
 
 from app.api.v1 import admin
+
 api_router.include_router(
     admin.router,
     prefix="/admin",
@@ -143,6 +148,7 @@ api_router.include_router(
 
 # ── Wizard ──
 from app.api.v1 import wizard
+
 api_router.include_router(
     wizard.router,
     prefix="/wizard",
@@ -151,6 +157,7 @@ api_router.include_router(
 
 # ── Requirements ──
 from app.api.v1 import requirements
+
 api_router.include_router(
     requirements.router,
     prefix="/requirements",
@@ -159,6 +166,7 @@ api_router.include_router(
 
 # ── UI/UX ──
 from app.api.v1 import uiux
+
 api_router.include_router(
     uiux.router,
     prefix="/uiux",
@@ -167,6 +175,7 @@ api_router.include_router(
 
 # ── Page Editor — deterministic page analysis/editing, no AI involved ──
 from app.api.v1 import page_editor
+
 api_router.include_router(
     page_editor.router,
     prefix="/page",
@@ -175,6 +184,7 @@ api_router.include_router(
 
 # ── Notifications ──
 from app.api.v1 import notifications
+
 api_router.include_router(
     notifications.router,
     prefix="/notifications",
@@ -183,6 +193,7 @@ api_router.include_router(
 
 # ── Architecture ──
 from app.api.v1 import architecture
+
 api_router.include_router(
     architecture.router,
     prefix="/architecture",
@@ -191,6 +202,7 @@ api_router.include_router(
 
 # ── Stack Selection ──
 from app.api.v1 import stack
+
 api_router.include_router(
     stack.router,
     prefix="/stack",
@@ -199,6 +211,7 @@ api_router.include_router(
 
 # ── Code Generation ──
 from app.api.v1 import codegen
+
 api_router.include_router(
     codegen.router,
     prefix="/codegen",
@@ -207,6 +220,7 @@ api_router.include_router(
 
 # ── Export ──
 from app.api.v1 import export
+
 api_router.include_router(
     export.router,
     prefix="/export",
@@ -215,6 +229,7 @@ api_router.include_router(
 
 # ── Testing ──
 from app.api.v1 import testing
+
 api_router.include_router(
     testing.router,
     prefix="/testing",
@@ -223,6 +238,7 @@ api_router.include_router(
 
 # ── Packaging (Windows installer builds) ──
 from app.api.v1 import packaging
+
 api_router.include_router(
     packaging.router,
     prefix="/packaging",
@@ -231,6 +247,7 @@ api_router.include_router(
 
 # ── Packaging (Android APK builds) ──
 from app.api.v1 import android_packaging
+
 api_router.include_router(
     android_packaging.router,
     prefix="/packaging/android",
@@ -239,6 +256,7 @@ api_router.include_router(
 
 # ── Packaging (Linux installer builds) ──
 from app.api.v1 import linux_packaging
+
 api_router.include_router(
     linux_packaging.router,
     prefix="/packaging/linux",
@@ -247,6 +265,7 @@ api_router.include_router(
 
 # ── Packaging (O3DE — validate + zip a real project, no compile) ──
 from app.api.v1 import o3de_packaging
+
 api_router.include_router(
     o3de_packaging.router,
     prefix="/packaging/o3de",
@@ -255,6 +274,7 @@ api_router.include_router(
 
 # ── Packaging (SwiftUI — real Xcode project, CI-verified simulator build) ──
 from app.api.v1 import swiftui_packaging
+
 api_router.include_router(
     swiftui_packaging.router,
     prefix="/packaging/swiftui",

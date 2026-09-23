@@ -34,7 +34,9 @@ from app.schemas.auth import ErrorResponse
 router = APIRouter()
 
 
-async def _get_owned_config(db: AsyncSession, user: User, config_id: str) -> UserAIConfig:
+async def _get_owned_config(
+    db: AsyncSession, user: User, config_id: str
+) -> UserAIConfig:
     result = await db.execute(
         select(UserAIConfig).where(
             UserAIConfig.id == config_id, UserAIConfig.user_id == user.id
@@ -49,9 +51,15 @@ async def _get_owned_config(db: AsyncSession, user: User, config_id: str) -> Use
     return config
 
 
-async def _deactivate_others(db: AsyncSession, user: User, keep_id: str | None = None) -> None:
+async def _deactivate_others(
+    db: AsyncSession, user: User, keep_id: str | None = None
+) -> None:
     """Only one config may be is_active per user — clear the rest."""
-    stmt = update(UserAIConfig).where(UserAIConfig.user_id == user.id).values(is_active=False)
+    stmt = (
+        update(UserAIConfig)
+        .where(UserAIConfig.user_id == user.id)
+        .values(is_active=False)
+    )
     if keep_id is not None:
         stmt = stmt.where(UserAIConfig.id != keep_id)
     await db.execute(stmt)
@@ -165,7 +173,9 @@ async def update_ai_config(
     if payload.base_url is not None:
         config.base_url = payload.base_url
     if payload.api_key is not None:
-        config.api_key_encrypted = encrypt_secret(payload.api_key) if payload.api_key else None
+        config.api_key_encrypted = (
+            encrypt_secret(payload.api_key) if payload.api_key else None
+        )
     if payload.model_name is not None:
         config.model_name = payload.model_name
     if payload.label is not None:

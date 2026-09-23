@@ -70,7 +70,9 @@ def _serialize(listing: MarketplaceApp, seller: Optional[User] = None) -> dict:
         "view_count": listing.view_count,
         "created_at": listing.created_at.isoformat() if listing.created_at else None,
         "updated_at": listing.updated_at.isoformat() if listing.updated_at else None,
-        "published_at": listing.published_at.isoformat() if listing.published_at else None,
+        "published_at": listing.published_at.isoformat()
+        if listing.published_at
+        else None,
     }
 
 
@@ -119,7 +121,9 @@ async def browse_listings(
     db: AsyncSession = Depends(get_db),
 ):
     """Public browse — only published listings, newest first."""
-    query = select(MarketplaceApp).where(MarketplaceApp.status == ListingStatus.PUBLISHED)
+    query = select(MarketplaceApp).where(
+        MarketplaceApp.status == ListingStatus.PUBLISHED
+    )
 
     if category:
         query = query.where(MarketplaceApp.category == category)
@@ -152,7 +156,10 @@ async def browse_listings(
 
     return {
         "success": True,
-        "listings": [_serialize(listing, sellers_by_id.get(listing.seller_id)) for listing in listings],
+        "listings": [
+            _serialize(listing, sellers_by_id.get(listing.seller_id))
+            for listing in listings
+        ],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -170,7 +177,10 @@ async def get_my_listings(
         .order_by(MarketplaceApp.created_at.desc())
     )
     listings = result.scalars().all()
-    return {"success": True, "listings": [_serialize(listing, user) for listing in listings]}
+    return {
+        "success": True,
+        "listings": [_serialize(listing, user) for listing in listings],
+    }
 
 
 @router.get("/apps/{listing_id}", summary="Get a single listing's details")
@@ -178,10 +188,14 @@ async def get_listing(
     listing_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MarketplaceApp).where(MarketplaceApp.id == listing_id))
+    result = await db.execute(
+        select(MarketplaceApp).where(MarketplaceApp.id == listing_id)
+    )
     listing = result.scalar_one_or_none()
     if listing is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found."
+        )
 
     listing.view_count = (listing.view_count or 0) + 1
     await db.commit()
@@ -200,10 +214,14 @@ async def update_listing(
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MarketplaceApp).where(MarketplaceApp.id == listing_id))
+    result = await db.execute(
+        select(MarketplaceApp).where(MarketplaceApp.id == listing_id)
+    )
     listing = result.scalar_one_or_none()
     if listing is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found."
+        )
     if listing.seller_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="You don't own this listing."
@@ -230,10 +248,14 @@ async def delete_listing(
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MarketplaceApp).where(MarketplaceApp.id == listing_id))
+    result = await db.execute(
+        select(MarketplaceApp).where(MarketplaceApp.id == listing_id)
+    )
     listing = result.scalar_one_or_none()
     if listing is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found."
+        )
     if listing.seller_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="You don't own this listing."

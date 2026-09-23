@@ -21,8 +21,20 @@
 # ═══════════════════════════════════════════════════════════════
 
 from app.ai.codegen.manifests.package_json import build_package_json
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 
 async def generate_model(ctx: ModelCtx) -> FileResult:
@@ -30,8 +42,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Mongoose schema/model file for the "{table_name}" collection of this app.
 
-Collection purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Collection purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Real field types and validation (required, unique, defaults) matching the fields above.
@@ -44,8 +56,12 @@ Requirements:
 Return ONLY the raw JavaScript code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "javascript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/models/{_slug(table_name)}.js",
@@ -57,7 +73,8 @@ Return ONLY the raw JavaScript code for this one file. No markdown fences, no ex
 
 async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
     model_imports = "\n".join(
         f"- backend/models/{_slug(t.get('name', 'item'))}.js defines the {_pascal(t.get('name', 'Item'))} model"
@@ -84,18 +101,24 @@ Requirements:
 Return ONLY the raw JavaScript code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "javascript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/routes/api.js",
-            language="javascript",
-            content=content,
-            description="Express routes implementing all API endpoints against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/routes/api.js",
+                language="javascript",
+                content=content,
+                description="Express routes implementing all API endpoints against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -135,18 +158,24 @@ Requirements:
 Return ONLY the raw JavaScript code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "javascript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path=_GRAPHQL_SCHEMA_PATH,
-            language="javascript",
-            content=content,
-            description="Apollo Server GraphQL schema implementing every capability against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path=_GRAPHQL_SCHEMA_PATH,
+                language="javascript",
+                content=content,
+                description="Apollo Server GraphQL schema implementing every capability against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes}
@@ -256,12 +285,26 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         scripts={"start": "node server.js"},
         dependencies=dependencies,
     )
-    return [GeneratedFile(path="backend/package.json", language="json", content=content, description="Backend dependency manifest")]
+    return [
+        GeneratedFile(
+            path="backend/package.json",
+            language="json",
+            content=content,
+            description="Backend dependency manifest",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     builder = _build_server_js_graphql if _is_graphql(ctx) else _build_server_js
-    return [GeneratedFile(path="backend/server.js", language="javascript", content=builder(ctx.project_name), description="Express entry point")]
+    return [
+        GeneratedFile(
+            path="backend/server.js",
+            language="javascript",
+            content=builder(ctx.project_name),
+            description="Express entry point",
+        )
+    ]
 
 
 def setup_commands(project_name: str) -> list[str]:

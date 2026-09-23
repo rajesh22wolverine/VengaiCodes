@@ -54,14 +54,16 @@ def test_indexes_every_element_with_exact_source_spans():
     for element in page.elements:
         start, end = element.start_span
         raw = page.source[start:end]
-        assert raw.startswith(f"<{element.tag}"), f"{element.tag} start span points at {raw[:40]!r}"
+        assert raw.startswith(f"<{element.tag}"), (
+            f"{element.tag} start span points at {raw[:40]!r}"
+        )
         assert raw.endswith(">")
 
 
 def test_outer_span_covers_the_whole_element_including_its_end_tag():
     page = Page(SAMPLE)
     header = page.select("header")[0]
-    outer = page.source[header.outer_span[0]:header.outer_span[1]]
+    outer = page.source[header.outer_span[0] : header.outer_span[1]]
     assert outer.startswith('<header class="site-header">')
     assert outer.endswith("</header>")
     assert "Docs" in outer
@@ -139,7 +141,9 @@ def test_analysis_inventories_the_whole_page():
     assert "headline" in summary["ids"]
     assert "featured" in summary["classes"]
     assert [h["level"] for h in summary["headings"]] == [1, 2]
-    assert summary["images"] == [{"index": summary["images"][0]["index"], "src": "/pro.png", "alt": "Pro plan"}]
+    assert summary["images"] == [
+        {"index": summary["images"][0]["index"], "src": "/pro.png", "alt": "Pro plan"}
+    ]
     assert [link["href"] for link in summary["links"]] == ["/docs", "/blog"]
     assert summary["forms"][0]["action"] == "/subscribe"
     assert {f["name"] for f in summary["forms"][0]["fields"]} == {"email", "plan"}
@@ -179,64 +183,139 @@ def test_clean_page_reports_no_issues():
 
 # ─── editing: byte preservation ───
 def test_set_text_changes_only_that_element():
-    result = edit_page(SAMPLE, "", [{"op": "set_text", "target": {"selector": "#headline"}, "value": "New pricing"}])
-    assert "<h1 id=\"headline\">New pricing</h1>" in result["html"]
+    result = edit_page(
+        SAMPLE,
+        "",
+        [
+            {
+                "op": "set_text",
+                "target": {"selector": "#headline"},
+                "value": "New pricing",
+            }
+        ],
+    )
+    assert '<h1 id="headline">New pricing</h1>' in result["html"]
     # Everything else is untouched, byte for byte.
     assert result["html"].replace("New pricing", "Simple pricing") == SAMPLE
     assert result["html_changed"] is True
 
 
 def test_set_text_escapes_html_so_content_cannot_inject_markup():
-    result = edit_page("<p>x</p>", "", [{"op": "set_text", "target": {"selector": "p"}, "value": "<script>alert(1)</script>"}])
+    result = edit_page(
+        "<p>x</p>",
+        "",
+        [
+            {
+                "op": "set_text",
+                "target": {"selector": "p"},
+                "value": "<script>alert(1)</script>",
+            }
+        ],
+    )
     assert result["html"] == "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>"
 
 
 def test_set_html_inserts_real_markup():
-    result = edit_page("<div></div>", "", [{"op": "set_html", "target": {"selector": "div"}, "value": "<b>hi</b>"}])
+    result = edit_page(
+        "<div></div>",
+        "",
+        [{"op": "set_html", "target": {"selector": "div"}, "value": "<b>hi</b>"}],
+    )
     assert result["html"] == "<div><b>hi</b></div>"
 
 
 def test_set_style_merges_with_existing_inline_styles():
-    result = edit_page(SAMPLE, "", [{"op": "set_style", "target": {"selector": ".price"}, "property": "color", "value": "red"}])
+    result = edit_page(
+        SAMPLE,
+        "",
+        [
+            {
+                "op": "set_style",
+                "target": {"selector": ".price"},
+                "property": "color",
+                "value": "red",
+            }
+        ],
+    )
     assert 'style="color: red; font-size: 14px"' in result["html"]
 
 
 def test_set_style_accepts_multiple_properties_at_once():
-    result = edit_page('<p style="color: red">x</p>', "", [
-        {"op": "set_style", "target": {"selector": "p"}, "styles": {"font-size": "20px", "color": "blue"}}
-    ])
+    result = edit_page(
+        '<p style="color: red">x</p>',
+        "",
+        [
+            {
+                "op": "set_style",
+                "target": {"selector": "p"},
+                "styles": {"font-size": "20px", "color": "blue"},
+            }
+        ],
+    )
     assert result["html"] == '<p style="color: blue; font-size: 20px">x</p>'
 
 
 def test_remove_style_drops_the_attribute_when_it_empties():
-    result = edit_page('<p style="color: red">x</p>', "", [
-        {"op": "remove_style", "target": {"selector": "p"}, "property": "color"}
-    ])
+    result = edit_page(
+        '<p style="color: red">x</p>',
+        "",
+        [{"op": "remove_style", "target": {"selector": "p"}, "property": "color"}],
+    )
     assert result["html"] == "<p>x</p>"
 
 
 def test_class_add_and_remove_preserve_other_attributes():
-    result = edit_page(SAMPLE, "", [
-        {"op": "add_class", "target": {"selector": "section.plan"}, "value": "highlighted"},
-        {"op": "remove_class", "target": {"selector": "button"}, "value": "cta"},
-    ])
+    result = edit_page(
+        SAMPLE,
+        "",
+        [
+            {
+                "op": "add_class",
+                "target": {"selector": "section.plan"},
+                "value": "highlighted",
+            },
+            {"op": "remove_class", "target": {"selector": "button"}, "value": "cta"},
+        ],
+    )
     assert 'class="plan featured highlighted" data-plan="pro"' in result["html"]
     assert '<button type="submit">Buy now</button>' in result["html"]
 
 
 def test_set_and_remove_attribute():
-    result = edit_page(SAMPLE, "", [
-        {"op": "set_attribute", "target": {"selector": "img"}, "name": "alt", "value": "Pro tier"},
-        {"op": "remove_attribute", "target": {"selector": "form"}, "name": "method"},
-    ])
+    result = edit_page(
+        SAMPLE,
+        "",
+        [
+            {
+                "op": "set_attribute",
+                "target": {"selector": "img"},
+                "name": "alt",
+                "value": "Pro tier",
+            },
+            {
+                "op": "remove_attribute",
+                "target": {"selector": "form"},
+                "name": "method",
+            },
+        ],
+    )
     assert '<img src="/pro.png" alt="Pro tier">' in result["html"]
     assert '<form action="/subscribe">' in result["html"]
 
 
 def test_attribute_values_are_escaped():
-    result = edit_page("<img src='a.png'>", "", [
-        {"op": "set_attribute", "target": {"selector": "img"}, "name": "alt", "value": 'say "hi" & <b>'}
-    ])
+    result = edit_page(
+        "<img src='a.png'>",
+        "",
+        [
+            {
+                "op": "set_attribute",
+                "target": {"selector": "img"},
+                "name": "alt",
+                "value": 'say "hi" & <b>',
+            }
+        ],
+    )
     # `>` is intentionally left as-is: inside a quoted attribute value only
     # `&` and the quote character actually need escaping, and `<` is escaped
     # as extra defence. Escaping `>` too would just be noise in the output.
@@ -244,33 +323,108 @@ def test_attribute_values_are_escaped():
 
 
 def test_remove_element_removes_the_whole_subtree():
-    result = edit_page(SAMPLE, "", [{"op": "remove_element", "target": {"selector": "nav"}}])
+    result = edit_page(
+        SAMPLE, "", [{"op": "remove_element", "target": {"selector": "nav"}}]
+    )
     assert "<nav>" not in result["html"]
     assert "/docs" not in result["html"]
-    assert "<h1 id=\"headline\">Simple pricing</h1>" in result["html"]
+    assert '<h1 id="headline">Simple pricing</h1>' in result["html"]
 
 
 def test_insert_html_at_each_position():
     base = "<div><p>mid</p></div>"
-    assert edit_page(base, "", [{"op": "insert_html", "target": {"selector": "p"}, "position": "before", "value": "<i>b</i>"}])["html"] == "<div><i>b</i><p>mid</p></div>"
-    assert edit_page(base, "", [{"op": "insert_html", "target": {"selector": "p"}, "position": "after", "value": "<i>a</i>"}])["html"] == "<div><p>mid</p><i>a</i></div>"
-    assert edit_page(base, "", [{"op": "insert_html", "target": {"selector": "div"}, "position": "prepend", "value": "<i>p</i>"}])["html"] == "<div><i>p</i><p>mid</p></div>"
-    assert edit_page(base, "", [{"op": "insert_html", "target": {"selector": "div"}, "position": "append", "value": "<i>q</i>"}])["html"] == "<div><p>mid</p><i>q</i></div>"
+    assert (
+        edit_page(
+            base,
+            "",
+            [
+                {
+                    "op": "insert_html",
+                    "target": {"selector": "p"},
+                    "position": "before",
+                    "value": "<i>b</i>",
+                }
+            ],
+        )["html"]
+        == "<div><i>b</i><p>mid</p></div>"
+    )
+    assert (
+        edit_page(
+            base,
+            "",
+            [
+                {
+                    "op": "insert_html",
+                    "target": {"selector": "p"},
+                    "position": "after",
+                    "value": "<i>a</i>",
+                }
+            ],
+        )["html"]
+        == "<div><p>mid</p><i>a</i></div>"
+    )
+    assert (
+        edit_page(
+            base,
+            "",
+            [
+                {
+                    "op": "insert_html",
+                    "target": {"selector": "div"},
+                    "position": "prepend",
+                    "value": "<i>p</i>",
+                }
+            ],
+        )["html"]
+        == "<div><i>p</i><p>mid</p></div>"
+    )
+    assert (
+        edit_page(
+            base,
+            "",
+            [
+                {
+                    "op": "insert_html",
+                    "target": {"selector": "div"},
+                    "position": "append",
+                    "value": "<i>q</i>",
+                }
+            ],
+        )["html"]
+        == "<div><p>mid</p><i>q</i></div>"
+    )
 
 
 def test_replace_element_swaps_the_whole_element():
-    result = edit_page("<div><span class='x'>old</span></div>", "", [
-        {"op": "replace_element", "target": {"selector": ".x"}, "value": "<b>new</b>"}
-    ])
+    result = edit_page(
+        "<div><span class='x'>old</span></div>",
+        "",
+        [
+            {
+                "op": "replace_element",
+                "target": {"selector": ".x"},
+                "value": "<b>new</b>",
+            }
+        ],
+    )
     assert result["html"] == "<div><b>new</b></div>"
 
 
 def test_multiple_edits_in_one_call_all_land():
-    result = edit_page(SAMPLE, "", [
-        {"op": "set_text", "target": {"selector": "#headline"}, "value": "Plans"},
-        {"op": "set_text", "target": {"selector": "h2"}, "value": "Professional"},
-        {"op": "set_attribute", "target": {"selector": "button"}, "name": "type", "value": "button"},
-    ])
+    result = edit_page(
+        SAMPLE,
+        "",
+        [
+            {"op": "set_text", "target": {"selector": "#headline"}, "value": "Plans"},
+            {"op": "set_text", "target": {"selector": "h2"}, "value": "Professional"},
+            {
+                "op": "set_attribute",
+                "target": {"selector": "button"},
+                "name": "type",
+                "value": "button",
+            },
+        ],
+    )
     assert ">Plans<" in result["html"]
     assert ">Professional<" in result["html"]
     assert '<button class="cta" type="button">' in result["html"]
@@ -278,26 +432,42 @@ def test_multiple_edits_in_one_call_all_land():
 
 
 def test_edit_targeting_all_matches_changes_each_one():
-    result = edit_page(SAMPLE, "", [
-        {"op": "add_class", "target": {"selector": "a", "all": True}, "value": "link"}
-    ])
+    result = edit_page(
+        SAMPLE,
+        "",
+        [
+            {
+                "op": "add_class",
+                "target": {"selector": "a", "all": True},
+                "value": "link",
+            }
+        ],
+    )
     assert result["html"].count('class="link"') == 2
-    assert result["applied"][0]["targets"] == [t for t in result["applied"][0]["targets"]]
+    assert result["applied"][0]["targets"] == [
+        t for t in result["applied"][0]["targets"]
+    ]
     assert len(result["applied"][0]["targets"]) == 2
 
 
 def test_overlapping_edits_are_rejected_not_silently_clobbered():
     with pytest.raises(PageEditError, match="same part of the page"):
-        edit_page("<div><p>x</p></div>", "", [
-            {"op": "remove_element", "target": {"selector": "div"}},
-            {"op": "set_text", "target": {"selector": "p"}, "value": "y"},
-        ])
+        edit_page(
+            "<div><p>x</p></div>",
+            "",
+            [
+                {"op": "remove_element", "target": {"selector": "div"}},
+                {"op": "set_text", "target": {"selector": "p"}, "value": "y"},
+            ],
+        )
 
 
 def test_targeting_by_index_is_exact():
     page = Page(SAMPLE)
     h2_index = page.select("h2")[0].index
-    result = edit_page(SAMPLE, "", [{"op": "set_text", "target": {"index": h2_index}, "value": "Team"}])
+    result = edit_page(
+        SAMPLE, "", [{"op": "set_text", "target": {"index": h2_index}, "value": "Team"}]
+    )
     assert "<h2>Team</h2>" in result["html"]
 
 
@@ -308,12 +478,18 @@ def test_unknown_op_lists_the_supported_ones():
 
 def test_setting_text_on_a_void_element_is_a_clear_error():
     with pytest.raises(PageEditError, match="no inner content"):
-        edit_page("<img src='a.png'>", "", [{"op": "set_text", "target": {"selector": "img"}, "value": "x"}])
+        edit_page(
+            "<img src='a.png'>",
+            "",
+            [{"op": "set_text", "target": {"selector": "img"}, "value": "x"}],
+        )
 
 
 # ─── stylesheet editing ───
 def test_set_css_declaration_updates_an_existing_rule():
-    css, created = set_css_declaration(".btn {\n  color: red;\n  padding: 4px;\n}\n", ".btn", "color", "blue")
+    css, created = set_css_declaration(
+        ".btn {\n  color: red;\n  padding: 4px;\n}\n", ".btn", "color", "blue"
+    )
     assert created is False
     assert "color: blue" in css
     assert "padding: 4px" in css
@@ -321,7 +497,9 @@ def test_set_css_declaration_updates_an_existing_rule():
 
 
 def test_set_css_declaration_creates_a_missing_rule():
-    css, created = set_css_declaration("body { margin: 0; }\n", ".new", "display", "flex")
+    css, created = set_css_declaration(
+        "body { margin: 0; }\n", ".new", "display", "flex"
+    )
     assert created is True
     assert ".new {" in css
     assert "display: flex;" in css
@@ -340,7 +518,9 @@ def test_set_css_skips_at_rule_blocks_rather_than_editing_the_wrong_one():
 
 
 def test_remove_css_declaration():
-    css, found = remove_css_declaration(".btn { color: red; padding: 4px; }", ".btn", "color")
+    css, found = remove_css_declaration(
+        ".btn { color: red; padding: 4px; }", ".btn", "color"
+    )
     assert found is True
     assert "color" not in css
     assert "padding: 4px" in css
@@ -352,9 +532,13 @@ def test_remove_css_declaration_reports_when_absent():
 
 
 def test_css_edit_ops_run_through_edit_page():
-    result = edit_page("<p class='x'>hi</p>", ".x { color: red; }", [
-        {"op": "set_css", "selector": ".x", "property": "color", "value": "navy"},
-    ])
+    result = edit_page(
+        "<p class='x'>hi</p>",
+        ".x { color: red; }",
+        [
+            {"op": "set_css", "selector": ".x", "property": "color", "value": "navy"},
+        ],
+    )
     assert "color: navy" in result["css"]
     assert result["css_changed"] is True
     assert result["html"] == "<p class='x'>hi</p>"  # html untouched, byte for byte

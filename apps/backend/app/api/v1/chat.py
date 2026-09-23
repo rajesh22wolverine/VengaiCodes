@@ -92,7 +92,9 @@ async def _get_owned_project(db: AsyncSession, project_id: str, user: User) -> P
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
     return project
 
 
@@ -141,7 +143,9 @@ async def send_message(
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logger.error(f"Failed to parse chat response: {e}")
         raise HTTPException(

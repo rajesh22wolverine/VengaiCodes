@@ -67,23 +67,25 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     # POST. This is the one frontend adapter whose REST networking
     # instruction had to change shape, not just gain an extra note.
     network_bullet = (
-        '- Real state via `remember { mutableStateOf(...) }`, fetch real data inside '
+        "- Real state via `remember { mutableStateOf(...) }`, fetch real data inside "
         "`LaunchedEffect(Unit)` using a suspend helper wrapped in `withContext(Dispatchers.IO)` "
-        'that opens `(URL(url).openConnection() as HttpURLConnection)`, sets '
+        "that opens `(URL(url).openConnection() as HttpURLConnection)`, sets "
         '`requestMethod = "POST"`, `doOutput = true`, '
         '`setRequestProperty("Content-Type", "application/json")`, writes the JSON body '
-        "(`{\"query\": ..., \"variables\": {...}}`) to `outputStream`, then reads the response "
+        '(`{"query": ..., "variables": {...}}`) to `outputStream`, then reads the response '
         "from `inputStream.bufferedReader().readText()`, parsed with `org.json.JSONObject` "
         "(built into Android, no extra dependency). Handle loading/error state."
         if ctx.api_style == "graphql"
-        else '- Real state via `remember { mutableStateOf(...) }`, fetch real data inside '
+        else "- Real state via `remember { mutableStateOf(...) }`, fetch real data inside "
         "`LaunchedEffect(Unit)` using a suspend helper that calls `java.net.URL(...).readText()` "
         "wrapped in `withContext(Dispatchers.IO)`, parsed with `org.json.JSONArray`/`JSONObject` "
         "(built into Android, no extra dependency). Handle loading/error state."
     )
 
     capabilities_text = "\n".join(
-        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}"
+        for c in ctx.native_capabilities
+        if c in NATIVE_CAPABILITY_DESCRIPTIONS
     )
     native_section = (
         f"\nNative device features available to this app (use the real Android/Kotlin API for "
@@ -97,7 +99,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Jetpack Compose composable function implementing the "{screen_name}" screen of this app.
 
-Screen purpose: {ctx.screen.get('purpose', '')}
+Screen purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this screen can call:
 {endpoints_text}
@@ -119,8 +121,12 @@ Return ONLY the raw Kotlin code for this one file (package line + imports + the 
 function). No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "kotlin", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "kotlin",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"frontend/app/src/main/java/{_package_path(package_name)}/screens/{class_name}.kt",
@@ -134,10 +140,14 @@ def _screen_class_from_path(file: GeneratedFile) -> str:
     return file.path.split("/")[-1].removesuffix(".kt")
 
 
-def _build_main_activity(project_name: str, package_name: str, class_names: list[str]) -> str:
+def _build_main_activity(
+    project_name: str, package_name: str, class_names: list[str]
+) -> str:
     imports = "\n".join(f"import {package_name}.screens.{c}" for c in class_names)
     names = ", ".join(f'"{c.removesuffix("Screen")}"' for c in class_names)
-    when_branches = "\n".join(f"                        {i} -> {c}()" for i, c in enumerate(class_names))
+    when_branches = "\n".join(
+        f"                        {i} -> {c}()" for i, c in enumerate(class_names)
+    )
 
     return f"""package {package_name}
 
@@ -316,18 +326,50 @@ kotlin.code.style=official
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     package_name = _package_name(ctx.project_name)
     return [
-        GeneratedFile(path="frontend/settings.gradle.kts", language="kotlin", content=_settings_gradle_kts(ctx.project_name), description="Gradle settings"),
-        GeneratedFile(path="frontend/build.gradle.kts", language="kotlin", content=_ROOT_BUILD_GRADLE_KTS, description="Root Gradle build file"),
-        GeneratedFile(path="frontend/gradle.properties", language="text", content=_GRADLE_PROPERTIES, description="Gradle properties"),
-        GeneratedFile(path="frontend/gradle/wrapper/gradle-wrapper.properties", language="text", content=_GRADLE_WRAPPER_PROPERTIES, description="Pinned Gradle wrapper version"),
-        GeneratedFile(path="frontend/app/build.gradle.kts", language="kotlin", content=_app_build_gradle_kts(package_name), description="App module Gradle build file"),
-        GeneratedFile(path="frontend/app/src/main/AndroidManifest.xml", language="xml", content=_android_manifest(ctx.project_name), description="Android manifest"),
+        GeneratedFile(
+            path="frontend/settings.gradle.kts",
+            language="kotlin",
+            content=_settings_gradle_kts(ctx.project_name),
+            description="Gradle settings",
+        ),
+        GeneratedFile(
+            path="frontend/build.gradle.kts",
+            language="kotlin",
+            content=_ROOT_BUILD_GRADLE_KTS,
+            description="Root Gradle build file",
+        ),
+        GeneratedFile(
+            path="frontend/gradle.properties",
+            language="text",
+            content=_GRADLE_PROPERTIES,
+            description="Gradle properties",
+        ),
+        GeneratedFile(
+            path="frontend/gradle/wrapper/gradle-wrapper.properties",
+            language="text",
+            content=_GRADLE_WRAPPER_PROPERTIES,
+            description="Pinned Gradle wrapper version",
+        ),
+        GeneratedFile(
+            path="frontend/app/build.gradle.kts",
+            language="kotlin",
+            content=_app_build_gradle_kts(package_name),
+            description="App module Gradle build file",
+        ),
+        GeneratedFile(
+            path="frontend/app/src/main/AndroidManifest.xml",
+            language="xml",
+            content=_android_manifest(ctx.project_name),
+            description="Android manifest",
+        ),
     ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     package_name = _package_name(ctx.project_name)
-    class_names = [_screen_class_from_path(f) for f in ctx.screen_files] or ["HomeScreen"]
+    class_names = [_screen_class_from_path(f) for f in ctx.screen_files] or [
+        "HomeScreen"
+    ]
     main_activity = _build_main_activity(ctx.project_name, package_name, class_names)
     return [
         GeneratedFile(

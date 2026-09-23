@@ -9,8 +9,18 @@ from enum import Enum as PyEnum
 from typing import Optional
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Enum, Float, ForeignKey,
-    Integer, String, Text, JSON, UniqueConstraint, Index
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    JSON,
+    UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -68,6 +78,7 @@ class User(Base):
     Stored in PostgreSQL (Supabase) — marketplace & account data.
     Local user preferences stored in SQLite on user's machine.
     """
+
     __tablename__ = "users"
     __table_args__ = (
         UniqueConstraint("email", name="uq_users_email"),
@@ -136,7 +147,9 @@ class User(Base):
     # ── Admin Controls ──
     # Admin can extend free tier to any user 🐯
     is_free_extended: bool = Column(Boolean, default=False, nullable=False)
-    free_extended_until: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
+    free_extended_until: Optional[datetime] = Column(
+        DateTime(timezone=True), nullable=True
+    )
     free_extended_by: Optional[str] = Column(String(36), nullable=True)
     # Admin user ID who extended
     free_extended_reason: Optional[str] = Column(Text, nullable=True)
@@ -158,7 +171,9 @@ class User(Base):
         nullable=False,
     )
     restriction_reason: Optional[str] = Column(Text, nullable=True)
-    restriction_expires_at: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
+    restriction_expires_at: Optional[datetime] = Column(
+        DateTime(timezone=True), nullable=True
+    )
     restricted_by: Optional[str] = Column(String(36), nullable=True)
     restriction_count: int = Column(Integer, default=0, nullable=False)
 
@@ -169,15 +184,23 @@ class User(Base):
         nullable=False,
     )
     email_verified: bool = Column(Boolean, default=False, nullable=False)
-    email_verified_at: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
+    email_verified_at: Optional[datetime] = Column(
+        DateTime(timezone=True), nullable=True
+    )
     mobile_verified: bool = Column(Boolean, default=False, nullable=False)
-    mobile_verified_at: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
+    mobile_verified_at: Optional[datetime] = Column(
+        DateTime(timezone=True), nullable=True
+    )
     govt_id_verified: bool = Column(Boolean, default=False, nullable=False)
-    govt_id_verified_at: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
+    govt_id_verified_at: Optional[datetime] = Column(
+        DateTime(timezone=True), nullable=True
+    )
     govt_id_type: Optional[str] = Column(String(50), nullable=True)
     # "aadhaar", "pan", "passport"
     biometric_verified: bool = Column(Boolean, default=False, nullable=False)
-    biometric_verified_at: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
+    biometric_verified_at: Optional[datetime] = Column(
+        DateTime(timezone=True), nullable=True
+    )
     biometric_type: Optional[str] = Column(String(50), nullable=True)
     # "fingerprint", "face", "both"
 
@@ -215,7 +238,9 @@ class User(Base):
 
     # Revenue sharing agreement signed
     revenue_sharing_agreed: bool = Column(Boolean, default=False, nullable=False)
-    revenue_sharing_agreed_at: Optional[datetime] = Column(DateTime(timezone=True), nullable=True)
+    revenue_sharing_agreed_at: Optional[datetime] = Column(
+        DateTime(timezone=True), nullable=True
+    )
     revenue_sharing_version: Optional[str] = Column(String(20), nullable=True)
     # Version of agreement they signed
 
@@ -381,6 +406,7 @@ class OTPRecord(Base):
     Temporary OTP records for email/mobile verification.
     Auto-expired after MSG91_OTP_EXPIRE_MINUTES.
     """
+
     __tablename__ = "otp_records"
     __table_args__ = (
         Index("ix_otp_target_type", "target", "otp_type"),
@@ -437,6 +463,7 @@ class AdminAction(Base):
     Audit log for all admin actions — extend free, restrict, ban, etc.
     Every admin action is permanently logged — accountability and transparency.
     """
+
     __tablename__ = "admin_actions"
     __table_args__ = (
         Index("ix_admin_actions_target_user", "target_user_id"),

@@ -28,13 +28,27 @@
 
 import re
 
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 
 def _infer_column_type(field_name: str) -> str:
     lowered = field_name.lower()
-    if any(k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")):
+    if any(
+        k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")
+    ):
         return "boolean"
     if any(k in lowered for k in ("_at", "date", "time")):
         return "datetime"
@@ -65,9 +79,9 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real ActiveRecord model class for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
+Table purpose: {ctx.table.get("purpose", "")}
 Fields (already defined as DB columns by a migration — do NOT redeclare them, just use them):
-{', '.join(ctx.table.get('key_fields', []))}
+{", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Class name: {class_name} < ApplicationRecord
@@ -80,8 +94,12 @@ Requirements:
 Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "ruby", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "ruby",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/app/models/{_slug(table_name)}.rb",
@@ -120,18 +138,24 @@ Requirements:
 Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "ruby", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "ruby",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/app/controllers/api_controller.rb",
-            language="ruby",
-            content=content,
-            description="Rails controller implementing all API endpoints against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/app/controllers/api_controller.rb",
+                language="ruby",
+                content=content,
+                description="Rails controller implementing all API endpoints against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 def _graphql_type_field(field_name: str) -> str:
@@ -141,7 +165,7 @@ def _graphql_type_field(field_name: str) -> str:
         "decimal": "Float",
         "integer": "Integer",
     }.get(_infer_column_type(field_name), "String")
-    return f'    field :{_slug(field_name)}, {graphql_type}'
+    return f"    field :{_slug(field_name)}, {graphql_type}"
 
 
 def _table_type_rb(table: dict) -> str:
@@ -173,7 +197,8 @@ async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
         for t in ctx.tables
     )
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
 
     query_prompt = f"""Write ONE complete, real graphql-ruby QueryType class for this app.
@@ -200,8 +225,12 @@ Requirements:
 Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
 
     query_content, query_issue = await generate_text_validated(
-        query_prompt, "ruby", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        query_prompt,
+        "ruby",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
 
     mutation_prompt = f"""Write ONE complete, real graphql-ruby MutationType class for this app.
@@ -232,8 +261,12 @@ Requirements:
 Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
 
     mutation_content, mutation_issue = await generate_text_validated(
-        mutation_prompt, "ruby", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        mutation_prompt,
+        "ruby",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
 
     results: list[FileResult] = [
@@ -248,24 +281,28 @@ Return ONLY the raw Ruby code for this one file. No markdown fences, no explanat
         )
         for t in ctx.tables
     ]
-    results.append((
-        GeneratedFile(
-            path=_GRAPHQL_QUERY_TYPE_PATH,
-            language="ruby",
-            content=query_content,
-            description="GraphQL Query type implementing every read capability against the real models",
-        ),
-        query_issue,
-    ))
-    results.append((
-        GeneratedFile(
-            path="backend/app/graphql/types/mutation_type.rb",
-            language="ruby",
-            content=mutation_content,
-            description="GraphQL Mutation type implementing every write capability against the real models",
-        ),
-        mutation_issue,
-    ))
+    results.append(
+        (
+            GeneratedFile(
+                path=_GRAPHQL_QUERY_TYPE_PATH,
+                language="ruby",
+                content=query_content,
+                description="GraphQL Query type implementing every read capability against the real models",
+            ),
+            query_issue,
+        )
+    )
+    results.append(
+        (
+            GeneratedFile(
+                path="backend/app/graphql/types/mutation_type.rb",
+                language="ruby",
+                content=mutation_content,
+                description="GraphQL Mutation type implementing every write capability against the real models",
+            ),
+            mutation_issue,
+        )
+    )
     return results
 
 
@@ -291,8 +328,14 @@ def _build_migration_rb(index: int, table: dict) -> tuple[str, str]:
     # created_at/updated_at are already provided by `t.timestamps` below —
     # declaring them again would be a duplicate-column error when the
     # migration actually runs.
-    fields = [f for f in (table.get("key_fields", []) or []) if _slug(f) not in ("created_at", "updated_at")]
-    columns = "\n".join(f"      t.{_infer_column_type(field)} :{_slug(field)}" for field in fields)
+    fields = [
+        f
+        for f in (table.get("key_fields", []) or [])
+        if _slug(f) not in ("created_at", "updated_at")
+    ]
+    columns = "\n".join(
+        f"      t.{_infer_column_type(field)} :{_slug(field)}" for field in fields
+    )
     content = f"""class {class_name} < ActiveRecord::Migration[7.1]
   def change
     create_table :{plural} do |t|
@@ -310,11 +353,14 @@ end
 
 
 def _build_routes_rb(endpoints: list[dict]) -> str:
-    lines = "\n".join(
-        f"  {e.get('method', 'GET').lower()} '{_rails_path(e.get('path', '/'))}', "
-        f"to: 'api#{_view_name(e.get('method', 'GET'), e.get('path', '/'))}'"
-        for e in endpoints
-    ) or "  # no endpoints defined"
+    lines = (
+        "\n".join(
+            f"  {e.get('method', 'GET').lower()} '{_rails_path(e.get('path', '/'))}', "
+            f"to: 'api#{_view_name(e.get('method', 'GET'), e.get('path', '/'))}'"
+            for e in endpoints
+        )
+        or "  # no endpoints defined"
+    )
     return f"""Rails.application.routes.draw do
 {lines}
 end
@@ -332,7 +378,9 @@ end
 
 
 def _application_rb(project_name: str) -> str:
-    module_name = "".join(ch for ch in project_name.title() if ch.isalnum()) or "GeneratedApp"
+    module_name = (
+        "".join(ch for ch in project_name.title() if ch.isalnum()) or "GeneratedApp"
+    )
     return f"""require_relative 'boot'
 require 'rails/all'
 
@@ -354,7 +402,9 @@ require 'bootsnap/setup' if File.exist?(File.expand_path('../Gemfile.lock', __di
 
 
 def _environment_rb(project_name: str) -> str:
-    module_name = "".join(ch for ch in project_name.title() if ch.isalnum()) or "GeneratedApp"
+    module_name = (
+        "".join(ch for ch in project_name.title() if ch.isalnum()) or "GeneratedApp"
+    )
     return f"""require_relative 'application'
 
 {module_name}::Application.initialize!
@@ -499,52 +549,133 @@ end
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     graphql = _is_graphql(ctx)
     return [
-        GeneratedFile(path="backend/Gemfile", language="text", content=_gemfile(ctx.project_name, graphql), description="Ruby gem dependencies"),
-        GeneratedFile(path="backend/config/database.yml", language="yaml", content=_database_yml(), description="Database config (SQLite, zero external setup)"),
+        GeneratedFile(
+            path="backend/Gemfile",
+            language="text",
+            content=_gemfile(ctx.project_name, graphql),
+            description="Ruby gem dependencies",
+        ),
+        GeneratedFile(
+            path="backend/config/database.yml",
+            language="yaml",
+            content=_database_yml(),
+            description="Database config (SQLite, zero external setup)",
+        ),
     ]
 
 
 def _schema_name(project_name: str) -> str:
-    module_name = "".join(ch for ch in project_name.title() if ch.isalnum()) or "GeneratedApp"
+    module_name = (
+        "".join(ch for ch in project_name.title() if ch.isalnum()) or "GeneratedApp"
+    )
     return f"{module_name}Schema"
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     graphql = _is_graphql(ctx)
     files = [
-        GeneratedFile(path="backend/config/boot.rb", language="ruby", content=_boot_rb(), description="Rails boot file"),
-        GeneratedFile(path="backend/config/application.rb", language="ruby", content=_application_rb(ctx.project_name), description="Rails application config (API-only mode)"),
-        GeneratedFile(path="backend/config/environment.rb", language="ruby", content=_environment_rb(ctx.project_name), description="Rails environment loader"),
-        GeneratedFile(path="backend/config/initializers/cors.rb", language="ruby", content=_CORS_INITIALIZER, description="CORS config"),
-        GeneratedFile(path="backend/app/models/application_record.rb", language="ruby", content=_APPLICATION_RECORD_RB, description="Base ActiveRecord class"),
-        GeneratedFile(path="backend/app/controllers/application_controller.rb", language="ruby", content=_APPLICATION_CONTROLLER_RB, description="Base controller class (API-only)"),
+        GeneratedFile(
+            path="backend/config/boot.rb",
+            language="ruby",
+            content=_boot_rb(),
+            description="Rails boot file",
+        ),
+        GeneratedFile(
+            path="backend/config/application.rb",
+            language="ruby",
+            content=_application_rb(ctx.project_name),
+            description="Rails application config (API-only mode)",
+        ),
+        GeneratedFile(
+            path="backend/config/environment.rb",
+            language="ruby",
+            content=_environment_rb(ctx.project_name),
+            description="Rails environment loader",
+        ),
+        GeneratedFile(
+            path="backend/config/initializers/cors.rb",
+            language="ruby",
+            content=_CORS_INITIALIZER,
+            description="CORS config",
+        ),
+        GeneratedFile(
+            path="backend/app/models/application_record.rb",
+            language="ruby",
+            content=_APPLICATION_RECORD_RB,
+            description="Base ActiveRecord class",
+        ),
+        GeneratedFile(
+            path="backend/app/controllers/application_controller.rb",
+            language="ruby",
+            content=_APPLICATION_CONTROLLER_RB,
+            description="Base controller class (API-only)",
+        ),
     ]
     if graphql:
         schema_name = _schema_name(ctx.project_name)
         files += [
-            GeneratedFile(path="backend/app/graphql/types/base_argument.rb", language="ruby", content=_BASE_ARGUMENT_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
-            GeneratedFile(path="backend/app/graphql/types/base_field.rb", language="ruby", content=_BASE_FIELD_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
-            GeneratedFile(path="backend/app/graphql/types/base_input_object.rb", language="ruby", content=_BASE_INPUT_OBJECT_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
-            GeneratedFile(path="backend/app/graphql/types/base_object.rb", language="ruby", content=_BASE_OBJECT_RB, description="graphql-ruby base scaffold (verbatim from the real installer generator)"),
-            GeneratedFile(path="backend/app/controllers/graphql_controller.rb", language="ruby", content=_graphql_controller_rb(schema_name), description="GraphQL HTTP entry point (verbatim from the real installer generator)"),
-            GeneratedFile(path=f"backend/app/graphql/{_slug(schema_name)}.rb", language="ruby", content=_graphql_schema_rb(schema_name), description="GraphQL schema — wires QueryType + MutationType"),
-            GeneratedFile(path="backend/config/routes.rb", language="ruby", content='Rails.application.routes.draw do\n  post "/graphql", to: "graphql#execute"\nend\n', description="Real graphql-ruby route (verbatim from the real installer generator)"),
+            GeneratedFile(
+                path="backend/app/graphql/types/base_argument.rb",
+                language="ruby",
+                content=_BASE_ARGUMENT_RB,
+                description="graphql-ruby base scaffold (verbatim from the real installer generator)",
+            ),
+            GeneratedFile(
+                path="backend/app/graphql/types/base_field.rb",
+                language="ruby",
+                content=_BASE_FIELD_RB,
+                description="graphql-ruby base scaffold (verbatim from the real installer generator)",
+            ),
+            GeneratedFile(
+                path="backend/app/graphql/types/base_input_object.rb",
+                language="ruby",
+                content=_BASE_INPUT_OBJECT_RB,
+                description="graphql-ruby base scaffold (verbatim from the real installer generator)",
+            ),
+            GeneratedFile(
+                path="backend/app/graphql/types/base_object.rb",
+                language="ruby",
+                content=_BASE_OBJECT_RB,
+                description="graphql-ruby base scaffold (verbatim from the real installer generator)",
+            ),
+            GeneratedFile(
+                path="backend/app/controllers/graphql_controller.rb",
+                language="ruby",
+                content=_graphql_controller_rb(schema_name),
+                description="GraphQL HTTP entry point (verbatim from the real installer generator)",
+            ),
+            GeneratedFile(
+                path=f"backend/app/graphql/{_slug(schema_name)}.rb",
+                language="ruby",
+                content=_graphql_schema_rb(schema_name),
+                description="GraphQL schema — wires QueryType + MutationType",
+            ),
+            GeneratedFile(
+                path="backend/config/routes.rb",
+                language="ruby",
+                content='Rails.application.routes.draw do\n  post "/graphql", to: "graphql#execute"\nend\n',
+                description="Real graphql-ruby route (verbatim from the real installer generator)",
+            ),
         ]
     elif ctx.endpoints:
-        files.append(GeneratedFile(
-            path="backend/config/routes.rb",
-            language="ruby",
-            content=_build_routes_rb(ctx.endpoints),
-            description="URL routing, deterministically wired to the exact controller method names dictated to the AI",
-        ))
+        files.append(
+            GeneratedFile(
+                path="backend/config/routes.rb",
+                language="ruby",
+                content=_build_routes_rb(ctx.endpoints),
+                description="URL routing, deterministically wired to the exact controller method names dictated to the AI",
+            )
+        )
     for index, table in enumerate(ctx.tables):
         filename, content = _build_migration_rb(index, table)
-        files.append(GeneratedFile(
-            path=f"backend/db/migrate/{filename}",
-            language="ruby",
-            content=content,
-            description=f"Schema migration for {table.get('name', 'Item')}",
-        ))
+        files.append(
+            GeneratedFile(
+                path=f"backend/db/migrate/{filename}",
+                language="ruby",
+                content=content,
+                description=f"Schema migration for {table.get('name', 'Item')}",
+            )
+        )
     return files
 
 

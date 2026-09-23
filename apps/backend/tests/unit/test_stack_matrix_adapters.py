@@ -51,6 +51,10 @@ def test_every_registered_adapter_key_exists_in_the_matrix():
     """Catches a typo'd adapter key that would never actually be reachable
     through stack_matrix._compute_buildable_now()."""
     for key in BACKEND_ADAPTERS:
-        assert key in BACKEND_FRAMEWORKS, f"backend adapter '{key}' has no matching stack_matrix.BACKEND_FRAMEWORKS entry"
+        assert key in BACKEND_FRAMEWORKS, (
+            f"backend adapter '{key}' has no matching stack_matrix.BACKEND_FRAMEWORKS entry"
+        )
     for key in FRONTEND_ADAPTERS:
-        assert key in FRONTEND_FRAMEWORKS, f"frontend adapter '{key}' has no matching stack_matrix.FRONTEND_FRAMEWORKS entry"
+        assert key in FRONTEND_FRAMEWORKS, (
+            f"frontend adapter '{key}' has no matching stack_matrix.FRONTEND_FRAMEWORKS entry"
+        )

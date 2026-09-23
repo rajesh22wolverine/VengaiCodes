@@ -260,8 +260,11 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)):
 
     try:
         plain_otp, _ = await create_otp_record(
-            db, target=new_user.email, otp_type="email",
-            purpose="signup", user_id=new_user.id,
+            db,
+            target=new_user.email,
+            otp_type="email",
+            purpose="signup",
+            user_id=new_user.id,
         )
         if not settings.is_production:
             # Local convenience so the signup flow is testable without an
@@ -305,7 +308,9 @@ async def send_otp(payload: SendOTPRequest, db: AsyncSession = Depends(get_db)):
         try:
             target = validate_indian_mobile(target)
         except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+            )
 
     if payload.purpose in ("login", "password_reset", "licence_recovery"):
         lookup_field = User.email if payload.otp_type == "email" else User.mobile
@@ -322,11 +327,16 @@ async def send_otp(payload: SendOTPRequest, db: AsyncSession = Depends(get_db)):
 
     try:
         plain_otp, otp_record = await create_otp_record(
-            db, target=target, otp_type=payload.otp_type,
-            purpose=payload.purpose, user_id=user_id,
+            db,
+            target=target,
+            otp_type=payload.otp_type,
+            purpose=payload.purpose,
+            user_id=user_id,
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)
+        )
 
     if payload.otp_type == "mobile":
         try:
@@ -376,7 +386,9 @@ async def verify_otp(payload: VerifyOTPRequest, db: AsyncSession = Depends(get_d
         try:
             target = validate_indian_mobile(target)
         except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+            )
 
     success, message = await verify_otp_code(db, target, payload.otp, payload.purpose)
 
@@ -473,9 +485,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     identifier = payload.username_or_email
 
     result = await db.execute(
-        select(User).where(
-            or_(User.username == identifier, User.email == identifier)
-        )
+        select(User).where(or_(User.username == identifier, User.email == identifier))
     )
     user = result.scalar_one_or_none()
 
@@ -488,7 +498,10 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise generic_error
 
     if user.lockout_until and user.lockout_until > datetime.now(timezone.utc):
-        minutes_left = int((user.lockout_until - datetime.now(timezone.utc)).total_seconds() / 60) + 1
+        minutes_left = (
+            int((user.lockout_until - datetime.now(timezone.utc)).total_seconds() / 60)
+            + 1
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -634,8 +647,11 @@ async def forgot_password(
 
     try:
         plain_otp, _ = await create_otp_record(
-            db, target=user.email, otp_type="email",
-            purpose="password_reset", user_id=user.id,
+            db,
+            target=user.email,
+            otp_type="email",
+            purpose="password_reset",
+            user_id=user.id,
         )
         # Delivery is allowlisted to ADMIN_EMAIL for now — see
         # resend_service.send_password_reset_email(). The return value is
@@ -676,7 +692,9 @@ async def reset_password(
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
+        )
 
     user.hashed_password = hash_password(payload.new_password)
     user.failed_login_attempts = 0

@@ -47,7 +47,9 @@ def fingerprint(project: Project) -> str:
     """The approved requirements are the whole input to this phase — if
     they change, a half-finished design belongs to a different app."""
     frd = (project.requirements_data or {}).get("frd", {})
-    material = json.dumps({"name": project.name, "frd": frd}, sort_keys=True, default=str)
+    material = json.dumps(
+        {"name": project.name, "frd": frd}, sort_keys=True, default=str
+    )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -114,7 +116,10 @@ async def _generate_mockup(ctx: StepCtx) -> None:
     try:
         screen_result = await generate_text(
             build_screen_to_code_prompt(
-                screen, design.get("design_style", ""), palette, design.get("typography", "")
+                screen,
+                design.get("design_style", ""),
+                palette,
+                design.get("typography", ""),
             ),
             max_tokens=UIUX_MOCKUP_MAX_TOKENS,
             user=ctx.user,
@@ -131,7 +136,9 @@ async def _generate_mockup(ctx: StepCtx) -> None:
         # regenerates or uploads their own mockup for it. Unchanged from
         # when this ran inline; one dud screen must not fail the run
         # (and, now, must not cost the user a resume either).
-        logger.warning(f"Auto mockup generation failed for screen '{screen.get('name')}': {e}")
+        logger.warning(
+            f"Auto mockup generation failed for screen '{screen.get('name')}': {e}"
+        )
 
     # Reassign so the service persists the mutation.
     design["screens"] = screens

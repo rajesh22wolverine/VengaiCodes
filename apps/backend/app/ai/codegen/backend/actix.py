@@ -17,7 +17,12 @@
 
 from app.ai.codegen.backend import rust_common
 from app.ai.codegen.types import BackendAdapter, FileResult, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, generate_text_validated
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    generate_text_validated,
+)
 
 generate_model = rust_common.generate_model
 
@@ -61,18 +66,24 @@ delete, web, HttpResponse, Responder}};` + each `#[route_macro]` handler functio
 fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "rust", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "rust",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/src/handlers.rs",
-            language="rust",
-            content=content,
-            description="actix-web handlers implementing all API endpoints against the real database",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/src/handlers.rs",
+                language="rust",
+                content=content,
+                description="actix-web handlers implementing all API endpoints against the real database",
+            ),
+            issue,
+        )
+    ]
 
 
 async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -121,18 +132,24 @@ Return ONLY the raw Rust code for this one file (imports + output/input structs 
 No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "rust", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "rust",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path=_GRAPHQL_SCHEMA_PATH,
-            language="rust",
-            content=content,
-            description="async-graphql schema implementing every capability against the real database",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path=_GRAPHQL_SCHEMA_PATH,
+                language="rust",
+                content=content,
+                description="async-graphql schema implementing every capability against the real database",
+            ),
+            issue,
+        )
+    ]
 
 
 ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes}
@@ -158,7 +175,7 @@ def _cargo_toml(project_name: str, graphql: bool) -> str:
         else ""
     )
     return f"""[package]
-name = "{slugify_app_name(project_name).replace('-', '_')}"
+name = "{slugify_app_name(project_name).replace("-", "_")}"
 version = "0.1.0"
 edition = "2021"
 
@@ -265,7 +282,14 @@ async fn main() -> std::io::Result<()> {{
 
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    return [GeneratedFile(path="backend/Cargo.toml", language="text", content=_cargo_toml(ctx.project_name, _is_graphql(ctx)), description="Rust dependency manifest")]
+    return [
+        GeneratedFile(
+            path="backend/Cargo.toml",
+            language="text",
+            content=_cargo_toml(ctx.project_name, _is_graphql(ctx)),
+            description="Rust dependency manifest",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
@@ -275,8 +299,18 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
         else _build_main_rs(ctx.endpoints, ctx.tables)
     )
     return [
-        GeneratedFile(path="backend/src/main.rs", language="rust", content=main_rs, description="actix-web entry point — connects the DB, creates tables, wires every handler/resolver"),
-        GeneratedFile(path="backend/src/models/mod.rs", language="rust", content=rust_common.models_mod_rs(ctx.model_files), description="Aggregates every generated data struct"),
+        GeneratedFile(
+            path="backend/src/main.rs",
+            language="rust",
+            content=main_rs,
+            description="actix-web entry point — connects the DB, creates tables, wires every handler/resolver",
+        ),
+        GeneratedFile(
+            path="backend/src/models/mod.rs",
+            language="rust",
+            content=rust_common.models_mod_rs(ctx.model_files),
+            description="Aggregates every generated data struct",
+        ),
     ]
 
 

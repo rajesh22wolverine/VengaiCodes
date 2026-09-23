@@ -88,7 +88,9 @@ async def _get_project(db: AsyncSession, user: User, project_id: str) -> Project
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     return project
 
@@ -98,7 +100,9 @@ async def _get_generatable_project(
 ) -> Project:
     project = await _get_project(db, user, project_id)
 
-    if not project.architecture_data or not project.architecture_data.get("user_approved"):
+    if not project.architecture_data or not project.architecture_data.get(
+        "user_approved"
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Architecture must be approved before generating code.",
@@ -111,7 +115,9 @@ def _saved_result(project: Project) -> GenerateCodeResponse:
     data = project.codegen_data or {}
     # Projects generated before stack_used was recorded have none saved;
     # resolving the stack is deterministic, so recompute rather than 500.
-    stack_used = data.get("stack_used") or codegen_runner.build_context(project)["stack_info"]
+    stack_used = (
+        data.get("stack_used") or codegen_runner.build_context(project)["stack_info"]
+    )
     return GenerateCodeResponse(
         codegen=CodeGenResult(**data.get("codegen", {"summary": "", "files": []})),
         stack_used=StackUsed(**stack_used),
@@ -142,7 +148,9 @@ async def start_code_generation(
     file instead of paying for those files again.
     """
     project = await _get_generatable_project(db, user, payload.project_id)
-    job = await generation_jobs.start_or_resume(db, project, user, codegen_runner.RUNNER)
+    job = await generation_jobs.start_or_resume(
+        db, project, user, codegen_runner.RUNNER
+    )
     return {"success": True, "job": generation_jobs.job_payload(job)}
 
 
@@ -208,7 +216,9 @@ async def generate_code(
     GET /codegen/{project_id} next time, instead of losing everything.
     """
     project = await _get_generatable_project(db, user, payload.project_id)
-    job = await generation_jobs.start_or_resume(db, project, user, codegen_runner.RUNNER)
+    job = await generation_jobs.start_or_resume(
+        db, project, user, codegen_runner.RUNNER
+    )
 
     finished = await generation_jobs.wait_for_completion(job.id)
 
@@ -268,9 +278,13 @@ async def generate_code_deterministic(
         )
 
     try:
-        codegen_data = codegen_deterministic.build_deterministic_codegen_data(project, stack_info)
+        codegen_data = codegen_deterministic.build_deterministic_codegen_data(
+            project, stack_info
+        )
     except codegen_deterministic.DeterministicCodegenError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
 
     project.codegen_data = codegen_data
     await db.commit()
@@ -346,6 +360,8 @@ async def approve_code(
 
     return {
         "success": True,
-        "message": "Code approved! Next: Testing 🐯" if payload.approved else "Feedback noted.",
+        "message": "Code approved! Next: Testing 🐯"
+        if payload.approved
+        else "Feedback noted.",
         "progress_percent": project.progress_percent,
     }

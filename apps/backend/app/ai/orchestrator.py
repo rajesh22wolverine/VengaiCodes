@@ -23,6 +23,7 @@ logger = logging.getLogger("vengaicode.ai")
 
 class AIError(Exception):
     """Raised when both Ollama and Groq fail to respond."""
+
     pass
 
 
@@ -213,13 +214,13 @@ async def _call_openai_compatible(
         "temperature": settings.AI_TEMPERATURE,
         # No cap -> omit the field; the provider applies its model max.
         **({"max_tokens": cap + token_headroom} if cap else {}),
+        # Cap the thinking so it can't consume the answer's budget.
+        # Only meaningful (and only safe) on OpenRouter — see
+        # REASONING_MAX_TOKENS. Skipped when uncapped: the failure it
+        # guards against is reasoning eating a SMALL fixed budget, and
+        # with no budget to eat, a hard 2048-token thinking limit would
+        # just be VengaiCode throttling the model's reasoning depth.
         **(
-            # Cap the thinking so it can't consume the answer's budget.
-            # Only meaningful (and only safe) on OpenRouter — see
-            # REASONING_MAX_TOKENS. Skipped when uncapped: the failure it
-            # guards against is reasoning eating a SMALL fixed budget, and
-            # with no budget to eat, a hard 2048-token thinking limit would
-            # just be VengaiCode throttling the model's reasoning depth.
             {"reasoning": {"max_tokens": REASONING_MAX_TOKENS}}
             if OPENROUTER_HOST in base_url and cap
             else {}
@@ -263,7 +264,9 @@ async def _call_openai_compatible(
     # next model instead of reporting a budget problem. Say what happened.
     if content is None or not content.strip():
         usage_raw = data.get("usage") or {}
-        reasoning = (usage_raw.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        reasoning = (usage_raw.get("completion_tokens_details") or {}).get(
+            "reasoning_tokens"
+        )
         raise AIError(
             f"{model} returned no content "
             f"(finish_reason={choice.get('finish_reason')}, "
@@ -280,7 +283,9 @@ async def _call_openai_compatible(
     return text, duration_ms, usage
 
 
-async def _call_groq(prompt: str, max_tokens: int | None = None) -> tuple[str, float, dict]:
+async def _call_groq(
+    prompt: str, max_tokens: int | None = None
+) -> tuple[str, float, dict]:
     """Call Groq cloud API using VengaiCode's own key."""
     if not settings.GROQ_API_KEY:
         raise AIError("Groq API key not configured")
@@ -474,13 +479,20 @@ async def _call_user_ai_config(
             _join_context(prompt, context), config.model_name, base_url=config.base_url
         )
 
-    api_key = decrypt_secret(config.api_key_encrypted) if config.api_key_encrypted else None
+    api_key = (
+        decrypt_secret(config.api_key_encrypted) if config.api_key_encrypted else None
+    )
 
     if config.provider_type == "anthropic":
         if not api_key:
             raise AIError("Anthropic requires an API key")
         return await _call_anthropic(
-            config.base_url, api_key, config.model_name, prompt, max_tokens, context=context
+            config.base_url,
+            api_key,
+            config.model_name,
+            prompt,
+            max_tokens,
+            context=context,
         )
 
     prompt = _join_context(prompt, context)
@@ -568,11 +580,15 @@ async def get_effective_bag(
     default the admin added after the user last reordered) is appended
     after, in the natural order above, rather than hidden.
     """
-    own_result = await db.execute(select(UserAIConfig).where(UserAIConfig.user_id == user.id))
+    own_result = await db.execute(
+        select(UserAIConfig).where(UserAIConfig.user_id == user.id)
+    )
     own = [c for c in own_result.scalars().all() if _task_type_ok(c, task_type)]
 
     priority_rank = {"primary": 0, "secondary": 1, "tertiary": 2}
-    chain = sorted((c for c in own if c.priority), key=lambda c: priority_rank[c.priority])
+    chain = sorted(
+        (c for c in own if c.priority), key=lambda c: priority_rank[c.priority]
+    )
     own_ordered = chain if chain else [c for c in own if c.is_active][:1]
 
     platform_result = await db.execute(
@@ -627,7 +643,9 @@ async def seed_default_ai_configs() -> None:
         # Seeding is additive-only, so an Ollama row seeded before this check
         # existed stays put — deactivate it in Admin -> AI Models.
         if settings.is_production and "ollama" not in existing_types:
-            logger.info("Skipping Ollama platform default — no local inference server in production")
+            logger.info(
+                "Skipping Ollama platform default — no local inference server in production"
+            )
         elif "ollama" not in existing_types:
             db.add(
                 UserAIConfig(
@@ -790,7 +808,9 @@ async def backfill_legacy_bag_orders() -> None:
             return
 
         users_result = await db.execute(
-            select(User).where(User.id.in_(own_by_user.keys()), User.ai_bag_order.is_(None))
+            select(User).where(
+                User.id.in_(own_by_user.keys()), User.ai_bag_order.is_(None)
+            )
         )
         users = users_result.scalars().all()
         if not users:
@@ -800,7 +820,10 @@ async def backfill_legacy_bag_orders() -> None:
         backfilled = 0
         for user in users:
             configs = own_by_user[user.id]
-            chain = sorted((c for c in configs if c.priority), key=lambda c: priority_rank[c.priority])
+            chain = sorted(
+                (c for c in configs if c.priority),
+                key=lambda c: priority_rank[c.priority],
+            )
             if chain:
                 ordered_ids = [c.id for c in chain]
             else:
@@ -813,11 +836,17 @@ async def backfill_legacy_bag_orders() -> None:
 
         if backfilled:
             await db.commit()
-            logger.info(f"✅ Backfilled ai_bag_order for {backfilled} user(s) with a pre-bag AI config")
+            logger.info(
+                f"✅ Backfilled ai_bag_order for {backfilled} user(s) with a pre-bag AI config"
+            )
 
 
 def _log_usage(
-    source: str, model: str | None, task_type: Optional[str], duration_ms: float, usage: dict
+    source: str,
+    model: str | None,
+    task_type: Optional[str],
+    duration_ms: float,
+    usage: dict,
 ) -> None:
     """One line per AI call saying what it cost in tokens.
 
@@ -952,7 +981,9 @@ async def generate_text(
     prompt = _join_context(prompt, context)
     try:
         text, duration_ms, usage = await _call_ollama(prompt, model)
-        _log_usage("ollama", model or settings.OLLAMA_CHAT_MODEL, task_type, duration_ms, usage)
+        _log_usage(
+            "ollama", model or settings.OLLAMA_CHAT_MODEL, task_type, duration_ms, usage
+        )
         return {
             "text": text,
             "source": "ollama",
@@ -987,7 +1018,9 @@ async def generate_text(
         )
 
 
-async def _call_groq_vision(prompt: str, image_base64: str, media_type: str) -> tuple[str, float]:
+async def _call_groq_vision(
+    prompt: str, image_base64: str, media_type: str
+) -> tuple[str, float]:
     """
     Call Groq's vision-capable model with an image + text prompt.
     No Ollama fallback for vision — text generate_text() already falls
@@ -1050,7 +1083,9 @@ async def _call_groq_vision(prompt: str, image_base64: str, media_type: str) -> 
     return text, duration_ms
 
 
-async def generate_vision(prompt: str, image_base64: str, media_type: str = "image/png") -> dict:
+async def generate_vision(
+    prompt: str, image_base64: str, media_type: str = "image/png"
+) -> dict:
     """
     Generate text from a prompt + image using Groq's vision model.
     Unlike generate_text(), this has no local (Ollama) path — kept
@@ -1075,7 +1110,9 @@ async def generate_vision(prompt: str, image_base64: str, media_type: str = "ima
         )
 
 
-async def transcribe_audio(audio_bytes: bytes, filename: str, content_type: str) -> dict:
+async def transcribe_audio(
+    audio_bytes: bytes, filename: str, content_type: str
+) -> dict:
     """
     Transcribe a voice note using Groq's hosted Whisper model.
     No Ollama fallback — local Whisper isn't wired up here.
@@ -1094,7 +1131,9 @@ async def transcribe_audio(audio_bytes: bytes, filename: str, content_type: str)
             )
 
         if response.status_code != 200:
-            logger.error(f"Groq transcription error: {response.status_code} {response.text}")
+            logger.error(
+                f"Groq transcription error: {response.status_code} {response.text}"
+            )
             response.raise_for_status()
 
         data = response.json()

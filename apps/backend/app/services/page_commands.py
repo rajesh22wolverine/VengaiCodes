@@ -54,14 +54,42 @@ FRIENDLY_TAGS: dict[str, list[str]] = {
 }
 
 NAMED_COLORS = {
-    "black", "white", "red", "green", "blue", "yellow", "orange", "purple",
-    "pink", "grey", "gray", "brown", "cyan", "magenta", "navy", "teal",
-    "olive", "maroon", "silver", "gold", "beige", "transparent",
+    "black",
+    "white",
+    "red",
+    "green",
+    "blue",
+    "yellow",
+    "orange",
+    "purple",
+    "pink",
+    "grey",
+    "gray",
+    "brown",
+    "cyan",
+    "magenta",
+    "navy",
+    "teal",
+    "olive",
+    "maroon",
+    "silver",
+    "gold",
+    "beige",
+    "transparent",
 }
 
 _ORDINALS = {
-    "first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2,
-    "fourth": 3, "4th": 3, "fifth": 4, "5th": 4, "last": -1,
+    "first": 0,
+    "1st": 0,
+    "second": 1,
+    "2nd": 1,
+    "third": 2,
+    "3rd": 2,
+    "fourth": 3,
+    "4th": 3,
+    "fifth": 4,
+    "5th": 4,
+    "last": -1,
 }
 
 _SIZE_STEP = 1.25
@@ -126,7 +154,11 @@ def resolve_targets(phrase: str, page: Page) -> list[Element]:
         raise _TargetError("No element named in that request.")
 
     # `button that says "Buy now"` / `link with text "Docs"`
-    text_match = re.match(r'^(?P<what>.+?)\s+(?:that says|with text|labelled|labeled|saying)\s+["\']?(?P<label>[^"\']+)["\']?$', text, re.I)
+    text_match = re.match(
+        r'^(?P<what>.+?)\s+(?:that says|with text|labelled|labeled|saying)\s+["\']?(?P<label>[^"\']+)["\']?$',
+        text,
+        re.I,
+    )
     label = None
     if text_match:
         text = text_match.group("what").strip()
@@ -144,7 +176,11 @@ def resolve_targets(phrase: str, page: Page) -> list[Element]:
     if tags:
         candidates = [e for e in page.elements if e.tag in tags]
 
-    if not candidates and (text.startswith((".", "#", "[")) or re.fullmatch(r"[a-zA-Z][\w-]*([.#\[].*)?", text or "") or " " in text):
+    if not candidates and (
+        text.startswith((".", "#", "["))
+        or re.fullmatch(r"[a-zA-Z][\w-]*([.#\[].*)?", text or "")
+        or " " in text
+    ):
         try:
             candidates = page.select(text)
         except Exception:
@@ -165,7 +201,9 @@ def resolve_targets(phrase: str, page: Page) -> list[Element]:
         try:
             return [candidates[ordinal]]
         except IndexError:
-            raise _TargetError(f"There aren't that many {text} elements on the page (found {len(candidates)}).")
+            raise _TargetError(
+                f"There aren't that many {text} elements on the page (found {len(candidates)})."
+            )
 
     return candidates
 
@@ -184,9 +222,13 @@ def _color_value(raw: str) -> str:
     value = raw.strip().strip("\"'").lower()
     if value in NAMED_COLORS:
         return value
-    if re.fullmatch(r"#[0-9a-f]{3,8}", value) or re.fullmatch(r"(rgb|rgba|hsl|hsla)\([^)]*\)", value):
+    if re.fullmatch(r"#[0-9a-f]{3,8}", value) or re.fullmatch(
+        r"(rgb|rgba|hsl|hsla)\([^)]*\)", value
+    ):
         return value
-    raise _TargetError(f"{raw.strip()!r} isn't a colour I recognise. Use a hex value like #2563eb or one of: {', '.join(sorted(NAMED_COLORS))}.")
+    raise _TargetError(
+        f"{raw.strip()!r} isn't a colour I recognise. Use a hex value like #2563eb or one of: {', '.join(sorted(NAMED_COLORS))}."
+    )
 
 
 def _current_font_size_px(element: Element, page: Page) -> float:
@@ -221,7 +263,14 @@ def _h_background(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     color = _color_value(match.group("value"))
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": "background-color", "value": color}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": "background-color",
+                "value": color,
+            }
+        ],
         f"Set background-color of <{element.tag}> (element {element.index}) to {color}.",
     )
 
@@ -230,7 +279,14 @@ def _h_text_color(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     color = _color_value(match.group("value"))
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": "color", "value": color}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": "color",
+                "value": color,
+            }
+        ],
         f"Set color of <{element.tag}> (element {element.index}) to {color}.",
     )
 
@@ -241,9 +297,18 @@ def _h_font_size(match: re.Match, page: Page) -> tuple[list[dict], str]:
     if re.fullmatch(r"[\d.]+", size):
         size = f"{size}px"
     if not re.fullmatch(r"[\d.]+(px|rem|em|%|pt)", size):
-        raise _TargetError(f"{size!r} isn't a size I recognise. Use something like 18px, 1.5rem or 120%.")
+        raise _TargetError(
+            f"{size!r} isn't a size I recognise. Use something like 18px, 1.5rem or 120%."
+        )
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": "font-size", "value": size}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": "font-size",
+                "value": size,
+            }
+        ],
         f"Set font-size of <{element.tag}> (element {element.index}) to {size}.",
     )
 
@@ -252,10 +317,21 @@ def _h_size_step(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     direction = match.group("direction").lower()
     current = _current_font_size_px(element, page)
-    new_size = current * _SIZE_STEP if direction in ("bigger", "larger") else current / _SIZE_STEP
+    new_size = (
+        current * _SIZE_STEP
+        if direction in ("bigger", "larger")
+        else current / _SIZE_STEP
+    )
     rounded = f"{round(new_size, 1):g}px"
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": "font-size", "value": rounded}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": "font-size",
+                "value": rounded,
+            }
+        ],
         f"Set font-size of <{element.tag}> (element {element.index}) to {rounded} (was {current:g}px).",
     )
 
@@ -263,7 +339,14 @@ def _h_size_step(match: re.Match, page: Page) -> tuple[list[dict], str]:
 def _h_hide(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": "display", "value": "none"}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": "display",
+                "value": "none",
+            }
+        ],
         f"Hid <{element.tag}> (element {element.index}) with display: none.",
     )
 
@@ -271,7 +354,13 @@ def _h_hide(match: re.Match, page: Page) -> tuple[list[dict], str]:
 def _h_show(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     return (
-        [{"op": "remove_style", "target": {"index": element.index}, "property": "display"}],
+        [
+            {
+                "op": "remove_style",
+                "target": {"index": element.index},
+                "property": "display",
+            }
+        ],
         f"Removed the display style from <{element.tag}> (element {element.index}).",
     )
 
@@ -287,7 +376,14 @@ def _h_remove(match: re.Match, page: Page) -> tuple[list[dict], str]:
 def _h_center(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": "text-align", "value": "center"}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": "text-align",
+                "value": "center",
+            }
+        ],
         f"Centred <{element.tag}> (element {element.index}).",
     )
 
@@ -295,7 +391,14 @@ def _h_center(match: re.Match, page: Page) -> tuple[list[dict], str]:
 def _h_align(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": "text-align", "value": match.group("value").lower()}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": "text-align",
+                "value": match.group("value").lower(),
+            }
+        ],
         f"Aligned <{element.tag}> (element {element.index}) {match.group('value').lower()}.",
     )
 
@@ -303,9 +406,18 @@ def _h_align(match: re.Match, page: Page) -> tuple[list[dict], str]:
 def _h_bold(match: re.Match, page: Page) -> tuple[list[dict], str]:
     element = _single_target(match.group("target"), page)
     style = "italic" if "italic" in match.group(0).lower() else "bold"
-    prop, value = ("font-style", "italic") if style == "italic" else ("font-weight", "bold")
+    prop, value = (
+        ("font-style", "italic") if style == "italic" else ("font-weight", "bold")
+    )
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": prop, "value": value}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": prop,
+                "value": value,
+            }
+        ],
         f"Made <{element.tag}> (element {element.index}) {style}.",
     )
 
@@ -333,7 +445,14 @@ def _h_set_attribute(match: re.Match, page: Page) -> tuple[list[dict], str]:
     name = match.group("name").strip().lower()
     value = match.group("value").strip().strip("\"'")
     return (
-        [{"op": "set_attribute", "target": {"index": element.index}, "name": name, "value": value}],
+        [
+            {
+                "op": "set_attribute",
+                "target": {"index": element.index},
+                "name": name,
+                "value": value,
+            }
+        ],
         f"Set {name}={value!r} on <{element.tag}> (element {element.index}).",
     )
 
@@ -345,7 +464,14 @@ def _h_padding(match: re.Match, page: Page) -> tuple[list[dict], str]:
     if re.fullmatch(r"[\d.]+", amount):
         amount = f"{amount}px"
     return (
-        [{"op": "set_style", "target": {"index": element.index}, "property": prop, "value": amount}],
+        [
+            {
+                "op": "set_style",
+                "target": {"index": element.index},
+                "property": prop,
+                "value": amount,
+            }
+        ],
         f"Set {prop} of <{element.tag}> (element {element.index}) to {amount}.",
     )
 
@@ -361,34 +487,117 @@ Rule = tuple[re.Pattern, Callable[[re.Match, Page], tuple[list[dict], str]]]
 # "class cta from the button" if it gets first look.
 RULES: list[Rule] = [
     # Classes — before the generic remove/add rules below.
-    (re.compile(r"^add\s+(?:the\s+)?class\s+(?P<value>[\w.-]+)\s+to\s+(?P<target>.+)$", re.I), _h_add_class),
-    (re.compile(r"^remove\s+(?:the\s+)?class\s+(?P<value>[\w.-]+)\s+from\s+(?P<target>.+)$", re.I), _h_remove_class),
-
+    (
+        re.compile(
+            r"^add\s+(?:the\s+)?class\s+(?P<value>[\w.-]+)\s+to\s+(?P<target>.+)$", re.I
+        ),
+        _h_add_class,
+    ),
+    (
+        re.compile(
+            r"^remove\s+(?:the\s+)?class\s+(?P<value>[\w.-]+)\s+from\s+(?P<target>.+)$",
+            re.I,
+        ),
+        _h_remove_class,
+    ),
     # Attributes — a closed keyword list, so more specific than free text.
-    (re.compile(r"^(?:set|change|update)\s+the\s+(?P<name>href|src|alt|title|placeholder|value|type|name|target|id)\s+(?:text\s+)?of\s+(?P<target>.+?)\s+to\s+(?P<value>.+)$", re.I), _h_set_attribute),
-    (re.compile(r"^(?:set|change|update)\s+(?P<target>.+?)\s+(?P<name>href|src|alt|title|placeholder|value|type|name|target|id)\s+(?:to\s+)?(?P<value>.+)$", re.I), _h_set_attribute),
-
+    (
+        re.compile(
+            r"^(?:set|change|update)\s+the\s+(?P<name>href|src|alt|title|placeholder|value|type|name|target|id)\s+(?:text\s+)?of\s+(?P<target>.+?)\s+to\s+(?P<value>.+)$",
+            re.I,
+        ),
+        _h_set_attribute,
+    ),
+    (
+        re.compile(
+            r"^(?:set|change|update)\s+(?P<target>.+?)\s+(?P<name>href|src|alt|title|placeholder|value|type|name|target|id)\s+(?:to\s+)?(?P<value>.+)$",
+            re.I,
+        ),
+        _h_set_attribute,
+    ),
     # Text — "the text of X" before the generic "X to ..." form.
-    (re.compile(r"^(?:change|set|update|edit)\s+the\s+text\s+of\s+(?P<target>.+?)\s+to\s+[\"'](?P<value>.*)[\"']$", re.I), _h_set_text),
-    (re.compile(r"^(?:rename|retitle)\s+(?P<target>.+?)\s+to\s+[\"'](?P<value>.*)[\"']$", re.I), _h_set_text),
-    (re.compile(r"^(?:change|set|update|edit)\s+(?P<target>.+?)\s+(?:text\s+)?to\s+[\"'](?P<value>.*)[\"']$", re.I), _h_set_text),
-
+    (
+        re.compile(
+            r"^(?:change|set|update|edit)\s+the\s+text\s+of\s+(?P<target>.+?)\s+to\s+[\"'](?P<value>.*)[\"']$",
+            re.I,
+        ),
+        _h_set_text,
+    ),
+    (
+        re.compile(
+            r"^(?:rename|retitle)\s+(?P<target>.+?)\s+to\s+[\"'](?P<value>.*)[\"']$",
+            re.I,
+        ),
+        _h_set_text,
+    ),
+    (
+        re.compile(
+            r"^(?:change|set|update|edit)\s+(?P<target>.+?)\s+(?:text\s+)?to\s+[\"'](?P<value>.*)[\"']$",
+            re.I,
+        ),
+        _h_set_text,
+    ),
     # Colour
-    (re.compile(r"^(?:change|set)\s+the\s+background(?:\s+colou?r)?\s+of\s+(?P<target>.+?)\s+to\s+(?P<value>\S+)$", re.I), _h_background),
-    (re.compile(r"^(?:make|set|change)\s+(?P<target>.+?)\s+background(?:\s+colou?r)?\s+(?:to\s+)?(?P<value>\S+)$", re.I), _h_background),
-    (re.compile(r"^(?:change|set)\s+the\s+colou?r\s+of\s+(?P<target>.+?)\s+to\s+(?P<value>\S+)$", re.I), _h_text_color),
-    (re.compile(r"^(?:make|set|change)\s+(?P<target>.+?)\s+(?:text\s+)?colou?r\s+(?:to\s+)?(?P<value>\S+)$", re.I), _h_text_color),
-
+    (
+        re.compile(
+            r"^(?:change|set)\s+the\s+background(?:\s+colou?r)?\s+of\s+(?P<target>.+?)\s+to\s+(?P<value>\S+)$",
+            re.I,
+        ),
+        _h_background,
+    ),
+    (
+        re.compile(
+            r"^(?:make|set|change)\s+(?P<target>.+?)\s+background(?:\s+colou?r)?\s+(?:to\s+)?(?P<value>\S+)$",
+            re.I,
+        ),
+        _h_background,
+    ),
+    (
+        re.compile(
+            r"^(?:change|set)\s+the\s+colou?r\s+of\s+(?P<target>.+?)\s+to\s+(?P<value>\S+)$",
+            re.I,
+        ),
+        _h_text_color,
+    ),
+    (
+        re.compile(
+            r"^(?:make|set|change)\s+(?P<target>.+?)\s+(?:text\s+)?colou?r\s+(?:to\s+)?(?P<value>\S+)$",
+            re.I,
+        ),
+        _h_text_color,
+    ),
     # Size
-    (re.compile(r"^(?:make|set|change)\s+(?P<target>.+?)\s+font(?:\s*-?\s*size)?\s+(?:to\s+)?(?P<value>[\d.]+\s*(?:px|rem|em|%|pt)?)$", re.I), _h_font_size),
-    (re.compile(r"^(?:make|set|change)\s+(?P<target>.+?)\s+(?:text\s+)?(?P<direction>bigger|larger|smaller)$", re.I), _h_size_step),
-
+    (
+        re.compile(
+            r"^(?:make|set|change)\s+(?P<target>.+?)\s+font(?:\s*-?\s*size)?\s+(?:to\s+)?(?P<value>[\d.]+\s*(?:px|rem|em|%|pt)?)$",
+            re.I,
+        ),
+        _h_font_size,
+    ),
+    (
+        re.compile(
+            r"^(?:make|set|change)\s+(?P<target>.+?)\s+(?:text\s+)?(?P<direction>bigger|larger|smaller)$",
+            re.I,
+        ),
+        _h_size_step,
+    ),
     # Layout / emphasis
-    (re.compile(r"^(?:add|set)\s+(?P<value>[\d.]+\s*(?:px|rem|em|%)?)\s+(?:of\s+)?(?:padding|margin)\s+(?:to|on)\s+(?P<target>.+)$", re.I), _h_padding),
+    (
+        re.compile(
+            r"^(?:add|set)\s+(?P<value>[\d.]+\s*(?:px|rem|em|%)?)\s+(?:of\s+)?(?:padding|margin)\s+(?:to|on)\s+(?P<target>.+)$",
+            re.I,
+        ),
+        _h_padding,
+    ),
     (re.compile(r"^(?:cent(?:er|re))\s+(?P<target>.+)$", re.I), _h_center),
-    (re.compile(r"^(?:align|justify)\s+(?P<target>.+?)\s+(?:to\s+the\s+)?(?P<value>left|right|center|centre|justify)$", re.I), _h_align),
+    (
+        re.compile(
+            r"^(?:align|justify)\s+(?P<target>.+?)\s+(?:to\s+the\s+)?(?P<value>left|right|center|centre|justify)$",
+            re.I,
+        ),
+        _h_align,
+    ),
     (re.compile(r"^(?:make|set)\s+(?P<target>.+?)\s+(?:bold|italic)$", re.I), _h_bold),
-
     # Visibility / removal — generic, so last.
     (re.compile(r"^hide\s+(?P<target>.+)$", re.I), _h_hide),
     (re.compile(r"^(?:show|unhide|reveal)\s+(?P<target>.+)$", re.I), _h_show),
@@ -409,7 +618,11 @@ def parse_command(command: str, page: Page) -> CommandResult:
     more useful than a generic "not understood"."""
     text = (command or "").strip().rstrip(".")
     if not text:
-        return CommandResult(understood=False, error="Empty instruction.", suggestions=SUPPORTED_PHRASINGS)
+        return CommandResult(
+            understood=False,
+            error="Empty instruction.",
+            suggestions=SUPPORTED_PHRASINGS,
+        )
 
     first_error: Optional[str] = None
     for pattern, handler in RULES:

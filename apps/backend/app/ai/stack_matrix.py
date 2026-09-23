@@ -22,16 +22,40 @@
 
 # ─── Frontend (UI) side ───
 FRONTEND_FRAMEWORKS: dict[str, dict] = {
-    "react":            {"label": "React",                 "languages": ["javascript", "typescript"], "category": "web"},
-    "vue":              {"label": "Vue",                    "languages": ["javascript", "typescript"], "category": "web"},
-    "angular":          {"label": "Angular",                "languages": ["typescript"],                "category": "web"},
-    "svelte":           {"label": "Svelte",                 "languages": ["javascript", "typescript"], "category": "web"},
-    "html_css_js":      {"label": "Plain HTML/CSS/JS",      "languages": ["javascript"],                "category": "web"},
-    "flutter":          {"label": "Flutter",                "languages": ["dart"],                      "category": "mobile"},
-    "swiftui":          {"label": "SwiftUI",                "languages": ["swift"],                     "category": "mobile"},
-    "jetpack_compose":  {"label": "Jetpack Compose",        "languages": ["kotlin"],                     "category": "mobile"},
-    "o3de":             {"label": "Open 3D Engine (O3DE)",  "languages": ["o3de_script"],                "category": "game"},
-    "godot":            {"label": "Godot Engine",            "languages": ["gdscript"],                   "category": "game"},
+    "react": {
+        "label": "React",
+        "languages": ["javascript", "typescript"],
+        "category": "web",
+    },
+    "vue": {
+        "label": "Vue",
+        "languages": ["javascript", "typescript"],
+        "category": "web",
+    },
+    "angular": {"label": "Angular", "languages": ["typescript"], "category": "web"},
+    "svelte": {
+        "label": "Svelte",
+        "languages": ["javascript", "typescript"],
+        "category": "web",
+    },
+    "html_css_js": {
+        "label": "Plain HTML/CSS/JS",
+        "languages": ["javascript"],
+        "category": "web",
+    },
+    "flutter": {"label": "Flutter", "languages": ["dart"], "category": "mobile"},
+    "swiftui": {"label": "SwiftUI", "languages": ["swift"], "category": "mobile"},
+    "jetpack_compose": {
+        "label": "Jetpack Compose",
+        "languages": ["kotlin"],
+        "category": "mobile",
+    },
+    "o3de": {
+        "label": "Open 3D Engine (O3DE)",
+        "languages": ["o3de_script"],
+        "category": "game",
+    },
+    "godot": {"label": "Godot Engine", "languages": ["gdscript"], "category": "game"},
 }
 
 # Game-category frontends that automated CI packaging can actually
@@ -57,19 +81,63 @@ CI_PACKAGEABLE_GAME_ENGINES: frozenset[str] = frozenset({"o3de"})
 
 # ─── Backend side ───
 BACKEND_FRAMEWORKS: dict[str, dict] = {
-    "fastapi":     {"label": "FastAPI",       "languages": ["python"],                    "api_styles": ["rest", "graphql"]},
-    "flask":       {"label": "Flask",         "languages": ["python"],                    "api_styles": ["rest", "graphql"]},
-    "django":      {"label": "Django",        "languages": ["python"],                    "api_styles": ["rest", "graphql"]},
-    "express":     {"label": "Express",       "languages": ["javascript", "typescript"], "api_styles": ["rest", "graphql"]},
-    "nestjs":      {"label": "NestJS",        "languages": ["typescript", "javascript"], "api_styles": ["rest", "graphql", "grpc"]},
-    "spring_boot": {"label": "Spring Boot",   "languages": ["java", "kotlin"],            "api_styles": ["rest", "graphql", "grpc"]},
-    "rails":       {"label": "Ruby on Rails", "languages": ["ruby"],                       "api_styles": ["rest", "graphql"]},
-    "laravel":     {"label": "Laravel",       "languages": ["php"],                        "api_styles": ["rest", "graphql"]},
-    "aspnet_core": {"label": "ASP.NET Core",  "languages": ["csharp"],                     "api_styles": ["rest", "graphql", "grpc"]},
-    "actix":       {"label": "Actix",         "languages": ["rust"],                       "api_styles": ["rest", "graphql"]},
-    "axum":        {"label": "Axum",          "languages": ["rust"],                       "api_styles": ["rest", "graphql"]},
-    "gin":         {"label": "Gin",           "languages": ["go"],                         "api_styles": ["rest", "graphql"]},
-    "none":        {"label": "No separate backend (O3DE project)", "languages": ["none"], "api_styles": ["none"]},
+    "fastapi": {
+        "label": "FastAPI",
+        "languages": ["python"],
+        "api_styles": ["rest", "graphql"],
+    },
+    "flask": {
+        "label": "Flask",
+        "languages": ["python"],
+        "api_styles": ["rest", "graphql"],
+    },
+    "django": {
+        "label": "Django",
+        "languages": ["python"],
+        "api_styles": ["rest", "graphql"],
+    },
+    "express": {
+        "label": "Express",
+        "languages": ["javascript", "typescript"],
+        "api_styles": ["rest", "graphql"],
+    },
+    "nestjs": {
+        "label": "NestJS",
+        "languages": ["typescript", "javascript"],
+        "api_styles": ["rest", "graphql", "grpc"],
+    },
+    "spring_boot": {
+        "label": "Spring Boot",
+        "languages": ["java", "kotlin"],
+        "api_styles": ["rest", "graphql", "grpc"],
+    },
+    "rails": {
+        "label": "Ruby on Rails",
+        "languages": ["ruby"],
+        "api_styles": ["rest", "graphql"],
+    },
+    "laravel": {
+        "label": "Laravel",
+        "languages": ["php"],
+        "api_styles": ["rest", "graphql"],
+    },
+    "aspnet_core": {
+        "label": "ASP.NET Core",
+        "languages": ["csharp"],
+        "api_styles": ["rest", "graphql", "grpc"],
+    },
+    "actix": {
+        "label": "Actix",
+        "languages": ["rust"],
+        "api_styles": ["rest", "graphql"],
+    },
+    "axum": {"label": "Axum", "languages": ["rust"], "api_styles": ["rest", "graphql"]},
+    "gin": {"label": "Gin", "languages": ["go"], "api_styles": ["rest", "graphql"]},
+    "none": {
+        "label": "No separate backend (O3DE project)",
+        "languages": ["none"],
+        "api_styles": ["none"],
+    },
 }
 
 # Public, pickable API styles. "none" is an internal sentinel used only by
@@ -84,6 +152,7 @@ LANGUAGE_FAMILIES: dict[str, set[str]] = {
     "java": {"java", "kotlin"},
     "kotlin": {"java", "kotlin"},
 }
+
 
 def _norm(value: str | None) -> str:
     return (value or "").strip().lower()
@@ -212,7 +281,9 @@ def _coherence_errors(selection: dict) -> list[str]:
     be_meta = BACKEND_FRAMEWORKS.get(be)
 
     if fe_meta is None:
-        errors.append(f"'{selection.get('frontend_framework', '')}' is not a known UI framework.")
+        errors.append(
+            f"'{selection.get('frontend_framework', '')}' is not a known UI framework."
+        )
     elif fe_lang not in fe_meta["languages"]:
         allowed = " or ".join(lang.title() for lang in fe_meta["languages"])
         errors.append(
@@ -221,7 +292,9 @@ def _coherence_errors(selection: dict) -> list[str]:
         )
 
     if be_meta is None:
-        errors.append(f"'{selection.get('backend_framework', '')}' is not a known backend framework.")
+        errors.append(
+            f"'{selection.get('backend_framework', '')}' is not a known backend framework."
+        )
     else:
         if be_lang not in be_meta["languages"]:
             allowed = " or ".join(lang.title() for lang in be_meta["languages"])
@@ -236,7 +309,11 @@ def _coherence_errors(selection: dict) -> list[str]:
                 f"in-process API style — it supports {allowed or 'no separate API'}."
             )
 
-    if fe_meta is not None and be_meta is not None and not _game_pairing_ok(fe, be, api):
+    if (
+        fe_meta is not None
+        and be_meta is not None
+        and not _game_pairing_ok(fe, be, api)
+    ):
         errors.append(
             f"{fe_meta['label']} doesn't pair with a separate web backend or API style — "
             f"pick 'No separate backend' alongside {fe_meta['label']}, or pick a non-game-engine "
@@ -250,7 +327,9 @@ def _same_family(lang_a: str, lang_b: str) -> bool:
     return lang_b in LANGUAGE_FAMILIES.get(lang_a, set())
 
 
-def _score(requested: tuple[str, str, str, str, str], candidate: tuple[str, str, str, str, str]) -> float:
+def _score(
+    requested: tuple[str, str, str, str, str], candidate: tuple[str, str, str, str, str]
+) -> float:
     """Weighted field-match similarity — see the table in the plan for the point values."""
     r_fe, r_fe_lang, r_be, r_be_lang, r_api = requested
     c_fe, c_fe_lang, c_be, c_be_lang, c_api = candidate
@@ -258,7 +337,9 @@ def _score(requested: tuple[str, str, str, str, str], candidate: tuple[str, str,
 
     if r_fe == c_fe:
         score += 3
-    elif FRONTEND_FRAMEWORKS.get(r_fe, {}).get("category") == FRONTEND_FRAMEWORKS.get(c_fe, {}).get("category"):
+    elif FRONTEND_FRAMEWORKS.get(r_fe, {}).get("category") == FRONTEND_FRAMEWORKS.get(
+        c_fe, {}
+    ).get("category"):
         score += 1
 
     if r_fe_lang == c_fe_lang:
@@ -320,11 +401,15 @@ def validate_stack(selection: dict) -> dict:
 # engine with a real, automated CI->APK pipeline — see CI_BUILDABLE_GAME_ENGINES.
 # O3DE stays pickable for users who explicitly want it and are willing to
 # build the exported template themselves.
-DEFAULT_WEB_COMBO = _combo_from_tuple(("react", "javascript", "fastapi", "python", "rest"))
+DEFAULT_WEB_COMBO = _combo_from_tuple(
+    ("react", "javascript", "fastapi", "python", "rest")
+)
 DEFAULT_GAME_COMBO = _combo_from_tuple(("godot", "gdscript", "none", "none", "none"))
 
 
-def _stack_result(combo: tuple[str, str, str, str, str], source: str, fallback_reason: str | None) -> dict:
+def _stack_result(
+    combo: tuple[str, str, str, str, str], source: str, fallback_reason: str | None
+) -> dict:
     fe, fe_lang, be, be_lang, api = combo
     return {
         "frontend_framework": fe,
@@ -378,13 +463,25 @@ def get_project_stack(project) -> dict:
             ),
         )
 
-    architecture = (getattr(project, "architecture_data", None) or {}).get("architecture", {})
+    architecture = (getattr(project, "architecture_data", None) or {}).get(
+        "architecture", {}
+    )
     frontend_text = (architecture.get("tech_stack", {}) or {}).get("frontend", "")
     if isinstance(frontend_text, str):
         lowered = frontend_text.lower()
         if "o3de" in lowered or "open 3d engine" in lowered:
-            return _stack_result(("o3de", "o3de_script", "none", "none", "none"), "legacy_o3de_detection", None)
+            return _stack_result(
+                ("o3de", "o3de_script", "none", "none", "none"),
+                "legacy_o3de_detection",
+                None,
+            )
         if "godot" in lowered:
-            return _stack_result(("godot", "gdscript", "none", "none", "none"), "legacy_o3de_detection", None)
+            return _stack_result(
+                ("godot", "gdscript", "none", "none", "none"),
+                "legacy_o3de_detection",
+                None,
+            )
 
-    return _stack_result(("react", "javascript", "fastapi", "python", "rest"), "fallback_default", None)
+    return _stack_result(
+        ("react", "javascript", "fastapi", "python", "rest"), "fallback_default", None
+    )

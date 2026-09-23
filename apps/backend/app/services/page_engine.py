@@ -30,8 +30,20 @@ from typing import Any, Optional
 # Elements that never have a closing tag — they must not be pushed onto
 # the open-element stack or every later element nests under them.
 VOID_ELEMENTS = {
-    "area", "base", "br", "col", "embed", "hr", "img", "input",
-    "link", "meta", "param", "source", "track", "wbr",
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
 }
 
 _TAG_STRIP_RE = re.compile(r"<[^>]*>")
@@ -127,7 +139,9 @@ def render_style_attribute(styles: dict[str, str]) -> str:
     return "; ".join(f"{prop}: {value}" for prop, value in styles.items())
 
 
-def render_start_tag(tag: str, attrs: list[tuple[str, Optional[str]]], self_closing: bool) -> str:
+def render_start_tag(
+    tag: str, attrs: list[tuple[str, Optional[str]]], self_closing: bool
+) -> str:
     parts = [tag]
     for name, value in attrs:
         parts.append(name if value is None else f'{name}="{escape_attribute(value)}"')
@@ -140,7 +154,7 @@ def visible_text(source: str, span: Optional[tuple[int, int]]) -> str:
     byte ranges, so this lossy view can't corrupt a page)."""
     if span is None:
         return ""
-    raw = source[span[0]:span[1]]
+    raw = source[span[0] : span[1]]
     raw = re.sub(r"<(script|style)\b.*?</\1>", " ", raw, flags=re.S | re.I)
     stripped = _TAG_STRIP_RE.sub(" ", raw)
     return _WHITESPACE_RE.sub(" ", html_module.unescape(stripped)).strip()
@@ -212,7 +226,7 @@ class _Indexer(HTMLParser):
         # same point rather than derailing the rest of the index.
         for depth in range(len(self._stack) - 1, -1, -1):
             if self.elements[self._stack[depth]].tag == tag:
-                for orphan in self._stack[depth + 1:]:
+                for orphan in self._stack[depth + 1 :]:
                     if self.elements[orphan].end_span is None:
                         self.elements[orphan].end_span = (start, start)
                 self.elements[self._stack[depth]].end_span = (start, end)
@@ -319,7 +333,9 @@ class Page:
     # ── lookup ──
     def element(self, index: int) -> Element:
         if index < 0 or index >= len(self.elements):
-            raise PageEditError(f"No element with index {index} (page has {len(self.elements)}).")
+            raise PageEditError(
+                f"No element with index {index} (page has {len(self.elements)})."
+            )
         return self.elements[index]
 
     def select(self, selector: str) -> list[Element]:
@@ -362,7 +378,9 @@ class Page:
         A selector matching several elements without "all" is an error, so
         an ambiguous request is never resolved by guessing."""
         if not isinstance(target, dict):
-            raise PageEditError("Edit target must be an object with 'index' or 'selector'.")
+            raise PageEditError(
+                "Edit target must be an object with 'index' or 'selector'."
+            )
 
         if "index" in target and target["index"] is not None:
             return [self.element(int(target["index"]))]
@@ -378,7 +396,7 @@ class Page:
             raise PageEditError(
                 f"{selector!r} matches {len(matches)} elements "
                 f"(indexes {[m.index for m in matches][:8]}). "
-                f"Pass \"all\": true to change them all, or target one by index."
+                f'Pass "all": true to change them all, or target one by index.'
             )
         return matches
 
@@ -426,9 +444,21 @@ class Page:
             )
 
             if element.tag == "img":
-                images.append({"index": element.index, "src": element.attr("src"), "alt": element.attr("alt")})
+                images.append(
+                    {
+                        "index": element.index,
+                        "src": element.attr("src"),
+                        "alt": element.attr("alt"),
+                    }
+                )
             elif element.tag == "a":
-                links.append({"index": element.index, "href": element.attr("href"), "text": text[:120]})
+                links.append(
+                    {
+                        "index": element.index,
+                        "href": element.attr("href"),
+                        "text": text[:120],
+                    }
+                )
             elif element.tag == "form":
                 forms.append(
                     {
@@ -436,24 +466,53 @@ class Page:
                         "action": element.attr("action"),
                         "method": (element.attr("method") or "get").lower(),
                         "fields": [
-                            {"name": self.elements[c].attr("name"), "type": self.elements[c].attr("type") or self.elements[c].tag}
+                            {
+                                "name": self.elements[c].attr("name"),
+                                "type": self.elements[c].attr("type")
+                                or self.elements[c].tag,
+                            }
                             for c in self._descendants(element)
                             if self.elements[c].tag in ("input", "select", "textarea")
                         ],
                     }
                 )
             elif element.tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
-                headings.append({"index": element.index, "level": int(element.tag[1]), "text": text[:120]})
-            elif element.tag == "button" or (element.tag == "input" and (element.attr("type") or "").lower() in ("button", "submit")):
-                buttons.append({"index": element.index, "text": text[:80] or element.attr("value")})
+                headings.append(
+                    {
+                        "index": element.index,
+                        "level": int(element.tag[1]),
+                        "text": text[:120],
+                    }
+                )
+            elif element.tag == "button" or (
+                element.tag == "input"
+                and (element.attr("type") or "").lower() in ("button", "submit")
+            ):
+                buttons.append(
+                    {"index": element.index, "text": text[:80] or element.attr("value")}
+                )
             elif element.tag in ("input", "select", "textarea"):
-                inputs.append({"index": element.index, "name": element.attr("name"), "type": element.attr("type") or element.tag})
+                inputs.append(
+                    {
+                        "index": element.index,
+                        "name": element.attr("name"),
+                        "type": element.attr("type") or element.tag,
+                    }
+                )
 
             if element.tag == "script":
-                scripts.append({"index": element.index, "src": element.attr("src"), "inline": element.attr("src") is None})
+                scripts.append(
+                    {
+                        "index": element.index,
+                        "src": element.attr("src"),
+                        "inline": element.attr("src") is None,
+                    }
+                )
             src = element.attr("src") or element.attr("href")
             if src and src.startswith(("http://", "https://", "//")):
-                external.append({"index": element.index, "tag": element.tag, "url": src})
+                external.append(
+                    {"index": element.index, "tag": element.tag, "url": src}
+                )
 
         stylesheet = analyze_css(self.css)
         colors.update(stylesheet.pop("_colors", []))
@@ -480,7 +539,9 @@ class Page:
                 "stylesheet": stylesheet,
                 "comment_count": len(self.comments),
                 "has_doctype": self.doctype is not None,
-                "word_count": len(visible_text(self.source, (0, len(self.source))).split()),
+                "word_count": len(
+                    visible_text(self.source, (0, len(self.source))).split()
+                ),
             },
             "issues": self._issues(images, links, headings, forms),
         }
@@ -504,43 +565,102 @@ class Page:
         for element in self.elements:
             if element.id:
                 if element.id in seen_ids:
-                    issues.append({
-                        "type": "duplicate_id",
-                        "index": element.index,
-                        "message": f"id=\"{element.id}\" is already used by element {seen_ids[element.id]} — selectors targeting it are ambiguous.",
-                    })
+                    issues.append(
+                        {
+                            "type": "duplicate_id",
+                            "index": element.index,
+                            "message": f'id="{element.id}" is already used by element {seen_ids[element.id]} — selectors targeting it are ambiguous.',
+                        }
+                    )
                 else:
                     seen_ids[element.id] = element.index
 
         for image in images:
             if not image.get("alt"):
-                issues.append({"type": "image_missing_alt", "index": image["index"], "message": "Image has no alt text."})
+                issues.append(
+                    {
+                        "type": "image_missing_alt",
+                        "index": image["index"],
+                        "message": "Image has no alt text.",
+                    }
+                )
         for link in links:
             if not link.get("href"):
-                issues.append({"type": "link_missing_href", "index": link["index"], "message": "Link has no href."})
+                issues.append(
+                    {
+                        "type": "link_missing_href",
+                        "index": link["index"],
+                        "message": "Link has no href.",
+                    }
+                )
             elif not link.get("text"):
-                issues.append({"type": "link_missing_text", "index": link["index"], "message": "Link has no visible text."})
+                issues.append(
+                    {
+                        "type": "link_missing_text",
+                        "index": link["index"],
+                        "message": "Link has no visible text.",
+                    }
+                )
 
         html_elements = [e for e in self.elements if e.tag == "html"]
         if html_elements and not html_elements[0].attr("lang"):
-            issues.append({"type": "missing_lang", "index": html_elements[0].index, "message": "<html> has no lang attribute."})
+            issues.append(
+                {
+                    "type": "missing_lang",
+                    "index": html_elements[0].index,
+                    "message": "<html> has no lang attribute.",
+                }
+            )
         if not any(e.tag == "title" for e in self.elements):
-            issues.append({"type": "missing_title", "index": None, "message": "Page has no <title>."})
-        if not any(e.tag == "meta" and (e.attr("name") or "").lower() == "viewport" for e in self.elements):
-            issues.append({"type": "missing_viewport", "index": None, "message": "No viewport meta tag — the page won't scale on mobile."})
+            issues.append(
+                {
+                    "type": "missing_title",
+                    "index": None,
+                    "message": "Page has no <title>.",
+                }
+            )
+        if not any(
+            e.tag == "meta" and (e.attr("name") or "").lower() == "viewport"
+            for e in self.elements
+        ):
+            issues.append(
+                {
+                    "type": "missing_viewport",
+                    "index": None,
+                    "message": "No viewport meta tag — the page won't scale on mobile.",
+                }
+            )
 
         levels = [h["level"] for h in headings]
         if levels and levels[0] != 1:
-            issues.append({"type": "heading_does_not_start_at_h1", "index": headings[0]["index"], "message": f"First heading is h{levels[0]}, not h1."})
+            issues.append(
+                {
+                    "type": "heading_does_not_start_at_h1",
+                    "index": headings[0]["index"],
+                    "message": f"First heading is h{levels[0]}, not h1.",
+                }
+            )
         for previous, current in zip(levels, levels[1:]):
             if current > previous + 1:
-                issues.append({"type": "heading_level_skipped", "index": None, "message": f"Heading jumps from h{previous} to h{current}."})
+                issues.append(
+                    {
+                        "type": "heading_level_skipped",
+                        "index": None,
+                        "message": f"Heading jumps from h{previous} to h{current}.",
+                    }
+                )
                 break
 
         for form in forms:
             for field_info in form["fields"]:
                 if not field_info.get("name"):
-                    issues.append({"type": "form_field_without_name", "index": form["index"], "message": "A form field has no name — it won't submit a value."})
+                    issues.append(
+                        {
+                            "type": "form_field_without_name",
+                            "index": form["index"],
+                            "message": "A form field has no name — it won't submit a value.",
+                        }
+                    )
                     break
 
         return issues
@@ -568,7 +688,14 @@ class Page:
 
             if op in _CSS_OPS:
                 css, described = _CSS_OPS[op](css, edit)
-                results.append({"edit": position, "op": op, "targets": [], "description": described})
+                results.append(
+                    {
+                        "edit": position,
+                        "op": op,
+                        "targets": [],
+                        "description": described,
+                    }
+                )
                 continue
 
             handler = _ELEMENT_OPS.get(op)
@@ -582,7 +709,14 @@ class Page:
                 splice = handler(self, element, edit)
                 splices.append(splice)
                 described.append(splice.description)
-            results.append({"edit": position, "op": op, "targets": [t.index for t in targets], "description": "; ".join(described)})
+            results.append(
+                {
+                    "edit": position,
+                    "op": op,
+                    "targets": [t.index for t in targets],
+                    "description": "; ".join(described),
+                }
+            )
 
         new_html = self._splice(splices)
         return new_html, css, results
@@ -597,7 +731,7 @@ class Page:
                 )
         out = self.source
         for splice in reversed(ordered):
-            out = out[:splice.start] + splice.replacement + out[splice.end:]
+            out = out[: splice.start] + splice.replacement + out[splice.end :]
         return out
 
 
@@ -610,7 +744,9 @@ def _require(edit: dict, key: str) -> Any:
     return edit[key]
 
 
-def _rewrite_start_tag(element: Element, attrs: list[tuple[str, Optional[str]]], description: str) -> Splice:
+def _rewrite_start_tag(
+    element: Element, attrs: list[tuple[str, Optional[str]]], description: str
+) -> Splice:
     return Splice(
         start=element.start_span[0],
         end=element.start_span[1],
@@ -619,7 +755,9 @@ def _rewrite_start_tag(element: Element, attrs: list[tuple[str, Optional[str]]],
     )
 
 
-def _set_attr_list(element: Element, name: str, value: Optional[str]) -> list[tuple[str, Optional[str]]]:
+def _set_attr_list(
+    element: Element, name: str, value: Optional[str]
+) -> list[tuple[str, Optional[str]]]:
     attrs = [(key, val) for key, val in element.attrs]
     for i, (key, _) in enumerate(attrs):
         if key.lower() == name.lower():
@@ -632,29 +770,47 @@ def _set_attr_list(element: Element, name: str, value: Optional[str]) -> list[tu
 def _op_set_text(page: Page, element: Element, edit: dict) -> Splice:
     span = element.inner_span
     if span is None:
-        raise PageEditError(f"<{element.tag}> (element {element.index}) has no inner content to set text on.")
+        raise PageEditError(
+            f"<{element.tag}> (element {element.index}) has no inner content to set text on."
+        )
     text = str(_require(edit, "value"))
-    return Splice(span[0], span[1], escape_text(text), f"set text of <{element.tag}> #{element.index}")
+    return Splice(
+        span[0],
+        span[1],
+        escape_text(text),
+        f"set text of <{element.tag}> #{element.index}",
+    )
 
 
 def _op_set_html(page: Page, element: Element, edit: dict) -> Splice:
     span = element.inner_span
     if span is None:
-        raise PageEditError(f"<{element.tag}> (element {element.index}) has no inner content to replace.")
-    return Splice(span[0], span[1], str(_require(edit, "value")), f"set inner HTML of <{element.tag}> #{element.index}")
+        raise PageEditError(
+            f"<{element.tag}> (element {element.index}) has no inner content to replace."
+        )
+    return Splice(
+        span[0],
+        span[1],
+        str(_require(edit, "value")),
+        f"set inner HTML of <{element.tag}> #{element.index}",
+    )
 
 
 def _op_set_attribute(page: Page, element: Element, edit: dict) -> Splice:
     name = str(_require(edit, "name"))
     value = edit.get("value")
     attrs = _set_attr_list(element, name, None if value is None else str(value))
-    return _rewrite_start_tag(element, attrs, f"set {name} on <{element.tag}> #{element.index}")
+    return _rewrite_start_tag(
+        element, attrs, f"set {name} on <{element.tag}> #{element.index}"
+    )
 
 
 def _op_remove_attribute(page: Page, element: Element, edit: dict) -> Splice:
     name = str(_require(edit, "name")).lower()
     attrs = [(key, value) for key, value in element.attrs if key.lower() != name]
-    return _rewrite_start_tag(element, attrs, f"remove {name} from <{element.tag}> #{element.index}")
+    return _rewrite_start_tag(
+        element, attrs, f"remove {name} from <{element.tag}> #{element.index}"
+    )
 
 
 def _op_add_class(page: Page, element: Element, edit: dict) -> Splice:
@@ -664,16 +820,26 @@ def _op_add_class(page: Page, element: Element, edit: dict) -> Splice:
         if name not in classes:
             classes.append(name)
     attrs = _set_attr_list(element, "class", " ".join(classes))
-    return _rewrite_start_tag(element, attrs, f"add class {' '.join(wanted)} to <{element.tag}> #{element.index}")
+    return _rewrite_start_tag(
+        element,
+        attrs,
+        f"add class {' '.join(wanted)} to <{element.tag}> #{element.index}",
+    )
 
 
 def _op_remove_class(page: Page, element: Element, edit: dict) -> Splice:
     unwanted = set(str(_require(edit, "value")).split())
     classes = [c for c in element.classes if c not in unwanted]
-    attrs = _set_attr_list(element, "class", " ".join(classes)) if classes else [
-        (key, value) for key, value in element.attrs if key.lower() != "class"
-    ]
-    return _rewrite_start_tag(element, attrs, f"remove class {' '.join(sorted(unwanted))} from <{element.tag}> #{element.index}")
+    attrs = (
+        _set_attr_list(element, "class", " ".join(classes))
+        if classes
+        else [(key, value) for key, value in element.attrs if key.lower() != "class"]
+    )
+    return _rewrite_start_tag(
+        element,
+        attrs,
+        f"remove class {' '.join(sorted(unwanted))} from <{element.tag}> #{element.index}",
+    )
 
 
 def _op_set_style(page: Page, element: Element, edit: dict) -> Splice:
@@ -687,7 +853,9 @@ def _op_set_style(page: Page, element: Element, edit: dict) -> Splice:
         styles[str(prop).strip().lower()] = str(value).strip()
     attrs = _set_attr_list(element, "style", render_style_attribute(styles))
     changed = ", ".join(f"{k}: {v}" for k, v in updates.items())
-    return _rewrite_start_tag(element, attrs, f"set style ({changed}) on <{element.tag}> #{element.index}")
+    return _rewrite_start_tag(
+        element, attrs, f"set style ({changed}) on <{element.tag}> #{element.index}"
+    )
 
 
 def _op_remove_style(page: Page, element: Element, edit: dict) -> Splice:
@@ -699,7 +867,9 @@ def _op_remove_style(page: Page, element: Element, edit: dict) -> Splice:
         if styles
         else [(key, value) for key, value in element.attrs if key.lower() != "style"]
     )
-    return _rewrite_start_tag(element, attrs, f"remove style {prop} from <{element.tag}> #{element.index}")
+    return _rewrite_start_tag(
+        element, attrs, f"remove style {prop} from <{element.tag}> #{element.index}"
+    )
 
 
 def _op_remove_element(page: Page, element: Element, edit: dict) -> Splice:
@@ -709,7 +879,12 @@ def _op_remove_element(page: Page, element: Element, edit: dict) -> Splice:
 
 def _op_replace_element(page: Page, element: Element, edit: dict) -> Splice:
     start, end = element.outer_span
-    return Splice(start, end, str(_require(edit, "value")), f"replace <{element.tag}> #{element.index}")
+    return Splice(
+        start,
+        end,
+        str(_require(edit, "value")),
+        f"replace <{element.tag}> #{element.index}",
+    )
 
 
 def _op_insert_html(page: Page, element: Element, edit: dict) -> Splice:
@@ -719,18 +894,44 @@ def _op_insert_html(page: Page, element: Element, edit: dict) -> Splice:
     inner = element.inner_span
 
     if position == "before":
-        return Splice(outer_start, outer_start, html_value, f"insert before <{element.tag}> #{element.index}")
+        return Splice(
+            outer_start,
+            outer_start,
+            html_value,
+            f"insert before <{element.tag}> #{element.index}",
+        )
     if position == "after":
-        return Splice(outer_end, outer_end, html_value, f"insert after <{element.tag}> #{element.index}")
+        return Splice(
+            outer_end,
+            outer_end,
+            html_value,
+            f"insert after <{element.tag}> #{element.index}",
+        )
     if position == "prepend":
         if inner is None:
-            raise PageEditError(f"<{element.tag}> (element {element.index}) has no inner content to prepend into.")
-        return Splice(inner[0], inner[0], html_value, f"prepend into <{element.tag}> #{element.index}")
+            raise PageEditError(
+                f"<{element.tag}> (element {element.index}) has no inner content to prepend into."
+            )
+        return Splice(
+            inner[0],
+            inner[0],
+            html_value,
+            f"prepend into <{element.tag}> #{element.index}",
+        )
     if position == "append":
         if inner is None:
-            raise PageEditError(f"<{element.tag}> (element {element.index}) has no inner content to append into.")
-        return Splice(inner[1], inner[1], html_value, f"append into <{element.tag}> #{element.index}")
-    raise PageEditError(f"Unknown insert position {position!r}. Use before, after, prepend, or append.")
+            raise PageEditError(
+                f"<{element.tag}> (element {element.index}) has no inner content to append into."
+            )
+        return Splice(
+            inner[1],
+            inner[1],
+            html_value,
+            f"append into <{element.tag}> #{element.index}",
+        )
+    raise PageEditError(
+        f"Unknown insert position {position!r}. Use before, after, prepend, or append."
+    )
 
 
 _ELEMENT_OPS = {
@@ -782,10 +983,16 @@ def _iter_top_level_rules(css: str):
 
 
 def _normalize_selector(selector: str) -> str:
-    return _WHITESPACE_RE.sub(" ", selector.replace(" ,", ",").replace(", ", ",")).strip().lower()
+    return (
+        _WHITESPACE_RE.sub(" ", selector.replace(" ,", ",").replace(", ", ","))
+        .strip()
+        .lower()
+    )
 
 
-def set_css_declaration(css: str, selector: str, prop: str, value: str) -> tuple[str, bool]:
+def set_css_declaration(
+    css: str, selector: str, prop: str, value: str
+) -> tuple[str, bool]:
     """Sets one declaration inside a top-level rule, creating the rule if
     it doesn't exist. Returns (css, created_rule)."""
     prop = prop.strip().lower()
@@ -795,12 +1002,16 @@ def set_css_declaration(css: str, selector: str, prop: str, value: str) -> tuple
     for rule_selector, _selector_span, block_span in _iter_top_level_rules(css):
         if _normalize_selector(rule_selector) != wanted:
             continue
-        block = css[block_span[0]:block_span[1]]
+        block = css[block_span[0] : block_span[1]]
         declarations = parse_style_attribute(block)
         declarations[prop] = value
         indent = "\n  "
-        rebuilt = indent + (";" + indent).join(f"{p}: {v}" for p, v in declarations.items()) + ";\n"
-        return css[:block_span[0]] + rebuilt + css[block_span[1]:], False
+        rebuilt = (
+            indent
+            + (";" + indent).join(f"{p}: {v}" for p, v in declarations.items())
+            + ";\n"
+        )
+        return css[: block_span[0]] + rebuilt + css[block_span[1] :], False
 
     separator = "" if (not css or css.endswith("\n")) else "\n"
     return f"{css}{separator}{selector.strip()} {{\n  {prop}: {value};\n}}\n", True
@@ -814,7 +1025,7 @@ def remove_css_declaration(css: str, selector: str, prop: str) -> tuple[str, boo
     for rule_selector, _selector_span, block_span in _iter_top_level_rules(css):
         if _normalize_selector(rule_selector) != wanted:
             continue
-        block = css[block_span[0]:block_span[1]]
+        block = css[block_span[0] : block_span[1]]
         declarations = parse_style_attribute(block)
         if prop not in declarations:
             return css, False
@@ -823,8 +1034,12 @@ def remove_css_declaration(css: str, selector: str, prop: str) -> tuple[str, boo
             rebuilt = ""
         else:
             indent = "\n  "
-            rebuilt = indent + (";" + indent).join(f"{p}: {v}" for p, v in declarations.items()) + ";\n"
-        return css[:block_span[0]] + rebuilt + css[block_span[1]:], True
+            rebuilt = (
+                indent
+                + (";" + indent).join(f"{p}: {v}" for p, v in declarations.items())
+                + ";\n"
+            )
+        return css[: block_span[0]] + rebuilt + css[block_span[1] :], True
     return css, False
 
 
@@ -844,7 +1059,9 @@ def _css_op_remove(css: str, edit: dict) -> tuple[str, str]:
     prop = str(_require(edit, "property"))
     css, found = remove_css_declaration(css, selector, prop)
     if not found:
-        raise PageEditError(f"No {prop!r} declaration found in a top-level {selector!r} rule.")
+        raise PageEditError(
+            f"No {prop!r} declaration found in a top-level {selector!r} rule."
+        )
     return css, f"remove {prop} from stylesheet rule {selector}"
 
 
@@ -859,7 +1076,7 @@ def analyze_css(css: str) -> dict[str, Any]:
     colors, fonts = set(), set()
     for selector, _selector_span, block_span in _iter_top_level_rules(css or ""):
         selectors.append(selector)
-        declarations = parse_style_attribute(css[block_span[0]:block_span[1]])
+        declarations = parse_style_attribute(css[block_span[0] : block_span[1]])
         properties.update(declarations.keys())
         for prop, value in declarations.items():
             colors.update(_COLOR_RE.findall(value))

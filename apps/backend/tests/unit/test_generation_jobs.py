@@ -61,7 +61,8 @@ def _runner(
         phase="test_phase",
         fingerprint=lambda project: fingerprint,
         steps=lambda project, state: [
-            {"kind": "step", "index": i, "label": f"Step {i}"} for i in range(step_count)
+            {"kind": "step", "index": i, "label": f"Step {i}"}
+            for i in range(step_count)
         ],
         run_step=run_step,
         finalize=finalize,
@@ -108,7 +109,9 @@ class _Harness:
                 hashed_password="x",
                 full_name="Test",
             )
-            self.project = Project(id=str(uuid.uuid4()), user_id=self.user.id, name="Test App")
+            self.project = Project(
+                id=str(uuid.uuid4()), user_id=self.user.id, name="Test App"
+            )
             db.add_all([self.user, self.project])
             await db.commit()
 
@@ -258,7 +261,9 @@ def test_a_run_whose_worker_died_is_reported_as_failed_and_resumable(harness) ->
         await harness.run_to_completion(_runner(calls, fail_once_on=1))
 
         async with harness.sessions() as db:
-            row = await generation_jobs.get_latest_job(db, harness.project.id, "test_phase")
+            row = await generation_jobs.get_latest_job(
+                db, harness.project.id, "test_phase"
+            )
             # What a killed worker leaves behind: still "running", no
             # error recorded, and a heartbeat that stopped.
             row.status = "running"

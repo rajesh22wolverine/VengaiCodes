@@ -69,7 +69,9 @@ class BuildStatusResponse(BaseModel):
     conclusion: str | None = None  # "success" | "failure" | None
 
 
-async def _get_swiftui_project(project_id: str, user: User, db: AsyncSession) -> Project:
+async def _get_swiftui_project(
+    project_id: str, user: User, db: AsyncSession
+) -> Project:
     result = await db.execute(
         select(Project).where(
             Project.id == project_id,

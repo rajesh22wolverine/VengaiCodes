@@ -96,7 +96,9 @@ def build_documentation_files(project: Project) -> list[tuple[str, str]]:
             "## Screens",
         ]
         for screen in uiux.get("screens", []) or []:
-            uiux_lines.append(f"- {screen.get('name', 'Untitled')} — {screen.get('purpose', '')}")
+            uiux_lines.append(
+                f"- {screen.get('name', 'Untitled')} — {screen.get('purpose', '')}"
+            )
         add_doc("docs/uiux.md", "\n".join(uiux_lines))
 
     architecture = (project.architecture_data or {}).get("architecture", {}) or {}
@@ -114,7 +116,10 @@ def build_documentation_files(project: Project) -> list[tuple[str, str]]:
 
     if project.codegen_data and project.codegen_data.get("codegen"):
         codegen_summary = project.codegen_data["codegen"].get("summary", "")
-        add_doc("docs/codegen.md", f"# Code Generation Summary - {project.name}\n\n{codegen_summary}")
+        add_doc(
+            "docs/codegen.md",
+            f"# Code Generation Summary - {project.name}\n\n{codegen_summary}",
+        )
 
     if project.testing_data and project.testing_data.get("testing"):
         testing_summary = project.testing_data["testing"].get("summary", "")
@@ -125,7 +130,10 @@ def build_documentation_files(project: Project) -> list[tuple[str, str]]:
         )
 
     if len(docs) == 1:
-        add_doc("docs/summary.md", "No documentation has been generated yet for this project.")
+        add_doc(
+            "docs/summary.md",
+            "No documentation has been generated yet for this project.",
+        )
     return docs
 
 
@@ -133,7 +141,9 @@ def get_repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
-def add_template_folder_to_zip(zip_file: zipfile.ZipFile, template_dir: Path, prefix: str) -> None:
+def add_template_folder_to_zip(
+    zip_file: zipfile.ZipFile, template_dir: Path, prefix: str
+) -> None:
     for file_path in template_dir.rglob("*"):
         if file_path.is_file():
             relative_path = file_path.relative_to(template_dir)
@@ -174,7 +184,9 @@ async def download_project_zip(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.codegen_data or not project.codegen_data.get("codegen"):
         raise HTTPException(
@@ -260,7 +272,9 @@ async def download_project_documents(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:

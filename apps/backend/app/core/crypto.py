@@ -40,4 +40,6 @@ def decrypt_secret(token: str) -> str:
     try:
         return _get_fernet().decrypt(token.encode()).decode()
     except InvalidToken:
-        raise ValueError("Stored secret could not be decrypted — ENCRYPTION_KEY may have changed.")
+        raise ValueError(
+            "Stored secret could not be decrypted — ENCRYPTION_KEY may have changed."
+        )

@@ -51,7 +51,12 @@ class ApproveRequirementsRequest(BaseModel):
 
 
 # ─── Prompt builder ───
-def build_frd_prompt(project_name: str, raw_idea: str, conversation: list, reverse_data: dict | None = None) -> str:
+def build_frd_prompt(
+    project_name: str,
+    raw_idea: str,
+    conversation: list,
+    reverse_data: dict | None = None,
+) -> str:
     convo_text = ""
     for msg in conversation:
         role = "User" if msg["role"] == "user" else "Baby Tiger"
@@ -134,11 +139,18 @@ async def generate_requirements(
     conversation = project.ai_conversation_history or []
 
     try:
-        prompt = build_frd_prompt(project.name, project.raw_idea or project.name, conversation, project.reverse_engineering_data)
+        prompt = build_frd_prompt(
+            project.name,
+            project.raw_idea or project.name,
+            conversation,
+            project.reverse_engineering_data,
+        )
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logger.error(f"Failed to parse AI FRD response: {e}")
         raise HTTPException(
@@ -178,7 +190,9 @@ async def get_requirements(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.requirements_data:
         raise HTTPException(
@@ -216,7 +230,9 @@ async def approve_requirements(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.requirements_data:
         raise HTTPException(
@@ -241,6 +257,8 @@ async def approve_requirements(
 
     return {
         "success": True,
-        "message": "Requirements approved! Ready for the next phase 🐯" if payload.approved else "Feedback noted.",
+        "message": "Requirements approved! Ready for the next phase 🐯"
+        if payload.approved
+        else "Feedback noted.",
         "progress_percent": project.progress_percent,
     }

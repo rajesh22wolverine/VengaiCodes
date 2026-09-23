@@ -109,10 +109,10 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = 10
 
     # Cache TTLs (seconds)
-    CACHE_TTL_SHORT: int = 300       # 5 minutes
-    CACHE_TTL_MEDIUM: int = 3600     # 1 hour
-    CACHE_TTL_LONG: int = 86400      # 24 hours
-    CACHE_TTL_LICENCE: int = 300     # 5 minutes for licence verification
+    CACHE_TTL_SHORT: int = 300  # 5 minutes
+    CACHE_TTL_MEDIUM: int = 3600  # 1 hour
+    CACHE_TTL_LONG: int = 86400  # 24 hours
+    CACHE_TTL_LICENCE: int = 300  # 5 minutes for licence verification
 
     # ───────────────────────────────────────────
     #  Upstash Redis (Production)
@@ -338,10 +338,12 @@ class Settings(BaseSettings):
         origins = [o.strip() for o in self.ALLOWED_ORIGINS_STR.split(",") if o.strip()]
         # Always allow GitHub Codespaces and Gitpod in development
         if self.ENVIRONMENT == "development":
-            origins.extend([
-                "https://*.app.github.dev",
-                "https://*.gitpod.io",
-            ])
+            origins.extend(
+                [
+                    "https://*.app.github.dev",
+                    "https://*.gitpod.io",
+                ]
+            )
         return origins
 
     # ───────────────────────────────────────────
@@ -441,8 +443,16 @@ class Settings(BaseSettings):
         """Warn if dangerous default values are used in production."""
         if self.ENVIRONMENT == "production":
             dangerous_defaults = [
-                ("JWT_SECRET", self.JWT_SECRET, "changeme_generate_with_openssl_rand_hex_32"),
-                ("ENCRYPTION_KEY", self.ENCRYPTION_KEY, "changeme_generate_with_openssl_rand_hex_32"),
+                (
+                    "JWT_SECRET",
+                    self.JWT_SECRET,
+                    "changeme_generate_with_openssl_rand_hex_32",
+                ),
+                (
+                    "ENCRYPTION_KEY",
+                    self.ENCRYPTION_KEY,
+                    "changeme_generate_with_openssl_rand_hex_32",
+                ),
                 ("ADMIN_SECRET_KEY", self.ADMIN_SECRET_KEY, "changeme_admin_secret"),
             ]
             for name, value, default in dangerous_defaults:

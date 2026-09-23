@@ -56,7 +56,9 @@ async def get_figma_user(token: str) -> dict:
     if response.status_code == 403:
         raise FigmaError("That Figma token was rejected — check it and try again.")
     if response.status_code != 200:
-        raise FigmaError(f"Figma couldn't validate that token ({response.status_code}).")
+        raise FigmaError(
+            f"Figma couldn't validate that token ({response.status_code})."
+        )
     return response.json()
 
 

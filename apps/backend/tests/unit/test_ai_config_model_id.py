@@ -28,20 +28,23 @@ from app.schemas.ai_config import (
 
 # Real ids, one per provider path the orchestrator can take.
 VALID_MODEL_IDS = [
-    "claude-opus-5",              # anthropic
-    "openai/gpt-oss-120b",        # groq — slash
+    "claude-opus-5",  # anthropic
+    "openai/gpt-oss-120b",  # groq — slash
     "deepseek/deepseek-v4-pro-0813",  # openrouter via custom
-    "qwen2.5-coder:7b",           # ollama — colon + dot
-    "grok-4",                     # xai
-    "gpt-6-astra",                # openai
+    "qwen2.5-coder:7b",  # ollama — colon + dot
+    "grok-4",  # xai
+    "gpt-6-astra",  # openai
 ]
 
 
 @pytest.mark.parametrize("model_id", VALID_MODEL_IDS)
 def test_real_provider_model_ids_are_accepted(model_id):
-    assert AdminAIConfigCreate(
-        provider_type="custom", model_name=model_id, label="x"
-    ).model_name == model_id
+    assert (
+        AdminAIConfigCreate(
+            provider_type="custom", model_name=model_id, label="x"
+        ).model_name
+        == model_id
+    )
 
 
 @pytest.mark.parametrize(
@@ -54,7 +57,7 @@ def test_real_provider_model_ids_are_accepted(model_id):
     ],
 )
 def test_a_display_name_is_rejected_on_every_schema(schema, kwargs):
-    """"opus 5" is the exact value that reached production."""
+    """ "opus 5" is the exact value that reached production."""
     with pytest.raises(ValidationError) as exc:
         schema(model_name="opus 5", **kwargs)
     assert "contains a space" in str(exc.value)
@@ -67,7 +70,10 @@ def test_the_error_suggests_the_hyphenated_form():
 
 
 def test_surrounding_whitespace_is_stripped_not_rejected():
-    assert AdminAIConfigUpdate(model_name="  claude-opus-5  ").model_name == "claude-opus-5"
+    assert (
+        AdminAIConfigUpdate(model_name="  claude-opus-5  ").model_name
+        == "claude-opus-5"
+    )
 
 
 def test_whitespace_only_is_rejected():

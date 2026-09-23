@@ -48,8 +48,7 @@ def test_replacements_are_not_themselves_decommissioned() -> None:
     llama-3.3-70b-versatile, which has since been retired too."""
     for retired, replacement in DECOMMISSIONED_GROQ_MODELS.items():
         assert replacement not in DECOMMISSIONED_GROQ_MODELS, (
-            f"{retired} is migrated onto {replacement}, which is also "
-            f"decommissioned"
+            f"{retired} is migrated onto {replacement}, which is also decommissioned"
         )
 
 
@@ -145,9 +144,7 @@ def test_platform_row_on_retired_model_is_repointed(monkeypatch) -> None:
 def test_platform_row_on_live_model_is_left_alone(monkeypatch) -> None:
     """An admin who has already picked a current model must not have it
     rewritten out from under them."""
-    names = _run_migration_over(
-        [_config(model_name="qwen/qwen3.6-27b")], monkeypatch
-    )
+    names = _run_migration_over([_config(model_name="qwen/qwen3.6-27b")], monkeypatch)
     assert names["Platform default (Groq)"] == "qwen/qwen3.6-27b"
 
 

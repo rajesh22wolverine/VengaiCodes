@@ -32,7 +32,9 @@ def build_test_asar(files: dict[str, bytes]) -> bytes:
     # Pickle pads the (length-field + string-bytes) payload to a 4-byte boundary.
     pad = (4 - ((4 + str_len) % 4)) % 4
     header_pickle_payload = struct.pack("<I", str_len) + header_json + (b"\x00" * pad)
-    header_pickle_bytes = struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
+    header_pickle_bytes = (
+        struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
+    )
 
     outer = struct.pack("<I", 4) + struct.pack("<I", len(header_pickle_bytes))
     return outer + header_pickle_bytes + file_data
@@ -63,13 +65,23 @@ def test_parse_asar_handles_content_requiring_padding():
 
 
 def test_parse_asar_skips_unpacked_entries():
-    header_files = {"regular.js": {"size": 4, "offset": "0"}, "big-binary.node": {"unpacked": True}}
+    header_files = {
+        "regular.js": {"size": 4, "offset": "0"},
+        "big-binary.node": {"unpacked": True},
+    }
     header_json = json.dumps({"files": header_files}).encode("utf-8")
     str_len = len(header_json)
     pad = (4 - ((4 + str_len) % 4)) % 4
     header_pickle_payload = struct.pack("<I", str_len) + header_json + (b"\x00" * pad)
-    header_pickle_bytes = struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
-    raw = struct.pack("<I", 4) + struct.pack("<I", len(header_pickle_bytes)) + header_pickle_bytes + b"abcd"
+    header_pickle_bytes = (
+        struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
+    )
+    raw = (
+        struct.pack("<I", 4)
+        + struct.pack("<I", len(header_pickle_bytes))
+        + header_pickle_bytes
+        + b"abcd"
+    )
 
     result = parse_asar(raw)
     assert result == {"regular.js": b"abcd"}
@@ -89,21 +101,39 @@ def test_parse_asar_rejects_header_extending_past_file_end():
 def test_parse_asar_rejects_non_json_header():
     bogus_string = b"not json"
     pad = (4 - ((4 + len(bogus_string)) % 4)) % 4
-    header_pickle_payload = struct.pack("<I", len(bogus_string)) + bogus_string + (b"\x00" * pad)
-    header_pickle_bytes = struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
-    raw = struct.pack("<I", 4) + struct.pack("<I", len(header_pickle_bytes)) + header_pickle_bytes
+    header_pickle_payload = (
+        struct.pack("<I", len(bogus_string)) + bogus_string + (b"\x00" * pad)
+    )
+    header_pickle_bytes = (
+        struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
+    )
+    raw = (
+        struct.pack("<I", 4)
+        + struct.pack("<I", len(header_pickle_bytes))
+        + header_pickle_bytes
+    )
     with pytest.raises(AsarParseError):
         parse_asar(raw)
 
 
 def test_parse_asar_skips_out_of_range_entry_instead_of_crashing():
-    header_files = {"ok.js": {"size": 3, "offset": "0"}, "bad.js": {"size": 999999, "offset": "0"}}
+    header_files = {
+        "ok.js": {"size": 3, "offset": "0"},
+        "bad.js": {"size": 999999, "offset": "0"},
+    }
     header_json = json.dumps({"files": header_files}).encode("utf-8")
     str_len = len(header_json)
     pad = (4 - ((4 + str_len) % 4)) % 4
     header_pickle_payload = struct.pack("<I", str_len) + header_json + (b"\x00" * pad)
-    header_pickle_bytes = struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
-    raw = struct.pack("<I", 4) + struct.pack("<I", len(header_pickle_bytes)) + header_pickle_bytes + b"abc"
+    header_pickle_bytes = (
+        struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
+    )
+    raw = (
+        struct.pack("<I", 4)
+        + struct.pack("<I", len(header_pickle_bytes))
+        + header_pickle_bytes
+        + b"abc"
+    )
 
     result = parse_asar(raw)
     assert result == {"ok.js": b"abc"}

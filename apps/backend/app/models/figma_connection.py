@@ -21,6 +21,7 @@ class FigmaConnection(Base):
     free Figma "personal access token" the user generates themselves
     (Figma → Settings → Personal access tokens), not an OAuth grant.
     """
+
     __tablename__ = "figma_connections"
 
     id: str = Column(
@@ -53,4 +54,6 @@ class FigmaConnection(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<FigmaConnection user={self.user_id[:8]}... handle={self.figma_handle}>"
+        return (
+            f"<FigmaConnection user={self.user_id[:8]}... handle={self.figma_handle}>"
+        )

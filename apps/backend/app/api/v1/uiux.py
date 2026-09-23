@@ -24,7 +24,10 @@ from app.core.database import get_db
 from app.core.figma_client import FigmaError, export_frame_png, parse_figma_url
 from app.schemas.figma import ImportFigmaRequest
 from app.core.storage import (
-    StorageError, fetch_bytes, upload_design_image, upload_voice_note,
+    StorageError,
+    fetch_bytes,
+    upload_design_image,
+    upload_voice_note,
 )
 from app.models.generation_job import JOB_CANCELLED, JOB_SUCCEEDED
 from app.models.project import Project, SDLCPhase
@@ -37,7 +40,12 @@ router = APIRouter()
 
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 ALLOWED_AUDIO_TYPES = {
-    "audio/webm", "audio/ogg", "audio/wav", "audio/mpeg", "audio/mp4", "audio/x-m4a",
+    "audio/webm",
+    "audio/ogg",
+    "audio/wav",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/x-m4a",
 }
 
 
@@ -94,7 +102,9 @@ async def _get_project(db: AsyncSession, user: User, project_id: str) -> Project
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     return project
 
@@ -104,7 +114,9 @@ async def _get_designable_project(
 ) -> Project:
     project = await _get_project(db, user, project_id)
 
-    if not project.requirements_data or not project.requirements_data.get("user_approved"):
+    if not project.requirements_data or not project.requirements_data.get(
+        "user_approved"
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Requirements must be approved before generating UI/UX design.",
@@ -238,7 +250,9 @@ async def get_uiux(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.uiux_data:
         raise HTTPException(
@@ -274,7 +288,9 @@ async def save_pages(
     """
     project = await _get_owned_project(db, project_id, user)
     if not project.uiux_data or not project.uiux_data.get("design"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No UI/UX design to save.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No UI/UX design to save."
+        )
 
     uiux_data = dict(project.uiux_data)
     design = dict(uiux_data["design"])
@@ -330,7 +346,9 @@ async def approve_uiux(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.uiux_data:
         raise HTTPException(
@@ -355,7 +373,9 @@ async def approve_uiux(
 
     return {
         "success": True,
-        "message": "UI/UX design approved! Next: Architecture 🐯" if payload.approved else "Feedback noted.",
+        "message": "UI/UX design approved! Next: Architecture 🐯"
+        if payload.approved
+        else "Feedback noted.",
         "progress_percent": project.progress_percent,
     }
 
@@ -378,7 +398,9 @@ async def _get_owned_project(db: AsyncSession, project_id: str, user: User) -> P
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
     return project
 
 
@@ -386,7 +408,9 @@ def _find_design(uiux_data: dict, design_id: str) -> dict:
     for design in uiux_data.get("uploaded_designs", []):
         if design["id"] == design_id:
             return design
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded design not found.")
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded design not found."
+    )
 
 
 @router.post(
@@ -414,7 +438,9 @@ async def upload_design(
             project_id, file.filename or "design.png", content, file.content_type
         )
     except StorageError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
 
     uiux_data = dict(project.uiux_data or {})
     designs = list(uiux_data.get("uploaded_designs", []))
@@ -484,7 +510,9 @@ async def import_figma_design(
             project_id, f"{payload.page_name}.png", content, "image/png"
         )
     except StorageError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
 
     uiux_data = dict(project.uiux_data or {})
     designs = list(uiux_data.get("uploaded_designs", []))
@@ -537,15 +565,21 @@ async def generate_design_code(
             detail="Could not fetch the uploaded design image.",
         )
 
-    media_type = "image/png" if design["image_url"].lower().endswith(".png") else "image/jpeg"
+    media_type = (
+        "image/png" if design["image_url"].lower().endswith(".png") else "image/jpeg"
+    )
     image_base64 = base64.b64encode(image_bytes).decode("ascii")
-    prompt = build_design_to_code_prompt(design["page_name"], design.get("voice_note_transcript"))
+    prompt = build_design_to_code_prompt(
+        design["page_name"], design.get("voice_note_transcript")
+    )
 
     try:
         ai_result = await generate_vision(prompt, image_base64, media_type)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logger.error(f"Failed to parse design-to-code response: {e}")
         raise HTTPException(
@@ -599,7 +633,9 @@ async def upload_voice_note_for_design(
             project_id, file.filename or "voice-note.webm", content, file.content_type
         )
     except StorageError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
 
     transcript = None
     try:
@@ -666,7 +702,9 @@ async def delete_design(
     designs = uiux_data.get("uploaded_designs", [])
     remaining = [d for d in designs if d["id"] != design_id]
     if len(remaining) == len(designs):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded design not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded design not found."
+        )
 
     uiux_data["uploaded_designs"] = remaining
     project.uiux_data = uiux_data

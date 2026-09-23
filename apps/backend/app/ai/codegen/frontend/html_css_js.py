@@ -30,7 +30,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
 
     capabilities_text = "\n".join(
-        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}"
+        for c in ctx.native_capabilities
+        if c in NATIVE_CAPABILITY_DESCRIPTIONS
     )
     native_section = (
         f"\nNative device features available to this app (import and use where relevant to "
@@ -43,7 +45,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real vanilla JavaScript ES module implementing the "{screen_name}" screen of this app — no framework, plain DOM APIs.
 
-Screen purpose: {ctx.screen.get('purpose', '')}
+Screen purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this screen can call:
 {endpoints_text}
@@ -74,8 +76,12 @@ Requirements:
 Return ONLY the raw JavaScript module content. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "javascript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     if issue is None and not _exports_render(content):
         # Cheap structural check the generic brace/TODO heuristic can't
@@ -94,7 +100,12 @@ Return ONLY the raw JavaScript module content. No markdown fences, no explanatio
 
 
 def _exports_render(content: str) -> bool:
-    return bool(re.search(r"export\s+(function|const|let)\s+render\b|export\s*\{[^}]*\brender\b", content))
+    return bool(
+        re.search(
+            r"export\s+(function|const|let)\s+render\b|export\s*\{[^}]*\brender\b",
+            content,
+        )
+    )
 
 
 def _screen_slug_from_path(file: GeneratedFile) -> str:
@@ -106,8 +117,12 @@ def _title_case(slug: str) -> str:
 
 
 def _build_main_js(slugs: list[str]) -> str:
-    imports = "\n".join(f"import {{ render as render_{s} }} from './screens/{s}.js';" for s in slugs)
-    screens_array = ",\n".join(f"  {{ name: '{_title_case(s)}', render: render_{s} }}" for s in slugs)
+    imports = "\n".join(
+        f"import {{ render as render_{s} }} from './screens/{s}.js';" for s in slugs
+    )
+    screens_array = ",\n".join(
+        f"  {{ name: '{_title_case(s)}', render: render_{s} }}" for s in slugs
+    )
     return f"""{imports}
 
 const screens = [
@@ -199,17 +214,49 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
             "autoprefixer": "^10.4.17",
         },
     )
-    return [GeneratedFile(path="frontend/package.json", language="json", content=content, description="Frontend dependency manifest")]
+    return [
+        GeneratedFile(
+            path="frontend/package.json",
+            language="json",
+            content=content,
+            description="Frontend dependency manifest",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     slugs = [_screen_slug_from_path(f) for f in ctx.screen_files] or ["home"]
     return [
-        GeneratedFile(path="frontend/index.html", language="html", content=_index_html(ctx.project_name), description="Vite HTML entry point"),
-        GeneratedFile(path="frontend/src/main.js", language="javascript", content=_build_main_js(slugs), description="Renders every generated screen"),
-        GeneratedFile(path="frontend/src/index.css", language="css", content=_INDEX_CSS, description="Tailwind directives"),
-        GeneratedFile(path="frontend/tailwind.config.js", language="javascript", content=_TAILWIND_CONFIG, description="Tailwind config"),
-        GeneratedFile(path="frontend/postcss.config.js", language="javascript", content=_POSTCSS_CONFIG, description="PostCSS config"),
+        GeneratedFile(
+            path="frontend/index.html",
+            language="html",
+            content=_index_html(ctx.project_name),
+            description="Vite HTML entry point",
+        ),
+        GeneratedFile(
+            path="frontend/src/main.js",
+            language="javascript",
+            content=_build_main_js(slugs),
+            description="Renders every generated screen",
+        ),
+        GeneratedFile(
+            path="frontend/src/index.css",
+            language="css",
+            content=_INDEX_CSS,
+            description="Tailwind directives",
+        ),
+        GeneratedFile(
+            path="frontend/tailwind.config.js",
+            language="javascript",
+            content=_TAILWIND_CONFIG,
+            description="Tailwind config",
+        ),
+        GeneratedFile(
+            path="frontend/postcss.config.js",
+            language="javascript",
+            content=_POSTCSS_CONFIG,
+            description="PostCSS config",
+        ),
     ]
 
 

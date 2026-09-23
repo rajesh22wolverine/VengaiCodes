@@ -55,6 +55,7 @@ class ADR(BaseModel):
     the closest thing to a real build-blueprint document this phase
     produces. Wires the previously-unused Project.architecture_data.adrs
     field the model schema already documented but nothing generated."""
+
     title: str
     decision: str
     rationale: str
@@ -115,7 +116,10 @@ def build_stack_directive(selected_stack: dict | None) -> str:
 
 
 def build_architecture_prompt(
-    project_name: str, requirements: dict, pages: list[dict], selected_stack: dict | None = None,
+    project_name: str,
+    requirements: dict,
+    pages: list[dict],
+    selected_stack: dict | None = None,
     reverse_data: dict | None = None,
 ) -> str:
     features = ", ".join(requirements.get("key_features", []))
@@ -128,16 +132,16 @@ def build_architecture_prompt(
         reverse_directive += (
             "Prefer recommending the SAME or a directly compatible technology to what was detected above, "
             "rather than inventing an unrelated stack — and base database_tables/api_endpoints on the real "
-            "data entities/endpoints found above when they exist. Write the \"adrs\" entries as real decisions "
-            "grounded in that detected evidence (e.g. \"decision: keep the same backend framework\", "
-            "\"rationale: it was directly detected in the source/site being reverse-engineered\") rather than "
+            'data entities/endpoints found above when they exist. Write the "adrs" entries as real decisions '
+            'grounded in that detected evidence (e.g. "decision: keep the same backend framework", '
+            '"rationale: it was directly detected in the source/site being reverse-engineered") rather than '
             "generic boilerplate reasoning.\n"
         )
 
     return f"""You are Baby Tiger 🐯, VengaiCode's AI architecture assistant. Based on this app's approved requirements and UI/UX design, propose a simple, open-source technical architecture.
 
 App: {project_name}
-Overview: {requirements.get('overview', '')}
+Overview: {requirements.get("overview", "")}
 Key features: {features}
 Platforms: {platforms}
 Screens: {screen_names}
@@ -263,7 +267,9 @@ def _validate_tables(tables: list[DatabaseTable]) -> None:
         table.name = name
         slug = _slug(name)
         if slug in seen_slugs:
-            raise ArchitectureEditError(f'Two tables both resolve to "{slug}" — table names must be distinct.')
+            raise ArchitectureEditError(
+                f'Two tables both resolve to "{slug}" — table names must be distinct.'
+            )
         seen_slugs.add(slug)
 
         field_slugs: set[str] = set()
@@ -273,7 +279,9 @@ def _validate_tables(tables: list[DatabaseTable]) -> None:
                 raise ArchitectureEditError(f'Table "{name}" has a blank field name.')
             field_slug = _slug(field_name)
             if field_slug in field_slugs:
-                raise ArchitectureEditError(f'Table "{name}" has the field "{field_name}" more than once.')
+                raise ArchitectureEditError(
+                    f'Table "{name}" has the field "{field_name}" more than once.'
+                )
             field_slugs.add(field_slug)
 
 
@@ -289,7 +297,9 @@ def _validate_endpoints(endpoints: list[APIEndpoint]) -> None:
 
         path = (endpoint.path or "").strip()
         if not path.startswith("/"):
-            raise ArchitectureEditError(f'Endpoint path "{endpoint.path}" must start with "/".')
+            raise ArchitectureEditError(
+                f'Endpoint path "{endpoint.path}" must start with "/".'
+            )
         endpoint.path = path
 
 
@@ -319,16 +329,20 @@ def apply_architecture_edit(
     user should re-review before it drives a build.
     """
     if not (architecture_data or {}).get("architecture"):
-        raise ArchitectureEditError("No architecture exists yet to edit — generate one first.")
+        raise ArchitectureEditError(
+            "No architecture exists yet to edit — generate one first."
+        )
 
     _validate_tables(database_tables)
     _validate_endpoints(api_endpoints)
 
     current = ArchitectureDesign(**architecture_data["architecture"])
-    updated = current.model_copy(update={
-        "database_tables": database_tables,
-        "api_endpoints": api_endpoints,
-    })
+    updated = current.model_copy(
+        update={
+            "database_tables": database_tables,
+            "api_endpoints": api_endpoints,
+        }
+    )
 
     new_architecture_data = dict(architecture_data)
     new_architecture_data["architecture"] = updated.model_dump()
@@ -337,7 +351,10 @@ def apply_architecture_edit(
     new_architecture_data.pop("approved_at", None)
     new_architecture_data["edited_at"] = datetime.now(timezone.utc).isoformat()
 
-    new_uml_diagrams = {**(uml_diagrams or {}), "erd": build_erd(updated.database_tables)}
+    new_uml_diagrams = {
+        **(uml_diagrams or {}),
+        "erd": build_erd(updated.database_tables),
+    }
 
     return new_architecture_data, new_uml_diagrams
 
@@ -365,7 +382,9 @@ async def generate_architecture(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.uiux_data or not project.uiux_data.get("user_approved"):
         raise HTTPException(
@@ -377,11 +396,19 @@ async def generate_architecture(
     pages = get_ordered_pages(project.uiux_data)
 
     try:
-        prompt = build_architecture_prompt(project.name, frd, pages, project.selected_stack, project.reverse_engineering_data)
+        prompt = build_architecture_prompt(
+            project.name,
+            frd,
+            pages,
+            project.selected_stack,
+            project.reverse_engineering_data,
+        )
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logger.error(f"Failed to parse AI architecture response: {e}")
         raise HTTPException(
@@ -399,7 +426,10 @@ async def generate_architecture(
         # right above, so these can't drift from or contradict it.
         "system_diagram": build_system_diagram(architecture),
     }
-    project.uml_diagrams = {**(project.uml_diagrams or {}), "erd": build_erd(architecture.database_tables)}
+    project.uml_diagrams = {
+        **(project.uml_diagrams or {}),
+        "erd": build_erd(architecture.database_tables),
+    }
     await db.commit()
 
     return GenerateArchitectureResponse(architecture=architecture)
@@ -424,7 +454,9 @@ async def get_architecture(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.architecture_data:
         raise HTTPException(
@@ -467,15 +499,21 @@ async def edit_architecture(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     try:
         new_architecture_data, new_uml_diagrams = apply_architecture_edit(
-            project.architecture_data, project.uml_diagrams,
-            payload.database_tables, payload.api_endpoints,
+            project.architecture_data,
+            project.uml_diagrams,
+            payload.database_tables,
+            payload.api_endpoints,
         )
     except ArchitectureEditError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
 
     project.architecture_data = new_architecture_data
     project.uml_diagrams = new_uml_diagrams
@@ -511,7 +549,9 @@ async def approve_architecture(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.architecture_data:
         raise HTTPException(
@@ -538,6 +578,8 @@ async def approve_architecture(
 
     return {
         "success": True,
-        "message": "Architecture approved! Next: API Builder 🐯" if payload.approved else "Feedback noted.",
+        "message": "Architecture approved! Next: API Builder 🐯"
+        if payload.approved
+        else "Feedback noted.",
         "progress_percent": project.progress_percent,
     }

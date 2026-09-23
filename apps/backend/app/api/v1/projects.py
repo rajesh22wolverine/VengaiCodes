@@ -206,8 +206,7 @@ async def mark_project_complete(
 
     if project is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found."
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
         )
 
     project.status = ProjectStatus.COMPLETED

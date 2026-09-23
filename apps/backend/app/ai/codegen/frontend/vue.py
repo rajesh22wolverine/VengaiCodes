@@ -28,7 +28,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Vue 3 Single File Component for the "{screen_name}" screen of this app.
 
-Screen purpose: {ctx.screen.get('purpose', '')}
+Screen purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this screen can call:
 {endpoints_text}
@@ -49,8 +49,12 @@ Requirements:
 Return ONLY the raw .vue Single File Component content. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "javascript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "javascript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"frontend/src/screens/{component_name}.vue",
@@ -160,19 +164,61 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
             "autoprefixer": "^10.4.17",
         },
     )
-    return [GeneratedFile(path="frontend/package.json", language="json", content=content, description="Frontend dependency manifest")]
+    return [
+        GeneratedFile(
+            path="frontend/package.json",
+            language="json",
+            content=content,
+            description="Frontend dependency manifest",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     names = [_screen_import_name(f) for f in ctx.screen_files] or ["Home"]
     return [
-        GeneratedFile(path="frontend/index.html", language="html", content=_index_html(ctx.project_name), description="Vite HTML entry point"),
-        GeneratedFile(path="frontend/vite.config.js", language="javascript", content=_VITE_CONFIG, description="Vite build config"),
-        GeneratedFile(path="frontend/src/main.js", language="javascript", content=_MAIN_JS, description="Vue entry point"),
-        GeneratedFile(path="frontend/src/App.vue", language="javascript", content=_build_app_vue(names), description="Renders every generated screen"),
-        GeneratedFile(path="frontend/src/index.css", language="css", content=_INDEX_CSS, description="Tailwind directives"),
-        GeneratedFile(path="frontend/tailwind.config.js", language="javascript", content=_TAILWIND_CONFIG, description="Tailwind config"),
-        GeneratedFile(path="frontend/postcss.config.js", language="javascript", content=_POSTCSS_CONFIG, description="PostCSS config"),
+        GeneratedFile(
+            path="frontend/index.html",
+            language="html",
+            content=_index_html(ctx.project_name),
+            description="Vite HTML entry point",
+        ),
+        GeneratedFile(
+            path="frontend/vite.config.js",
+            language="javascript",
+            content=_VITE_CONFIG,
+            description="Vite build config",
+        ),
+        GeneratedFile(
+            path="frontend/src/main.js",
+            language="javascript",
+            content=_MAIN_JS,
+            description="Vue entry point",
+        ),
+        GeneratedFile(
+            path="frontend/src/App.vue",
+            language="javascript",
+            content=_build_app_vue(names),
+            description="Renders every generated screen",
+        ),
+        GeneratedFile(
+            path="frontend/src/index.css",
+            language="css",
+            content=_INDEX_CSS,
+            description="Tailwind directives",
+        ),
+        GeneratedFile(
+            path="frontend/tailwind.config.js",
+            language="javascript",
+            content=_TAILWIND_CONFIG,
+            description="Tailwind config",
+        ),
+        GeneratedFile(
+            path="frontend/postcss.config.js",
+            language="javascript",
+            content=_POSTCSS_CONFIG,
+            description="PostCSS config",
+        ),
     ]
 
 

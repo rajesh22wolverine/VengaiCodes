@@ -38,8 +38,19 @@
 
 import re
 
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    generate_text_validated,
+)
 
 
 def _camel_first(s: str) -> str:
@@ -48,7 +59,9 @@ def _camel_first(s: str) -> str:
 
 def _infer_graphql_type(field_name: str) -> str:
     lowered = field_name.lower()
-    if any(k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")):
+    if any(
+        k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")
+    ):
         return "Boolean"
     if any(k in lowered for k in ("count", "quantity", "number", "age")):
         return "Int"
@@ -83,8 +96,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Spring Data JPA entity class for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Table purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Package declaration: `package {package_name};`
@@ -99,8 +112,12 @@ Requirements:
 Return ONLY the raw Java code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "java", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "java",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/src/main/java/{_package_path(package_name)}/{class_name}.java",
@@ -117,7 +134,8 @@ def _repository_name(table_name: str) -> str:
 async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     package_name = _package_name(ctx.project_name)
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
     repos_text = "\n".join(
         f"- `{_repository_name(t.get('name', 'Item'))} extends JpaRepository<{_pascal(t.get('name', 'Item'))}, Long>` — "
@@ -151,24 +169,32 @@ Requirements:
 Return ONLY the raw Java code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "java", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "java",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path=f"backend/src/main/java/{_package_path(package_name)}/ApiController.java",
-            language="java",
-            content=content,
-            description="Spring REST controller implementing all API endpoints against the real repositories",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path=f"backend/src/main/java/{_package_path(package_name)}/ApiController.java",
+                language="java",
+                content=content,
+                description="Spring REST controller implementing all API endpoints against the real repositories",
+            ),
+            issue,
+        )
+    ]
 
 
 def _graphql_type_block(table: dict) -> str:
     name = _pascal(table.get("name", "Item"))
     fields = table.get("key_fields", []) or []
-    field_lines = "\n".join(f"  {_camel_field(f)}: {_infer_graphql_type(f)}" for f in fields)
+    field_lines = "\n".join(
+        f"  {_camel_field(f)}: {_infer_graphql_type(f)}" for f in fields
+    )
     return f"type {name} {{\n  id: ID!\n{field_lines}\n}}"
 
 
@@ -199,8 +225,12 @@ def _graphql_schema(tables: list[dict]) -> str:
         singular = _camel_first(name)
         query_fields.append(f"  {plural}: [{name}!]!")
         query_fields.append(f"  {singular}(id: ID!): {name}")
-        mutation_fields.append(f"  create{name}({_mutation_field_args(t, False)}): {name}!")
-        mutation_fields.append(f"  update{name}({_mutation_field_args(t, True)}): {name}!")
+        mutation_fields.append(
+            f"  create{name}({_mutation_field_args(t, False)}): {name}!"
+        )
+        mutation_fields.append(
+            f"  update{name}({_mutation_field_args(t, True)}): {name}!"
+        )
         mutation_fields.append(f"  delete{name}(id: ID!): Boolean!")
 
     query_block = "type Query {\n" + "\n".join(query_fields) + "\n}"
@@ -217,7 +247,8 @@ async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
         for t in ctx.tables
     )
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
 
     prompt = f"""A GraphQL schema (below) has ALREADY been generated deterministically for this app — do not change its type/field names or argument shapes. Write the Spring for GraphQL @Controller class that implements every Query and Mutation field declared in it.
@@ -255,8 +286,12 @@ Requirements:
 Return ONLY the raw Java code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "java", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "java",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return [
         (
@@ -282,13 +317,20 @@ Return ONLY the raw Java code for this one file. No markdown fences, no explanat
 
 def _proto_message_for_table(table: dict) -> str:
     fields = table.get("key_fields", []) or []
-    field_lines = "\n".join(f"  string {_camel_field(f)} = {i + 2};" for i, f in enumerate(fields))
+    field_lines = "\n".join(
+        f"  string {_camel_field(f)} = {i + 2};" for i, f in enumerate(fields)
+    )
     return f"message {_pascal(table.get('name', 'Item'))} {{\n  string id = 1;\n{field_lines}\n}}"
 
 
 def _proto_rpc_for_endpoint(e: dict) -> tuple[str, str]:
-    method_name = _pascal(f"{e.get('method', 'get')}_{e.get('path', '/').strip('/')}") or "Call"
-    return f"  rpc {method_name} ({method_name}Request) returns ({method_name}Response);", method_name
+    method_name = (
+        _pascal(f"{e.get('method', 'get')}_{e.get('path', '/').strip('/')}") or "Call"
+    )
+    return (
+        f"  rpc {method_name} ({method_name}Request) returns ({method_name}Response);",
+        method_name,
+    )
 
 
 async def _grpc_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -299,14 +341,21 @@ async def _grpc_routes(ctx: RoutesCtx) -> list[FileResult]:
     protobuf-maven-plugin config with a real .proto and a real
     @GrpcService class extending the generated XxxImplBase."""
     package_name = _package_name(ctx.project_name)
-    messages = "\n\n".join(_proto_message_for_table(t) for t in ctx.tables) or "message Empty {}"
+    messages = (
+        "\n\n".join(_proto_message_for_table(t) for t in ctx.tables)
+        or "message Empty {}"
+    )
     rpc_lines = []
     request_response_messages = []
     for e in ctx.endpoints:
         rpc_line, method_name = _proto_rpc_for_endpoint(e)
         rpc_lines.append(rpc_line)
-        request_response_messages.append(f"message {method_name}Request {{\n  string payload = 1;\n}}")
-        request_response_messages.append(f"message {method_name}Response {{\n  string result = 1;\n}}")
+        request_response_messages.append(
+            f"message {method_name}Request {{\n  string payload = 1;\n}}"
+        )
+        request_response_messages.append(
+            f"message {method_name}Response {{\n  string result = 1;\n}}"
+        )
 
     proto_skeleton = f"""syntax = "proto3";
 
@@ -325,7 +374,8 @@ service ApiService {{
 """
 
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
     repos_text = "\n".join(
         f"- `{_repository_name(t.get('name', 'Item'))} extends JpaRepository<{_pascal(t.get('name', 'Item'))}, Long>` — "
@@ -366,8 +416,12 @@ Return ONLY the raw Java code for this one file (imports + the @GrpcService clas
 fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "java", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "java",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return [
         (
@@ -391,7 +445,11 @@ fences, no explanation, no JSON."""
     ]
 
 
-ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes, "grpc": _grpc_routes}
+ROUTES_BUILDERS = {
+    "rest": _rest_routes,
+    "graphql": _graphql_routes,
+    "grpc": _grpc_routes,
+}
 
 
 async def generate_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -421,7 +479,9 @@ public interface {_repository_name(entity_class)} extends JpaRepository<{entity_
 
 
 def _build_application_java(package_name: str, project_name: str) -> str:
-    app_class = "".join(ch for ch in project_name.title() if ch.isalnum()) or "Generated"
+    app_class = (
+        "".join(ch for ch in project_name.title() if ch.isalnum()) or "Generated"
+    )
     return f"""package {package_name};
 
 import org.springframework.boot.SpringApplication;
@@ -436,7 +496,9 @@ public class {app_class}Application {{
 """
 
 
-def _pom_xml(package_name: str, artifact_id: str, project_name: str, api_style: str) -> str:
+def _pom_xml(
+    package_name: str, artifact_id: str, project_name: str, api_style: str
+) -> str:
     graphql_dep = (
         """
     <dependency>
@@ -585,8 +647,18 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     artifact_id = package_name.split(".")[-1]
     api_style = "graphql" if _is_graphql(ctx) else "grpc" if _is_grpc(ctx) else "rest"
     return [
-        GeneratedFile(path="backend/pom.xml", language="xml", content=_pom_xml(package_name, artifact_id, ctx.project_name, api_style), description="Maven project manifest"),
-        GeneratedFile(path="backend/src/main/resources/application.properties", language="text", content=_APPLICATION_PROPERTIES, description="Spring Boot config (H2 file-based DB, zero external setup)"),
+        GeneratedFile(
+            path="backend/pom.xml",
+            language="xml",
+            content=_pom_xml(package_name, artifact_id, ctx.project_name, api_style),
+            description="Maven project manifest",
+        ),
+        GeneratedFile(
+            path="backend/src/main/resources/application.properties",
+            language="text",
+            content=_APPLICATION_PROPERTIES,
+            description="Spring Boot config (H2 file-based DB, zero external setup)",
+        ),
     ]
 
 
@@ -595,7 +667,7 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     files = [
         GeneratedFile(
             path=f"backend/src/main/java/{_package_path(package_name)}/"
-                 f"{''.join(ch for ch in ctx.project_name.title() if ch.isalnum()) or 'Generated'}Application.java",
+            f"{''.join(ch for ch in ctx.project_name.title() if ch.isalnum()) or 'Generated'}Application.java",
             language="java",
             content=_build_application_java(package_name, ctx.project_name),
             description="Spring Boot entry point",
@@ -603,12 +675,14 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
     for f in ctx.model_files:
         entity_class = _entity_class_from_path(f)
-        files.append(GeneratedFile(
-            path=f"backend/src/main/java/{_package_path(package_name)}/{_repository_name(entity_class)}.java",
-            language="java",
-            content=_build_repository_java(package_name, entity_class),
-            description=f"Spring Data repository for {entity_class}",
-        ))
+        files.append(
+            GeneratedFile(
+                path=f"backend/src/main/java/{_package_path(package_name)}/{_repository_name(entity_class)}.java",
+                language="java",
+                content=_build_repository_java(package_name, entity_class),
+                description=f"Spring Data repository for {entity_class}",
+            )
+        )
     return files
 
 

@@ -209,14 +209,23 @@ def detect_suitable_test_frameworks(project: Project) -> dict:
     """
     stack_info = get_project_stack(project)
     if stack_info["source"] == "fallback_default":
-        tech_stack = (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
+        tech_stack = (
+            (project.architecture_data or {})
+            .get("architecture", {})
+            .get("tech_stack", {})
+        )
         return _legacy_detect_suitable_test_frameworks(tech_stack)
 
-    backend_recipes = BACKEND_TEST_RECIPES.get(stack_info["backend_framework"], BACKEND_TEST_RECIPES["fastapi"])
-    frontend_recipes = FRONTEND_TEST_RECIPES.get(stack_info["frontend_framework"], FRONTEND_TEST_RECIPES["react"])
+    backend_recipes = BACKEND_TEST_RECIPES.get(
+        stack_info["backend_framework"], BACKEND_TEST_RECIPES["fastapi"]
+    )
+    frontend_recipes = FRONTEND_TEST_RECIPES.get(
+        stack_info["frontend_framework"], FRONTEND_TEST_RECIPES["react"]
+    )
     return {
         "backend": [r.label for r in backend_recipes],
-        "frontend": [r.label for r in frontend_recipes if r.ci_runnable] or [frontend_recipes[0].label],
+        "frontend": [r.label for r in frontend_recipes if r.ci_runnable]
+        or [frontend_recipes[0].label],
     }
 
 
@@ -232,8 +241,7 @@ def build_testing_prompt(
     files = codegen.get("files", [])
 
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
-        for e in endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in endpoints
     )
     files_text = "\n".join(
         f"- {f.get('path')} ({f.get('language')}): {f.get('description')}"
@@ -316,7 +324,9 @@ async def get_test_frameworks(
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.architecture_data:
         raise HTTPException(
@@ -324,7 +334,9 @@ async def get_test_frameworks(
             detail="Architecture must be generated before choosing a testing framework.",
         )
 
-    tech_stack = (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
+    tech_stack = (
+        (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
+    )
     options = detect_suitable_test_frameworks(project)
     selected = (project.testing_data or {}).get("selected_frameworks")
 
@@ -369,7 +381,9 @@ async def generate_tests(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.codegen_data or not project.codegen_data.get("user_approved"):
         raise HTTPException(
@@ -384,8 +398,12 @@ async def generate_tests(
     suitable = detect_suitable_test_frameworks(project)
     backend_framework = payload.backend_framework or suitable["backend"][0]
     frontend_framework = payload.frontend_framework or suitable["frontend"][0]
-    backend_recipe = find_backend_recipe(stack_info["backend_framework"], backend_framework)
-    frontend_recipe = find_frontend_recipe(stack_info["frontend_framework"], frontend_framework)
+    backend_recipe = find_backend_recipe(
+        stack_info["backend_framework"], backend_framework
+    )
+    frontend_recipe = find_frontend_recipe(
+        stack_info["frontend_framework"], frontend_framework
+    )
 
     try:
         prompt = build_testing_prompt(
@@ -394,7 +412,9 @@ async def generate_tests(
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logger.error(f"Failed to parse AI testing response: {e}")
         raise HTTPException(
@@ -426,11 +446,17 @@ async def generate_tests(
         "testing": testing_result.model_dump(),
         "total_tests": len(testing_result.test_files),
         "suitable_frameworks": suitable,
-        "selected_frameworks": {"backend": backend_framework, "frontend": frontend_framework},
+        "selected_frameworks": {
+            "backend": backend_framework,
+            "frontend": frontend_framework,
+        },
         # Stable recipe keys (not the display label) for run-tests.yml/
         # write_test_project_files.py to switch on — a label can be
         # ambiguous or reworded, the key never is.
-        "selected_recipe_keys": {"backend": backend_recipe.key, "frontend": frontend_recipe.key},
+        "selected_recipe_keys": {
+            "backend": backend_recipe.key,
+            "frontend": frontend_recipe.key,
+        },
         "user_approved": False,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "auto_fix_attempts": 0,
@@ -457,14 +483,21 @@ async def add_custom_test_module(
     "custom" so they survive future framework-switch regenerates.
     """
     if not payload.description.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Describe what you want tested.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Describe what you want tested.",
+        )
 
     result = await db.execute(
-        select(Project).where(Project.id == payload.project_id, Project.user_id == user.id)
+        select(Project).where(
+            Project.id == payload.project_id, Project.user_id == user.id
+        )
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.testing_data:
         raise HTTPException(
@@ -475,8 +508,12 @@ async def add_custom_test_module(
     codegen = (project.codegen_data or {}).get("codegen", {})
     selected = project.testing_data.get("selected_frameworks", {})
     stack_info = get_project_stack(project)
-    backend_recipe = find_backend_recipe(stack_info["backend_framework"], selected.get("backend"))
-    frontend_recipe = find_frontend_recipe(stack_info["frontend_framework"], selected.get("frontend"))
+    backend_recipe = find_backend_recipe(
+        stack_info["backend_framework"], selected.get("backend")
+    )
+    frontend_recipe = find_frontend_recipe(
+        stack_info["frontend_framework"], selected.get("frontend")
+    )
 
     files_text = "\n".join(
         f"- {f.get('path')} ({f.get('language')}): {f.get('description')}"
@@ -524,7 +561,9 @@ Respond with ONLY the JSON object, nothing else."""
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logger.error(f"Failed to parse AI custom-module response: {e}")
         raise HTTPException(
@@ -541,15 +580,22 @@ Respond with ONLY the JSON object, nothing else."""
         if issue:
             warnings.append(f"{raw.get('path', '?')}: {issue}")
 
-        new_files.append(GeneratedTestFile(
-            path=raw.get("path") or f"tests/custom_{i}.txt",
-            language=language,
-            content=content,
-            description=raw.get("description", ""),
-            tests_what=raw.get("tests_what", payload.description),
-            framework=raw.get("framework") or (backend_recipe.label if language == backend_recipe.language else frontend_recipe.label),
-            source="custom",
-        ))
+        new_files.append(
+            GeneratedTestFile(
+                path=raw.get("path") or f"tests/custom_{i}.txt",
+                language=language,
+                content=content,
+                description=raw.get("description", ""),
+                tests_what=raw.get("tests_what", payload.description),
+                framework=raw.get("framework")
+                or (
+                    backend_recipe.label
+                    if language == backend_recipe.language
+                    else frontend_recipe.label
+                ),
+                source="custom",
+            )
+        )
 
     if not new_files:
         raise HTTPException(
@@ -559,7 +605,9 @@ Respond with ONLY the JSON object, nothing else."""
 
     testing_data = dict(project.testing_data)
     testing_inner = dict(testing_data["testing"])
-    testing_inner["test_files"] = testing_inner.get("test_files", []) + [f.model_dump() for f in new_files]
+    testing_inner["test_files"] = testing_inner.get("test_files", []) + [
+        f.model_dump() for f in new_files
+    ]
     testing_data["testing"] = testing_inner
     testing_data["total_tests"] = len(testing_inner["test_files"])
     project.testing_data = testing_data
@@ -592,7 +640,9 @@ async def get_tests(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.testing_data:
         raise HTTPException(
@@ -632,7 +682,9 @@ async def get_test_run_files(
     as packaging.py's GET /{project_id}/files.
     """
     if not settings.BUILD_SECRET or x_build_secret != settings.BUILD_SECRET:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid build secret.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid build secret."
+        )
 
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
@@ -643,7 +695,9 @@ async def get_test_run_files(
             detail="Project, generated code, or tests not found.",
         )
 
-    tech_stack = (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
+    tech_stack = (
+        (project.architecture_data or {}).get("architecture", {}).get("tech_stack", {})
+    )
     selected_frameworks = project.testing_data.get("selected_frameworks", {})
 
     # Older projects generated their tests before selected_recipe_keys
@@ -652,8 +706,12 @@ async def get_test_run_files(
     recipe_keys = project.testing_data.get("selected_recipe_keys")
     if not recipe_keys:
         stack_info = get_project_stack(project)
-        backend_recipe = find_backend_recipe(stack_info["backend_framework"], selected_frameworks.get("backend"))
-        frontend_recipe = find_frontend_recipe(stack_info["frontend_framework"], selected_frameworks.get("frontend"))
+        backend_recipe = find_backend_recipe(
+            stack_info["backend_framework"], selected_frameworks.get("backend")
+        )
+        frontend_recipe = find_frontend_recipe(
+            stack_info["frontend_framework"], selected_frameworks.get("frontend")
+        )
         recipe_keys = {"backend": backend_recipe.key, "frontend": frontend_recipe.key}
 
     return {
@@ -685,11 +743,15 @@ async def trigger_test_run(
         )
 
     result = await db.execute(
-        select(Project).where(Project.id == payload.project_id, Project.user_id == user.id)
+        select(Project).where(
+            Project.id == payload.project_id, Project.user_id == user.id
+        )
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.codegen_data or not project.codegen_data.get("user_approved"):
         raise HTTPException(
@@ -697,7 +759,10 @@ async def trigger_test_run(
             detail="Generated code must be approved before running tests.",
         )
     if not project.testing_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Generate tests before running them.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Generate tests before running them.",
+        )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -713,10 +778,18 @@ async def trigger_test_run(
         )
 
     if response.status_code != 204:
-        logger.error(f"Failed to trigger test run: {response.status_code} {response.text}")
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to start the test run. Please try again.")
+        logger.error(
+            f"Failed to trigger test run: {response.status_code} {response.text}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to start the test run. Please try again.",
+        )
 
-    return {"success": True, "message": "Test run started! This takes a few minutes. 🧪🐯"}
+    return {
+        "success": True,
+        "message": "Test run started! This takes a few minutes. 🧪🐯",
+    }
 
 
 @router.get(
@@ -734,10 +807,15 @@ async def get_test_run_status(
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Test running is not configured yet.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Test running is not configured yet.",
+        )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
@@ -750,7 +828,10 @@ async def get_test_run_status(
         )
 
     if response.status_code != 200:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to check test run status.")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to check test run status.",
+        )
 
     runs = response.json().get("workflow_runs", [])
     matching = next((r for r in runs if project_id in (r.get("name") or "")), None)
@@ -779,10 +860,15 @@ async def get_test_run_results(
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Test running is not configured yet.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Test running is not configured yet.",
+        )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         runs_response = await client.get(
@@ -810,7 +896,9 @@ async def get_test_run_results(
             },
         )
         artifacts = artifacts_response.json().get("artifacts", [])
-        artifact = next((a for a in artifacts if a["name"] == TEST_RESULTS_ARTIFACT_NAME), None)
+        artifact = next(
+            (a for a in artifacts if a["name"] == TEST_RESULTS_ARTIFACT_NAME), None
+        )
         if artifact is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -827,7 +915,10 @@ async def get_test_run_results(
         )
 
     if zip_response.status_code != 200:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to download test results.")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to download test results.",
+        )
 
     try:
         with zipfile.ZipFile(io.BytesIO(zip_response.content)) as zf:
@@ -835,7 +926,10 @@ async def get_test_run_results(
                 results_raw = json.load(f)
     except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as e:
         logger.error(f"Failed to parse test results artifact: {e}")
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Test results artifact was unreadable.")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Test results artifact was unreadable.",
+        )
 
     results = TestRunResults(
         passed=results_raw.get("passed", 0),
@@ -873,14 +967,21 @@ async def auto_fix_tests(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Project).where(Project.id == payload.project_id, Project.user_id == user.id)
+        select(Project).where(
+            Project.id == payload.project_id, Project.user_id == user.id
+        )
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.testing_data or not project.testing_data.get("last_run_results"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run the tests first before attempting a fix.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Run the tests first before attempting a fix.",
+        )
 
     last_results = project.testing_data["last_run_results"]
     failures = last_results.get("failures", [])
@@ -907,14 +1008,19 @@ async def auto_fix_tests(
     for fail in failures[:5]:  # cap prompt size
         fail_file = fail.get("file", "")
         referenced_paths.add(fail_file)
-        failure_lines.append(f"- Test '{fail.get('test_name', '?')}' in {fail_file} failed: {fail.get('message', '')}")
+        failure_lines.append(
+            f"- Test '{fail.get('test_name', '?')}' in {fail_file} failed: {fail.get('message', '')}"
+        )
     failures_text = "\n".join(failure_lines)
 
     context_files = [
-        match for path in referenced_paths
+        match
+        for path in referenced_paths
         if (match := (_find_file(path, test_files) or _find_file(path, codegen_files)))
     ]
-    context_text = "\n\n".join(f"--- {f['path']} ---\n{f['content']}" for f in context_files)
+    context_text = "\n\n".join(
+        f"--- {f['path']} ---\n{f['content']}" for f in context_files
+    )
 
     prompt = f"""You are Baby Tiger 🐯, VengaiCode's AI testing assistant. These tests failed when actually run in CI:
 
@@ -945,7 +1051,9 @@ Respond with ONLY the JSON object, nothing else."""
         ai_result = await generate_text(prompt, user=user, db=db)
         parsed = parse_ai_json(ai_result["text"])
     except AIError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except (json.JSONDecodeError, KeyError, IndexError) as e:
         logger.error(f"Failed to parse AI auto-fix response: {e}")
         raise HTTPException(
@@ -971,19 +1079,29 @@ Respond with ONLY the JSON object, nothing else."""
             logger.warning(f"Auto-fix produced invalid content for {path}: {issue}")
             continue
 
-        test_idx = next((i for i, f in enumerate(test_files_mut) if f.get("path") == path), None)
+        test_idx = next(
+            (i for i, f in enumerate(test_files_mut) if f.get("path") == path), None
+        )
         if test_idx is not None:
             test_files_mut[test_idx] = {**test_files_mut[test_idx], "content": content}
             fixed_paths.append(path)
             continue
 
-        code_idx = next((i for i, f in enumerate(codegen_files_mut) if f.get("path") == path), None)
+        code_idx = next(
+            (i for i, f in enumerate(codegen_files_mut) if f.get("path") == path), None
+        )
         if code_idx is not None:
-            codegen_files_mut[code_idx] = {**codegen_files_mut[code_idx], "content": content}
+            codegen_files_mut[code_idx] = {
+                **codegen_files_mut[code_idx],
+                "content": content,
+            }
             fixed_paths.append(path)
 
     if not fixed_paths:
-        return AutoFixResponse(attempts=attempts, message="Baby Tiger couldn't identify a fix for these failures.")
+        return AutoFixResponse(
+            attempts=attempts,
+            message="Baby Tiger couldn't identify a fix for these failures.",
+        )
 
     codegen_inner["files"] = codegen_files_mut
     codegen_data["codegen"] = codegen_inner
@@ -1022,7 +1140,9 @@ async def approve_tests(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.testing_data:
         raise HTTPException(
@@ -1048,6 +1168,8 @@ async def approve_tests(
 
     return {
         "success": True,
-        "message": "Tests approved! Next: Export 🐯" if payload.approved else "Feedback noted.",
+        "message": "Tests approved! Next: Export 🐯"
+        if payload.approved
+        else "Feedback noted.",
         "progress_percent": project.progress_percent,
     }

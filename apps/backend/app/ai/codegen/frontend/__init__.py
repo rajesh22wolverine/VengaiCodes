@@ -1,4 +1,13 @@
-from app.ai.codegen.frontend import angular, flutter, html_css_js, jetpack_compose, react, svelte, swiftui, vue
+from app.ai.codegen.frontend import (
+    angular,
+    flutter,
+    html_css_js,
+    jetpack_compose,
+    react,
+    svelte,
+    swiftui,
+    vue,
+)
 from app.ai.codegen.types import FrontendAdapter
 
 FRONTEND_ADAPTERS: dict[str, FrontendAdapter] = {

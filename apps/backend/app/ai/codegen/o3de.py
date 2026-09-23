@@ -75,7 +75,13 @@ import random
 import uuid
 
 from app.ai.codegen.types import FileResult, ScreenCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 # Real UUIDs confirmed from O3DE engine source (see module header) —
 # these identify the COMPONENT CLASS, not any particular instance.
@@ -101,7 +107,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real O3DE (Open 3D Engine) Lua component script implementing the game logic for the "{screen_name}" feature of this game.
 
-Feature purpose: {ctx.screen.get('purpose', '')}
+Feature purpose: {ctx.screen.get("purpose", "")}
 
 Requirements — follow O3DE's REAL Lua component script structure exactly, nothing invented:
 - Structure:
@@ -142,8 +148,12 @@ Requirements — follow O3DE's REAL Lua component script structure exactly, noth
 Return ONLY the raw Lua code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "lua", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(label="Game"),
+        prompt,
+        "lua",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(label="Game"),
     )
     return GeneratedFile(
         path=f"frontend/Scripts/{file_slug}.lua",
@@ -153,7 +163,9 @@ Return ONLY the raw Lua code for this one file. No markdown fences, no explanati
     ), issue
 
 
-def _new_component(rng: random.Random, components: dict, type_str: str, **fields) -> None:
+def _new_component(
+    rng: random.Random, components: dict, type_str: str, **fields
+) -> None:
     """Adds one component to `components`, generating exactly ONE id shared
     by the `Component_[id]` key and the nested "Id" field — real O3DE
     prefabs always match the two (confirmed against DefaultLevel.prefab).
@@ -162,10 +174,16 @@ def _new_component(rng: random.Random, components: dict, type_str: str, **fields
     bug caught by ruff's F601 check (repeated dict-key-literal pattern)
     during a pre-commit/CI wiring pass, not by manual review."""
     component_id = _new_numeric_id(rng)
-    components[f"Component_[{component_id}]"] = {"$type": type_str, "Id": component_id, **fields}
+    components[f"Component_[{component_id}]"] = {
+        "$type": type_str,
+        "Id": component_id,
+        **fields,
+    }
 
 
-def _entity_json(rng: random.Random, name: str, script_asset_hint: str | None) -> tuple[str, dict]:
+def _entity_json(
+    rng: random.Random, name: str, script_asset_hint: str | None
+) -> tuple[str, dict]:
     """One O3DE prefab entity: real Transform + (optionally) a Lua Script
     component. Component set and $type shapes (which get a "{UUID} Name"
     type string vs. a bare class name) mirror DefaultLevel.prefab — see
@@ -175,7 +193,12 @@ def _entity_json(rng: random.Random, name: str, script_asset_hint: str | None) -
     _new_component(rng, components, "EditorLockComponent")
     _new_component(rng, components, "EditorVisibilityComponent")
     _new_component(rng, components, "EditorInspectorComponent")
-    _new_component(rng, components, f"{_TRANSFORM_COMPONENT_UUID} TransformComponent", **{"Parent Entity": ""})
+    _new_component(
+        rng,
+        components,
+        f"{_TRANSFORM_COMPONENT_UUID} TransformComponent",
+        **{"Parent Entity": ""},
+    )
 
     if script_asset_hint:
         _new_component(
@@ -214,7 +237,9 @@ def _level_prefab(project_name: str, screen_files: list[GeneratedFile]) -> dict:
     for f in screen_files or []:
         # frontend/Scripts/<slug>.lua -> <slug>
         slug = f.path.rsplit("/", 1)[-1].removesuffix(".lua")
-        entity_key, entity = _entity_json(rng, name=_pascal(slug), script_asset_hint=f"Scripts/{slug}.lua")
+        entity_key, entity = _entity_json(
+            rng, name=_pascal(slug), script_asset_hint=f"Scripts/{slug}.lua"
+        )
         entities[entity_key] = entity
         child_order.append(entity_key)
 
@@ -228,9 +253,17 @@ def _level_prefab(project_name: str, screen_files: list[GeneratedFile]) -> dict:
 
     container_components: dict = {}
     _new_component(rng, container_components, "EditorInspectorComponent")
-    _new_component(rng, container_components, "EditorEntitySortComponent", **{"Child Entity Order": child_order})
     _new_component(
-        rng, container_components, f"{_TRANSFORM_COMPONENT_UUID} TransformComponent", **{"Parent Entity": ""}
+        rng,
+        container_components,
+        "EditorEntitySortComponent",
+        **{"Child Entity Order": child_order},
+    )
+    _new_component(
+        rng,
+        container_components,
+        f"{_TRANSFORM_COMPONENT_UUID} TransformComponent",
+        **{"Parent Entity": ""},
     )
     _new_component(rng, container_components, "EditorPrefabComponent")
     _new_component(rng, container_components, "EditorLockComponent")
@@ -317,7 +350,9 @@ own export tooling expects a project-specific export script.
 """
 
 
-def manifest_files(project_name: str, screen_files: list[GeneratedFile]) -> list[GeneratedFile]:
+def manifest_files(
+    project_name: str, screen_files: list[GeneratedFile]
+) -> list[GeneratedFile]:
     return [
         GeneratedFile(
             path="frontend/project.json",
@@ -334,7 +369,9 @@ def manifest_files(project_name: str, screen_files: list[GeneratedFile]) -> list
         GeneratedFile(
             path="frontend/README_O3DE_SETUP.md",
             language="markdown",
-            content=_README_O3DE_SETUP.format(project_name=project_name or "Generated Game"),
+            content=_README_O3DE_SETUP.format(
+                project_name=project_name or "Generated Game"
+            ),
             description="Manual setup steps — least-automatable part of the O3DE pipeline",
         ),
     ]

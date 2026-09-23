@@ -62,11 +62,18 @@ def test_codegen_skips_the_routes_step_when_there_are_no_endpoints() -> None:
     project = _project(
         architecture_data={
             "user_approved": True,
-            "architecture": {"database_tables": [{"name": "users"}], "api_endpoints": []},
+            "architecture": {
+                "database_tables": [{"name": "users"}],
+                "api_endpoints": [],
+            },
         }
     )
 
-    assert [s["kind"] for s in codegen_runner.steps(project, {})] == ["model", "screen", "screen"]
+    assert [s["kind"] for s in codegen_runner.steps(project, {})] == [
+        "model",
+        "screen",
+        "screen",
+    ]
 
 
 def test_codegen_for_a_game_engine_target_generates_screens_only() -> None:
@@ -83,7 +90,10 @@ def test_codegen_for_a_game_engine_target_generates_screens_only() -> None:
         }
     )
 
-    assert [s["kind"] for s in codegen_runner.steps(project, {})] == ["screen", "screen"]
+    assert [s["kind"] for s in codegen_runner.steps(project, {})] == [
+        "screen",
+        "screen",
+    ]
 
 
 def test_codegen_fingerprint_changes_when_the_architecture_does() -> None:

@@ -37,7 +37,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.stack_matrix import CI_BUILDABLE_GAME_ENGINES, FRONTEND_FRAMEWORKS, get_project_stack
+from app.ai.stack_matrix import (
+    CI_BUILDABLE_GAME_ENGINES,
+    FRONTEND_FRAMEWORKS,
+    get_project_stack,
+)
 from app.api.v1.auth import get_current_active_user
 from app.config import settings
 from app.core.database import get_db
@@ -56,7 +60,10 @@ _NATIVE_WORKFLOW_ROUTES: dict[str, tuple[str, str]] = {
     "flutter": ("build-linux-native-flutter.yml", "build-linux-native-flutter-app"),
 }
 _WEB_WORKFLOW: tuple[str, str] = ("build-linux-installer.yml", "build-linux-app")
-_GODOT_WORKFLOW: tuple[str, str] = ("build-linux-game-godot.yml", "build-linux-game-godot-app")
+_GODOT_WORKFLOW: tuple[str, str] = (
+    "build-linux-game-godot.yml",
+    "build-linux-game-godot-app",
+)
 
 
 def _workflow_for_stack(stack_info: dict) -> tuple[str, str] | None:
@@ -114,7 +121,9 @@ async def trigger_build(
     project = result.scalar_one_or_none()
 
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not project.codegen_data or not project.codegen_data.get("user_approved"):
         raise HTTPException(
@@ -195,7 +204,9 @@ async def get_build_status(
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -260,7 +271,9 @@ async def list_build_artifacts(
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(
@@ -347,7 +360,9 @@ async def download_build_artifact(
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found."
+        )
 
     if not settings.GITHUB_TOKEN or not settings.GITHUB_REPO:
         raise HTTPException(

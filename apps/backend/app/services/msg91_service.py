@@ -18,6 +18,7 @@ MSG91_BASE_URL = "https://control.msg91.com/api/v5"
 
 class MSG91Error(Exception):
     """Raised when MSG91 API call fails."""
+
     pass
 
 

@@ -1,4 +1,17 @@
-from app.ai.codegen.backend import actix, aspnet_core, axum, django, express, fastapi, flask, gin, laravel, nestjs, rails, spring_boot
+from app.ai.codegen.backend import (
+    actix,
+    aspnet_core,
+    axum,
+    django,
+    express,
+    fastapi,
+    flask,
+    gin,
+    laravel,
+    nestjs,
+    rails,
+    spring_boot,
+)
 from app.ai.codegen.types import BackendAdapter
 
 BACKEND_ADAPTERS: dict[str, BackendAdapter] = {

@@ -15,8 +15,19 @@
 # ═══════════════════════════════════════════════════════════════
 
 from app.ai.codegen.manifests.requirements_txt import build_requirements_txt
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _slug, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _slug,
+    generate_text_validated,
+)
 
 
 async def generate_model(ctx: ModelCtx) -> FileResult:
@@ -24,8 +35,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real SQLAlchemy model file for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Table purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Real column types, constraints (nullable, unique, defaults) matching the fields above.
@@ -37,8 +48,12 @@ Requirements:
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "python", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "python",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/models/{_slug(table_name)}.py",
@@ -50,7 +65,8 @@ Return ONLY the raw Python code for this one file. No markdown fences, no explan
 
 async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
     model_imports = "\n".join(
         f"- backend/models/{_slug(t.get('name', 'item'))}.py defines the {t.get('name')} model"
@@ -77,18 +93,24 @@ Requirements:
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "python", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "python",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/routes/api.py",
-            language="python",
-            content=content,
-            description="FastAPI routes implementing all API endpoints against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/routes/api.py",
+                language="python",
+                content=content,
+                description="FastAPI routes implementing all API endpoints against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -132,18 +154,24 @@ Requirements:
 Return ONLY the raw Python code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "python", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "python",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path=_GRAPHQL_SCHEMA_PATH,
-            language="python",
-            content=content,
-            description="Strawberry GraphQL schema implementing every capability against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path=_GRAPHQL_SCHEMA_PATH,
+                language="python",
+                content=content,
+                description="Strawberry GraphQL schema implementing every capability against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 # Keys here are this adapter's actual implemented capability — ADAPTER's
@@ -196,8 +224,13 @@ def _model_import_name(file: GeneratedFile) -> str:
     return file.path.removeprefix("backend/").removesuffix(".py").replace("/", ".")
 
 
-def _build_main_py(project_name: str, model_files: list[GeneratedFile], graphql: bool) -> str:
-    model_imports = "\n".join(f"import {_model_import_name(f)}  # noqa: F401 — registers the table with Base.metadata" for f in model_files)
+def _build_main_py(
+    project_name: str, model_files: list[GeneratedFile], graphql: bool
+) -> str:
+    model_imports = "\n".join(
+        f"import {_model_import_name(f)}  # noqa: F401 — registers the table with Base.metadata"
+        for f in model_files
+    )
     if graphql:
         router_import = """from routes.schema import schema
 from strawberry.fastapi import GraphQLRouter
@@ -264,12 +297,24 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         # see PyPI's own release history if this ever needs bumping.
         packages.append("strawberry-graphql[fastapi]==0.327.7")
     content = build_requirements_txt(packages)
-    return [GeneratedFile(path="backend/requirements.txt", language="text", content=content, description="Backend Python dependencies")]
+    return [
+        GeneratedFile(
+            path="backend/requirements.txt",
+            language="text",
+            content=content,
+            description="Backend Python dependencies",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     return [
-        GeneratedFile(path="backend/app/core/database.py", language="python", content=_DATABASE_PY, description="Async SQLAlchemy engine/session setup"),
+        GeneratedFile(
+            path="backend/app/core/database.py",
+            language="python",
+            content=_DATABASE_PY,
+            description="Async SQLAlchemy engine/session setup",
+        ),
         GeneratedFile(
             path="backend/main.py",
             language="python",
@@ -280,7 +325,11 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
 
 
 def setup_commands(project_name: str) -> list[str]:
-    return ["cd backend", "pip install -r requirements.txt", "uvicorn main:app --reload"]
+    return [
+        "cd backend",
+        "pip install -r requirements.txt",
+        "uvicorn main:app --reload",
+    ]
 
 
 ADAPTER = BackendAdapter(

@@ -8,7 +8,13 @@
 # ═══════════════════════════════════════════════════════════════
 
 from app.ai.codegen.types import FileResult, ModelCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 
 async def generate_model(ctx: ModelCtx) -> FileResult:
@@ -17,8 +23,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Rust struct for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Table purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Struct name: `pub struct {struct_name}`, with `pub id: i64` plus real `pub` fields (correct
@@ -36,8 +42,12 @@ Requirements:
 Return ONLY the raw Rust code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "rust", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "rust",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/src/models/{_slug(table_name)}.rs",
@@ -48,13 +58,17 @@ Return ONLY the raw Rust code for this one file. No markdown fences, no explanat
 
 
 def models_mod_rs(model_files: list[GeneratedFile]) -> str:
-    lines = "\n".join(f"pub mod {f.path.split('/')[-1].removesuffix('.rs')};" for f in model_files)
+    lines = "\n".join(
+        f"pub mod {f.path.split('/')[-1].removesuffix('.rs')};" for f in model_files
+    )
     return lines + "\n" if lines else "// no models generated\n"
 
 
 def _infer_sql_type(field_name: str) -> str:
     lowered = field_name.lower()
-    if any(k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")):
+    if any(
+        k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")
+    ):
         return "BOOLEAN"
     if any(k in lowered for k in ("count", "quantity", "number", "age")):
         return "INTEGER"
@@ -66,7 +80,11 @@ def _infer_sql_type(field_name: str) -> str:
 def build_create_table_sql(table: dict) -> str:
 
     plural = f"{_slug(table.get('name', 'item'))}s"
-    fields = [f for f in (table.get("key_fields", []) or []) if _slug(f) not in ("created_at", "updated_at")]
+    fields = [
+        f
+        for f in (table.get("key_fields", []) or [])
+        if _slug(f) not in ("created_at", "updated_at")
+    ]
     columns = ",\n    ".join(f"{_slug(f)} {_infer_sql_type(f)}" for f in fields)
     columns_clause = f",\n    {columns}" if columns else ""
     return (

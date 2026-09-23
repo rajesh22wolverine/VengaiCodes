@@ -63,7 +63,11 @@ def sent(monkeypatch):
 def _call(prompt="Write ONE file", context=None):
     return asyncio.run(
         orchestrator._call_anthropic(
-            "https://api.anthropic.com/v1", "sk-test", "claude-opus-5", prompt, context=context
+            "https://api.anthropic.com/v1",
+            "sk-test",
+            "claude-opus-5",
+            prompt,
+            context=context,
         )
     )
 
@@ -78,7 +82,9 @@ def test_effort_from_settings_is_sent_as_output_config(sent, monkeypatch) -> Non
     assert sent[0]["max_tokens"] == settings.ANTHROPIC_MAX_OUTPUT_TOKENS
 
 
-def test_blank_effort_sends_nothing_so_the_model_default_applies(sent, monkeypatch) -> None:
+def test_blank_effort_sends_nothing_so_the_model_default_applies(
+    sent, monkeypatch
+) -> None:
     monkeypatch.setattr(settings, "ANTHROPIC_EFFORT", "")
 
     _call()
@@ -86,7 +92,9 @@ def test_blank_effort_sends_nothing_so_the_model_default_applies(sent, monkeypat
     assert "output_config" not in sent[0]
 
 
-def test_an_unknown_effort_is_dropped_rather_than_failing_every_call(sent, monkeypatch, caplog) -> None:
+def test_an_unknown_effort_is_dropped_rather_than_failing_every_call(
+    sent, monkeypatch, caplog
+) -> None:
     monkeypatch.setattr(settings, "ANTHROPIC_EFFORT", "turbo")
 
     with caplog.at_level(logging.WARNING):
@@ -97,7 +105,10 @@ def test_an_unknown_effort_is_dropped_rather_than_failing_every_call(sent, monke
 
 
 def test_shared_context_is_its_own_cached_block_ahead_of_the_prompt(sent) -> None:
-    _call(prompt="Write ONE file for records", context="You are Baby Tiger. App: Vinyl Vault")
+    _call(
+        prompt="Write ONE file for records",
+        context="You are Baby Tiger. App: Vinyl Vault",
+    )
 
     blocks = sent[0]["messages"][0]["content"]
     assert [b["text"] for b in blocks] == [
@@ -118,7 +129,9 @@ def test_without_context_the_single_block_is_still_marked(sent) -> None:
     assert blocks[0]["cache_control"] == {"type": "ephemeral"}
 
 
-def test_text_is_collected_past_the_thinking_block_and_usage_keeps_cache_counts(sent) -> None:
+def test_text_is_collected_past_the_thinking_block_and_usage_keeps_cache_counts(
+    sent,
+) -> None:
     text, _duration, usage = _call()
 
     assert text == "def x(): pass"

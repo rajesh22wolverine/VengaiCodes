@@ -51,7 +51,7 @@ def test_validate_public_url_allows_a_real_public_host():
 
 # ─── Tech fingerprinting ───
 def test_fingerprint_detects_nextjs_from_html_markers():
-    html = '<html><body><script>window.__NEXT_DATA__ = {}</script></body></html>'
+    html = "<html><body><script>window.__NEXT_DATA__ = {}</script></body></html>"
     found = fingerprint_tech_stack(html, {}, [])
     names = {t["name"] for t in found}
     assert "Next.js" in names
@@ -69,7 +69,9 @@ def test_fingerprint_detects_django_from_cookie_name():
 
 
 def test_fingerprint_detects_backend_from_headers():
-    found = fingerprint_tech_stack("", {"server": "nginx/1.24.0", "x-powered-by": "Express"}, [])
+    found = fingerprint_tech_stack(
+        "", {"server": "nginx/1.24.0", "x-powered-by": "Express"}, []
+    )
     names = {t["name"] for t in found}
     assert "nginx" in names
     assert "Express" in names
@@ -81,7 +83,13 @@ def test_fingerprint_returns_nothing_for_a_blank_page():
 
 # ─── Data model inference from real <form> fields ───
 def test_infer_data_model_labels_password_forms_as_auth():
-    forms = [{"action": "/login", "method": "POST", "fields": [{"name": "email"}, {"name": "password"}]}]
+    forms = [
+        {
+            "action": "/login",
+            "method": "POST",
+            "fields": [{"name": "email"}, {"name": "password"}],
+        }
+    ]
     entities = _infer_data_model(forms)
     assert len(entities) == 1
     assert entities[0]["kind"] == "auth"
@@ -115,12 +123,28 @@ def test_infer_data_model_ignores_dunder_prefixed_ui_chrome_fields():
     # Real bug caught live against fastapi.tiangolo.com: MkDocs' light/dark
     # theme toggle is a <form> of three radios all named "__palette" --
     # UI chrome, not a real data entity.
-    forms = [{"action": "https://example.com/", "method": "POST", "fields": [{"name": "__palette"}, {"name": "__palette"}, {"name": "__palette"}]}]
+    forms = [
+        {
+            "action": "https://example.com/",
+            "method": "POST",
+            "fields": [
+                {"name": "__palette"},
+                {"name": "__palette"},
+                {"name": "__palette"},
+            ],
+        }
+    ]
     assert _infer_data_model(forms) == []
 
 
 def test_infer_data_model_dedupes_repeated_field_names_within_a_form():
-    forms = [{"action": "/vote", "method": "POST", "fields": [{"name": "choice"}, {"name": "choice"}, {"name": "choice"}]}]
+    forms = [
+        {
+            "action": "/vote",
+            "method": "POST",
+            "fields": [{"name": "choice"}, {"name": "choice"}, {"name": "choice"}],
+        }
+    ]
     entities = _infer_data_model(forms)
     assert len(entities) == 1
     assert entities[0]["fields"] == ["choice"]
@@ -164,7 +188,9 @@ def test_detect_stack_from_package_json_dependencies():
 
 
 def test_detect_stack_from_requirements_txt():
-    found = _detect_stack_from_manifest("requirements.txt", "fastapi==0.104.0\nuvicorn==0.24.0\n")
+    found = _detect_stack_from_manifest(
+        "requirements.txt", "fastapi==0.104.0\nuvicorn==0.24.0\n"
+    )
     assert any(f["name"] == "FastAPI" for f in found)
 
 
@@ -203,7 +229,9 @@ def test_model_patterns_extract_sqlalchemy_model():
 
 
 def test_model_patterns_extract_django_model():
-    source = "class Product(models.Model):\n    name = models.CharField(max_length=100)\n"
+    source = (
+        "class Product(models.Model):\n    name = models.CharField(max_length=100)\n"
+    )
     matches = []
     for orm, pattern in MODEL_PATTERNS:
         for m in pattern.finditer(source):
@@ -228,7 +256,9 @@ def test_reverse_engineering_directive_empty_when_no_data():
 
 def test_reverse_engineering_directive_surfaces_real_facts():
     reverse_data = {
-        "tech_stack": [{"name": "Django", "category": "backend_framework", "evidence": "cookie"}],
+        "tech_stack": [
+            {"name": "Django", "category": "backend_framework", "evidence": "cookie"}
+        ],
         "data_model": [{"name": "product", "kind": "record"}],
         "api_endpoints": [{"method": "GET", "path": "/api/products"}],
     }
@@ -241,7 +271,14 @@ def test_reverse_engineering_directive_surfaces_real_facts():
 def test_reverse_engineering_directive_surfaces_commit_history():
     reverse_data = {
         "repo": "acme/shop",
-        "commit_history": [{"sha": "abc1234", "message": "Add checkout flow", "author": "dev", "date": "2026-01-01T00:00:00Z"}],
+        "commit_history": [
+            {
+                "sha": "abc1234",
+                "message": "Add checkout flow",
+                "author": "dev",
+                "date": "2026-01-01T00:00:00Z",
+            }
+        ],
         "commit_history_note": "most recent 1 commits on main, not the repo's full history",
     }
     directive = build_reverse_engineering_directive(reverse_data)
@@ -251,7 +288,9 @@ def test_reverse_engineering_directive_surfaces_commit_history():
 
 # ─── Shell/wrapper framework detection (Electron/Tauri/Capacitor/...) ───
 def test_detect_shell_framework_from_tree_finds_tauri_config():
-    found = _detect_shell_framework_from_tree(["src/main.rs", "tauri.conf.json", "package.json"])
+    found = _detect_shell_framework_from_tree(
+        ["src/main.rs", "tauri.conf.json", "package.json"]
+    )
     assert any(f["name"] == "Tauri" for f in found)
 
 
@@ -261,16 +300,23 @@ def test_detect_shell_framework_from_tree_finds_capacitor_config():
 
 
 def test_detect_shell_framework_from_tree_empty_for_ordinary_repo():
-    assert _detect_shell_framework_from_tree(["src/index.js", "package.json", "README.md"]) == []
+    assert (
+        _detect_shell_framework_from_tree(["src/index.js", "package.json", "README.md"])
+        == []
+    )
 
 
 def test_detect_stack_from_manifest_finds_electron_dependency():
-    found = _detect_stack_from_manifest("package.json", '{"dependencies": {"electron": "^28.0.0"}}')
+    found = _detect_stack_from_manifest(
+        "package.json", '{"dependencies": {"electron": "^28.0.0"}}'
+    )
     assert any(f["name"] == "Electron" for f in found)
 
 
 def test_detect_stack_from_manifest_finds_react_native():
-    found = _detect_stack_from_manifest("package.json", '{"dependencies": {"react-native": "^0.73.0"}}')
+    found = _detect_stack_from_manifest(
+        "package.json", '{"dependencies": {"react-native": "^0.73.0"}}'
+    )
     assert any(f["name"] == "React Native" for f in found)
 
 
@@ -278,9 +324,27 @@ def test_detect_stack_from_manifest_finds_react_native():
 def test_fetch_commit_history_presents_chronological_oldest_first(monkeypatch):
     # GitHub returns newest-first; we present oldest-first (a real build timeline).
     api_response = [
-        {"sha": "cccccccccccc", "commit": {"message": "Third commit\n\nbody", "author": {"name": "dev", "date": "2026-01-03T00:00:00Z"}}},
-        {"sha": "bbbbbbbbbbbb", "commit": {"message": "Second commit", "author": {"name": "dev", "date": "2026-01-02T00:00:00Z"}}},
-        {"sha": "aaaaaaaaaaaa", "commit": {"message": "First commit", "author": {"name": "dev", "date": "2026-01-01T00:00:00Z"}}},
+        {
+            "sha": "cccccccccccc",
+            "commit": {
+                "message": "Third commit\n\nbody",
+                "author": {"name": "dev", "date": "2026-01-03T00:00:00Z"},
+            },
+        },
+        {
+            "sha": "bbbbbbbbbbbb",
+            "commit": {
+                "message": "Second commit",
+                "author": {"name": "dev", "date": "2026-01-02T00:00:00Z"},
+            },
+        },
+        {
+            "sha": "aaaaaaaaaaaa",
+            "commit": {
+                "message": "First commit",
+                "author": {"name": "dev", "date": "2026-01-01T00:00:00Z"},
+            },
+        },
     ]
 
     async def fake_github_api_get(path):
@@ -290,7 +354,11 @@ def test_fetch_commit_history_presents_chronological_oldest_first(monkeypatch):
     monkeypatch.setattr(re_mod, "_github_api_get", fake_github_api_get)
 
     commits = asyncio.run(_fetch_commit_history("acme", "shop", "main"))
-    assert [c["message"] for c in commits] == ["First commit", "Second commit", "Third commit"]
+    assert [c["message"] for c in commits] == [
+        "First commit",
+        "Second commit",
+        "Third commit",
+    ]
     assert commits[0]["sha"] == "aaaaaaa"  # truncated to 7 chars
     assert commits[2]["message"] == "Third commit"  # first line only, body dropped
 
@@ -308,9 +376,16 @@ def test_fetch_commit_history_returns_empty_on_api_failure(monkeypatch):
 @pytest.mark.parametrize(
     "path",
     [
-        "source/index.ts", "source/main.ts", "src/preload.js", "source/menu.ts",
-        "source/tray.ts", "source/browser.ts", "source/browser-call.ts",
-        "source/config.ts", "source/notifications.ts", "source/menu-bar-mode.ts",
+        "source/index.ts",
+        "source/main.ts",
+        "src/preload.js",
+        "source/menu.ts",
+        "source/tray.ts",
+        "source/browser.ts",
+        "source/browser-call.ts",
+        "source/config.ts",
+        "source/notifications.ts",
+        "source/menu-bar-mode.ts",
     ],
 )
 def test_is_shell_core_file_matches_real_electron_file_names(path):
@@ -319,17 +394,30 @@ def test_is_shell_core_file_matches_real_electron_file_names(path):
     assert _is_shell_core_file(path) is True
 
 
-@pytest.mark.parametrize("path", ["source/emoji.ts", "source/util.ts", "source/types.ts", "source/spell-checker.ts"])
+@pytest.mark.parametrize(
+    "path",
+    ["source/emoji.ts", "source/util.ts", "source/types.ts", "source/spell-checker.ts"],
+)
 def test_is_shell_core_file_does_not_match_secondary_utility_files(path):
     assert _is_shell_core_file(path) is False
 
 
 def test_package_json_has_shell_dependency_detects_electron():
-    assert _package_json_has_shell_dependency('{"dependencies": {"electron-context-menu": "1.0.0"}, "devDependencies": {"electron": "^28.0.0"}}') is True
+    assert (
+        _package_json_has_shell_dependency(
+            '{"dependencies": {"electron-context-menu": "1.0.0"}, "devDependencies": {"electron": "^28.0.0"}}'
+        )
+        is True
+    )
 
 
 def test_package_json_has_shell_dependency_false_for_ordinary_web_app():
-    assert _package_json_has_shell_dependency('{"dependencies": {"react": "^18.0.0", "express": "^4.0.0"}}') is False
+    assert (
+        _package_json_has_shell_dependency(
+            '{"dependencies": {"react": "^18.0.0", "express": "^4.0.0"}}'
+        )
+        is False
+    )
 
 
 def test_package_json_has_shell_dependency_false_for_malformed_json():
@@ -354,8 +442,15 @@ def _build_test_asar(files: dict[str, bytes]) -> bytes:
     str_len = len(header_json)
     pad = (4 - ((4 + str_len) % 4)) % 4
     header_pickle_payload = struct.pack("<I", str_len) + header_json + (b"\x00" * pad)
-    header_pickle_bytes = struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
-    return struct.pack("<I", 4) + struct.pack("<I", len(header_pickle_bytes)) + header_pickle_bytes + file_data
+    header_pickle_bytes = (
+        struct.pack("<I", len(header_pickle_payload)) + header_pickle_payload
+    )
+    return (
+        struct.pack("<I", 4)
+        + struct.pack("<I", len(header_pickle_bytes))
+        + header_pickle_bytes
+        + file_data
+    )
 
 
 def test_analyze_local_folder_detects_electron_from_package_json():
@@ -374,7 +469,9 @@ def test_analyze_local_folder_unpacks_a_real_asar_and_extracts_its_shell_core_fi
         }
     )
     files = [_upload(asar_bytes, "resources/app.asar")]
-    result = asyncio.run(_analyze_local_folder(files, ["resources/app.asar"], "Messenger"))
+    result = asyncio.run(
+        _analyze_local_folder(files, ["resources/app.asar"], "Messenger")
+    )
 
     assert result["asar_unpacked"] is True
     assert any(t["name"] == "Electron" for t in result["tech_stack"])
@@ -393,7 +490,14 @@ def test_analyze_local_folder_rejects_when_nothing_uploaded():
 
 
 def test_analyze_local_folder_skips_a_corrupt_asar_without_crashing():
-    files = [_upload(b"not a real asar file", "resources/app.asar"), _upload(b"console.log(1)", "main.js")]
-    result = asyncio.run(_analyze_local_folder(files, ["resources/app.asar", "main.js"], "App"))
+    files = [
+        _upload(b"not a real asar file", "resources/app.asar"),
+        _upload(b"console.log(1)", "main.js"),
+    ]
+    result = asyncio.run(
+        _analyze_local_folder(files, ["resources/app.asar", "main.js"], "App")
+    )
     assert result["asar_unpacked"] is False
-    assert result["files_uploaded"] == 1  # only main.js survived; the corrupt asar was skipped
+    assert (
+        result["files_uploaded"] == 1
+    )  # only main.js survived; the corrupt asar was skipped

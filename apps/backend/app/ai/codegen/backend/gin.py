@@ -25,8 +25,20 @@
 
 import re
 
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 
 def _view_name(method: str, path: str) -> str:
@@ -50,8 +62,8 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Go GORM model struct for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
-Fields: {', '.join(ctx.table.get('key_fields', []))}
+Table purpose: {ctx.table.get("purpose", "")}
+Fields: {", ".join(ctx.table.get("key_fields", []))}
 
 Requirements:
 - Package declaration: `package models`
@@ -66,8 +78,12 @@ Requirements:
 Return ONLY the raw Go code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "go", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "go",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/models/{_slug(table_name)}.go",
@@ -111,18 +127,24 @@ Return ONLY the raw Go code for this one file (package decl + imports + each han
 function). No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "go", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "go",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/handlers/api.go",
-            language="go",
-            content=content,
-            description="Gin handlers implementing all API endpoints against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/handlers/api.go",
+                language="go",
+                content=content,
+                description="Gin handlers implementing all API endpoints against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
@@ -132,7 +154,8 @@ async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
         for e in ctx.endpoints
     )
     models_text = ", ".join(
-        f'{_pascal(t.get("name", "Item"))} (import "{module_name}/models")' for t in ctx.tables
+        f'{_pascal(t.get("name", "Item"))} (import "{module_name}/models")'
+        for t in ctx.tables
     )
 
     prompt = f"""Write ONE complete, real graphql-go/graphql schema file for this app, covering every capability below.
@@ -172,18 +195,24 @@ Return ONLY the raw Go code for this one file (package decl + imports + type/sch
 No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "go", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "go",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path=_GRAPHQL_SCHEMA_PATH,
-            language="go",
-            content=content,
-            description="graphql-go/graphql schema implementing every capability against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path=_GRAPHQL_SCHEMA_PATH,
+                language="go",
+                content=content,
+                description="graphql-go/graphql schema implementing every capability against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 ROUTES_BUILDERS = {"rest": _rest_routes, "graphql": _graphql_routes}
@@ -200,16 +229,24 @@ def _is_graphql(ctx: WiringCtx) -> bool:
     return any(f.path == _GRAPHQL_SCHEMA_PATH for f in ctx.routes_files)
 
 
-_METHOD_TO_GIN = {"GET": "GET", "POST": "POST", "PUT": "PUT", "DELETE": "DELETE", "PATCH": "PATCH"}
+_METHOD_TO_GIN = {
+    "GET": "GET",
+    "POST": "POST",
+    "PUT": "PUT",
+    "DELETE": "DELETE",
+    "PATCH": "PATCH",
+}
 
 
-def _build_main_go(module_name: str, endpoints: list[dict], model_files: list[GeneratedFile]) -> str:
+def _build_main_go(
+    module_name: str, endpoints: list[dict], model_files: list[GeneratedFile]
+) -> str:
     struct_names = [f.path.split("/")[-1].removesuffix(".go") for f in model_files]
     struct_names_pascal = [_pascal(s) for s in struct_names]
     automigrate_args = ", ".join(f"&models.{name}{{}}" for name in struct_names_pascal)
     routes = "\n".join(
         f'\tr.{_METHOD_TO_GIN.get(e.get("method", "GET").upper(), "GET")}("{_gin_path(e.get("path", "/"))}", '
-        f'handlers.{_view_name(e.get("method", "GET"), e.get("path", "/"))}(db))'
+        f"handlers.{_view_name(e.get('method', 'GET'), e.get('path', '/'))}(db))"
         for e in endpoints
     )
 
@@ -266,7 +303,9 @@ require (
 # as `graphql`) would collide — the library import is aliased `graphqlgo`
 # here so both stay unambiguous.
 def _build_main_go_graphql(module_name: str, model_files: list[GeneratedFile]) -> str:
-    struct_names_pascal = [_pascal(f.path.split("/")[-1].removesuffix(".go")) for f in model_files]
+    struct_names_pascal = [
+        _pascal(f.path.split("/")[-1].removesuffix(".go")) for f in model_files
+    ]
     automigrate_args = ", ".join(f"&models.{name}{{}}" for name in struct_names_pascal)
 
     return f"""package main
@@ -326,7 +365,14 @@ func main() {{
 
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    return [GeneratedFile(path="backend/go.mod", language="text", content=_go_mod(_module_name(ctx.project_name), _is_graphql(ctx)), description="Go module manifest")]
+    return [
+        GeneratedFile(
+            path="backend/go.mod",
+            language="text",
+            content=_go_mod(_module_name(ctx.project_name), _is_graphql(ctx)),
+            description="Go module manifest",
+        )
+    ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
@@ -337,7 +383,12 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
         else _build_main_go(module_name, ctx.endpoints, ctx.model_files)
     )
     return [
-        GeneratedFile(path="backend/main.go", language="go", content=main_go, description="Gin entry point — connects the DB, auto-migrates every model, wires every route/resolver"),
+        GeneratedFile(
+            path="backend/main.go",
+            language="go",
+            content=main_go,
+            description="Gin entry point — connects the DB, auto-migrates every model, wires every route/resolver",
+        ),
     ]
 
 

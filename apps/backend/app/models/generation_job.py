@@ -26,7 +26,15 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
 )
 from sqlalchemy.sql import func
 

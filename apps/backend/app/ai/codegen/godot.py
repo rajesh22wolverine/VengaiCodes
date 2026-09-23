@@ -66,11 +66,14 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     class_name = _class_name(ctx.screen.get("name", "Screen"))
     screen_name = ctx.screen.get("name", "Screen")
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
 
     capabilities_text = "\n".join(
-        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}"
+        for c in ctx.native_capabilities
+        if c in NATIVE_CAPABILITY_DESCRIPTIONS
     )
     native_section = (
         f"\nDevice features available (describe the gameplay/UX use in comments — Godot's own "
@@ -84,7 +87,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Godot 4 GDScript file implementing the "{screen_name}" scene of this game.
 
-Scene purpose: {ctx.screen.get('purpose', '')}
+Scene purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this scene can call:
 {endpoints_text}
@@ -117,8 +120,12 @@ Requirements:
 Return ONLY the raw GDScript code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "gdscript", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(label="Game"),
+        prompt,
+        "gdscript",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(label="Game"),
     )
     return GeneratedFile(
         path=f"frontend/scenes/{class_name}.gd",
@@ -364,7 +371,9 @@ def manifest_files(project_name: str) -> list[GeneratedFile]:
         GeneratedFile(
             path="frontend/export_presets.cfg",
             language="ini",
-            content=_EXPORT_PRESETS_CFG.format(package_name=package_name, project_name=project_name),
+            content=_EXPORT_PRESETS_CFG.format(
+                package_name=package_name, project_name=project_name
+            ),
             description="Android + Windows Desktop + Linux export presets (least-verified file in this pipeline — see godot.py header)",
         ),
     ]

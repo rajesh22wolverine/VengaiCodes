@@ -25,13 +25,27 @@
 
 import re
 
-from app.ai.codegen.types import BackendAdapter, FileResult, ModelCtx, RoutesCtx, WiringCtx
-from app.ai.codegen_shared import GROQ_FILE_MAX_TOKENS, GeneratedFile, _pascal, _slug, generate_text_validated
+from app.ai.codegen.types import (
+    BackendAdapter,
+    FileResult,
+    ModelCtx,
+    RoutesCtx,
+    WiringCtx,
+)
+from app.ai.codegen_shared import (
+    GROQ_FILE_MAX_TOKENS,
+    GeneratedFile,
+    _pascal,
+    _slug,
+    generate_text_validated,
+)
 
 
 def _infer_column_type(field_name: str) -> str:
     lowered = field_name.lower()
-    if any(k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")):
+    if any(
+        k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")
+    ):
         return "boolean"
     if any(k in lowered for k in ("_at", "date", "time")):
         return "dateTime"
@@ -63,13 +77,13 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Eloquent model class for the "{table_name}" table of this app.
 
-Table purpose: {ctx.table.get('purpose', '')}
+Table purpose: {ctx.table.get("purpose", "")}
 Fields (already defined as DB columns by a migration — do NOT redeclare them as properties):
-{', '.join(fields)}
+{", ".join(fields)}
 
 Requirements:
 - Class name: {class_name} extends Model (`use Illuminate\\Database\\Eloquent\\Model;`).
-- Declare `protected $fillable = [{', '.join(repr(f) for f in fields)}];` for mass assignment.
+- Declare `protected $fillable = [{", ".join(repr(f) for f in fields)}];` for mass assignment.
 - Add `$casts` for any boolean/datetime/decimal fields, real relationships (`hasMany`/
   `belongsTo`) if implied by the key features / user stories, and any real accessor/mutator
   methods the app's behavior needs.
@@ -79,8 +93,12 @@ Return ONLY the raw PHP code for this one file (including `<?php` and `namespace
 No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "php", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "php",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"backend/app/Models/{class_name}.php",
@@ -122,18 +140,24 @@ Return ONLY the raw PHP code for this one file (including `<?php` and the namesp
 No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "php", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "php",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
-    return [(
-        GeneratedFile(
-            path="backend/app/Http/Controllers/ApiController.php",
-            language="php",
-            content=content,
-            description="Laravel controller implementing all API endpoints against the real models",
-        ),
-        issue,
-    )]
+    return [
+        (
+            GeneratedFile(
+                path="backend/app/Http/Controllers/ApiController.php",
+                language="php",
+                content=content,
+                description="Laravel controller implementing all API endpoints against the real models",
+            ),
+            issue,
+        )
+    ]
 
 
 def _lighthouse_scalar(field_name: str) -> str:
@@ -189,11 +213,15 @@ def _graphql_schema(tables: list[dict]) -> str:
         query_fields.append(f"  {plural}: [{name}!]! @paginate(defaultCount: 25)")
         query_fields.append(f"  {singular}(id: ID @eq): {name} @find")
         query_fields.append(
-            f'  {_search_field_name(t.get("name", "Item"))}(term: String!): [{name}!]! '
+            f"  {_search_field_name(t.get('name', 'Item'))}(term: String!): [{name}!]! "
             f'@field(resolver: "App\\\\GraphQL\\\\Queries\\\\CustomQueries@{_search_field_name(t.get("name", "Item"))}")'
         )
-        mutation_fields.append(f"  create{name}({_mutation_args(t, False)}): {name}! @create")
-        mutation_fields.append(f"  update{name}(id: ID!, {_mutation_args(t, False)}): {name}! @update")
+        mutation_fields.append(
+            f"  create{name}({_mutation_args(t, False)}): {name}! @create"
+        )
+        mutation_fields.append(
+            f"  update{name}(id: ID!, {_mutation_args(t, False)}): {name}! @update"
+        )
         mutation_fields.append(f"  delete{name}(id: ID! @whereKey): {name} @delete")
 
     query_block = "type Query {\n" + "\n".join(query_fields) + "\n}"
@@ -203,14 +231,18 @@ def _graphql_schema(tables: list[dict]) -> str:
 
 async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
     schema_sdl = _graphql_schema(ctx.tables)
-    tables_text = "\n".join(
-        f"- {_search_field_name(t.get('name', 'Item'))}($root, array $args): searches "
-        f"{_pascal(t.get('name', 'Item'))} (fields: {', '.join(_slug(f) for f in (t.get('key_fields', []) or []))}) "
-        f"by the string argument $args['term']"
-        for t in ctx.tables
-    ) or "(no tables)"
+    tables_text = (
+        "\n".join(
+            f"- {_search_field_name(t.get('name', 'Item'))}($root, array $args): searches "
+            f"{_pascal(t.get('name', 'Item'))} (fields: {', '.join(_slug(f) for f in (t.get('key_fields', []) or []))}) "
+            f"by the string argument $args['term']"
+            for t in ctx.tables
+        )
+        or "(no tables)"
+    )
     endpoints_text = "\n".join(
-        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}" for e in ctx.endpoints
+        f"- {e.get('method')} {e.get('path')}: {e.get('purpose')}"
+        for e in ctx.endpoints
     )
 
     prompt = f"""A Lighthouse GraphQL schema (below) has ALREADY been generated deterministically for this app — every field except the search ones is handled entirely by Lighthouse's own directives (@all/@find/@create/@update/@delete), so there is nothing to implement for those. Write the ONE PHP resolver class that implements every search method the schema references via @field(resolver:).
@@ -239,8 +271,12 @@ Return ONLY the raw PHP code for this one file (including `<?php` and the namesp
 No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "php", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "php",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return [
         (
@@ -281,8 +317,14 @@ def _is_graphql(ctx: WiringCtx) -> bool:
 def _build_migration_php(index: int, table: dict) -> tuple[str, str]:
     table_name = table.get("name", "Item")
     plural = _table_slug(table_name)
-    fields = [f for f in (table.get("key_fields", []) or []) if _slug(f) not in ("created_at", "updated_at")]
-    columns = "\n".join(f"            $table->{_infer_column_type(f)}('{_slug(f)}');" for f in fields)
+    fields = [
+        f
+        for f in (table.get("key_fields", []) or [])
+        if _slug(f) not in ("created_at", "updated_at")
+    ]
+    columns = "\n".join(
+        f"            $table->{_infer_column_type(f)}('{_slug(f)}');" for f in fields
+    )
 
     content = f"""<?php
 
@@ -316,11 +358,14 @@ return new class extends Migration
 
 
 def _build_routes_api_php(endpoints: list[dict]) -> str:
-    lines = "\n".join(
-        f"Route::{e.get('method', 'GET').lower()}('{_laravel_path(e.get('path', '/'))}', "
-        f"[ApiController::class, '{_view_name(e.get('method', 'GET'), e.get('path', '/'))}']);"
-        for e in endpoints
-    ) or "// no endpoints defined"
+    lines = (
+        "\n".join(
+            f"Route::{e.get('method', 'GET').lower()}('{_laravel_path(e.get('path', '/'))}', "
+            f"[ApiController::class, '{_view_name(e.get('method', 'GET'), e.get('path', '/'))}']);"
+            for e in endpoints
+        )
+        or "// no endpoints defined"
+    )
     return f"""<?php
 
 use App\\Http\\Controllers\\ApiController;
@@ -403,12 +448,18 @@ def _composer_json(project_name: str, graphql: bool) -> str:
         # release/composer.json at the time this was written.
         require["nuwave/lighthouse"] = "^6.70"
 
-    return json.dumps({
-        "name": package_name,
-        "type": "project",
-        "require": require,
-        "autoload": {"psr-4": {"App\\\\": "app/"}},
-    }, indent=2) + "\n"
+    return (
+        json.dumps(
+            {
+                "name": package_name,
+                "type": "project",
+                "require": require,
+                "autoload": {"psr-4": {"App\\\\": "app/"}},
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def _env_file() -> str:
@@ -441,45 +492,86 @@ return [
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     return [
-        GeneratedFile(path="backend/composer.json", language="json", content=_composer_json(ctx.project_name, _is_graphql(ctx)), description="PHP dependency manifest"),
-        GeneratedFile(path="backend/.env", language="text", content=_env_file(), description="Environment config (SQLite, zero external setup)"),
-        GeneratedFile(path="backend/config/database.php", language="php", content=_database_php(), description="Database config"),
+        GeneratedFile(
+            path="backend/composer.json",
+            language="json",
+            content=_composer_json(ctx.project_name, _is_graphql(ctx)),
+            description="PHP dependency manifest",
+        ),
+        GeneratedFile(
+            path="backend/.env",
+            language="text",
+            content=_env_file(),
+            description="Environment config (SQLite, zero external setup)",
+        ),
+        GeneratedFile(
+            path="backend/config/database.php",
+            language="php",
+            content=_database_php(),
+            description="Database config",
+        ),
     ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     files = [
-        GeneratedFile(path="backend/bootstrap/app.php", language="php", content=_BOOTSTRAP_APP_PHP, description="Laravel 11 application bootstrap"),
-        GeneratedFile(path="backend/public/index.php", language="php", content=_PUBLIC_INDEX_PHP, description="HTTP entry point"),
-        GeneratedFile(path="backend/artisan", language="php", content=_ARTISAN, description="Artisan CLI entry point"),
-        GeneratedFile(path="backend/routes/console.php", language="php", content=_ROUTES_CONSOLE_PHP, description="Console routes (none generated)"),
+        GeneratedFile(
+            path="backend/bootstrap/app.php",
+            language="php",
+            content=_BOOTSTRAP_APP_PHP,
+            description="Laravel 11 application bootstrap",
+        ),
+        GeneratedFile(
+            path="backend/public/index.php",
+            language="php",
+            content=_PUBLIC_INDEX_PHP,
+            description="HTTP entry point",
+        ),
+        GeneratedFile(
+            path="backend/artisan",
+            language="php",
+            content=_ARTISAN,
+            description="Artisan CLI entry point",
+        ),
+        GeneratedFile(
+            path="backend/routes/console.php",
+            language="php",
+            content=_ROUTES_CONSOLE_PHP,
+            description="Console routes (none generated)",
+        ),
     ]
     if _is_graphql(ctx):
         # bootstrap/app.php's withRouting(api: .../routes/api.php) needs
         # this file to exist even though Lighthouse's own service
         # provider auto-registers /graphql independently of it (Laravel,
         # unlike Lumen, needs no manual route — see module header).
-        files.append(GeneratedFile(
-            path="backend/routes/api.php",
-            language="php",
-            content="<?php\n\n// GraphQL only — Lighthouse's service provider auto-registers /graphql.\n// No REST routes for this project.\n",
-            description="Empty REST routing file — GraphQL is served by Lighthouse's auto-registered /graphql route instead",
-        ))
+        files.append(
+            GeneratedFile(
+                path="backend/routes/api.php",
+                language="php",
+                content="<?php\n\n// GraphQL only — Lighthouse's service provider auto-registers /graphql.\n// No REST routes for this project.\n",
+                description="Empty REST routing file — GraphQL is served by Lighthouse's auto-registered /graphql route instead",
+            )
+        )
     elif ctx.endpoints:
-        files.append(GeneratedFile(
-            path="backend/routes/api.php",
-            language="php",
-            content=_build_routes_api_php(ctx.endpoints),
-            description="API routing, deterministically wired to the exact controller method names dictated to the AI",
-        ))
+        files.append(
+            GeneratedFile(
+                path="backend/routes/api.php",
+                language="php",
+                content=_build_routes_api_php(ctx.endpoints),
+                description="API routing, deterministically wired to the exact controller method names dictated to the AI",
+            )
+        )
     for index, table in enumerate(ctx.tables):
         filename, content = _build_migration_php(index, table)
-        files.append(GeneratedFile(
-            path=f"backend/database/migrations/{filename}",
-            language="php",
-            content=content,
-            description=f"Schema migration for {table.get('name', 'Item')}",
-        ))
+        files.append(
+            GeneratedFile(
+                path=f"backend/database/migrations/{filename}",
+                language="php",
+                content=content,
+                description=f"Schema migration for {table.get('name', 'Item')}",
+            )
+        )
     return files
 
 

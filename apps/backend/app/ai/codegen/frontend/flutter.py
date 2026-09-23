@@ -41,10 +41,39 @@ def _snake(name: str) -> str:
 # differs from Java's, so it's kept as its own small set here rather than
 # forced through that Android-specific helper.
 _DART_RESERVED_WORDS = {
-    "assert", "break", "case", "catch", "class", "const", "continue", "default",
-    "do", "else", "enum", "extends", "false", "final", "finally", "for", "if",
-    "in", "is", "new", "null", "rethrow", "return", "super", "switch", "this",
-    "throw", "true", "try", "var", "void", "while", "with",
+    "assert",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "else",
+    "enum",
+    "extends",
+    "false",
+    "final",
+    "finally",
+    "for",
+    "if",
+    "in",
+    "is",
+    "new",
+    "null",
+    "rethrow",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "var",
+    "void",
+    "while",
+    "with",
 }
 
 
@@ -62,7 +91,9 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
     network_note = GRAPHQL_CALLING_CONVENTION if ctx.api_style == "graphql" else ""
 
     capabilities_text = "\n".join(
-        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}" for c in ctx.native_capabilities if c in NATIVE_CAPABILITY_DESCRIPTIONS
+        f"- {NATIVE_CAPABILITY_DESCRIPTIONS[c]}"
+        for c in ctx.native_capabilities
+        if c in NATIVE_CAPABILITY_DESCRIPTIONS
     )
     native_section = (
         f"\nNative device features available to this app (use the real Flutter/Dart package "
@@ -76,7 +107,7 @@ async def generate_screen(ctx: ScreenCtx) -> FileResult:
 
     prompt = f"""Write ONE complete, real Flutter widget file implementing the "{screen_name}" screen of this app.
 
-Screen purpose: {ctx.screen.get('purpose', '')}
+Screen purpose: {ctx.screen.get("purpose", "")}
 
 API endpoints this screen can call:
 {endpoints_text}
@@ -98,8 +129,12 @@ Requirements:
 Return ONLY the raw Dart code for this one file. No markdown fences, no explanation, no JSON."""
 
     content, issue = await generate_text_validated(
-        prompt, "dart", GROQ_FILE_MAX_TOKENS,
-        user=ctx.user, db=ctx.db, context=ctx.shared_context(),
+        prompt,
+        "dart",
+        GROQ_FILE_MAX_TOKENS,
+        user=ctx.user,
+        db=ctx.db,
+        context=ctx.shared_context(),
     )
     return GeneratedFile(
         path=f"frontend/lib/screens/{_snake(screen_name)}_screen.dart",
@@ -118,7 +153,9 @@ def _screen_meta_from_path(file: GeneratedFile) -> tuple[str, str]:
 
 def _build_main_dart(project_name: str, screens: list[tuple[str, str]]) -> str:
     imports = "\n".join(f"import 'screens/{stem}.dart';" for stem, _ in screens)
-    names = ", ".join(f"'{_pascal(stem.removesuffix('_screen'))}'" for stem, _ in screens)
+    names = ", ".join(
+        f"'{_pascal(stem.removesuffix('_screen'))}'" for stem, _ in screens
+    )
     widgets = ", ".join(cls for _, cls in screens)
 
     return f"""import 'package:flutter/material.dart';
@@ -218,15 +255,32 @@ _ANALYSIS_OPTIONS = """include: package:flutter_lints/flutter.yaml
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     package_name = _package_slug(ctx.project_name)
     return [
-        GeneratedFile(path="frontend/pubspec.yaml", language="yaml", content=_pubspec_yaml(package_name), description="Flutter package manifest"),
-        GeneratedFile(path="frontend/analysis_options.yaml", language="yaml", content=_ANALYSIS_OPTIONS, description="Dart analyzer config"),
+        GeneratedFile(
+            path="frontend/pubspec.yaml",
+            language="yaml",
+            content=_pubspec_yaml(package_name),
+            description="Flutter package manifest",
+        ),
+        GeneratedFile(
+            path="frontend/analysis_options.yaml",
+            language="yaml",
+            content=_ANALYSIS_OPTIONS,
+            description="Dart analyzer config",
+        ),
     ]
 
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    screens = [_screen_meta_from_path(f) for f in ctx.screen_files] or [("home_screen", "HomeScreen")]
+    screens = [_screen_meta_from_path(f) for f in ctx.screen_files] or [
+        ("home_screen", "HomeScreen")
+    ]
     return [
-        GeneratedFile(path="frontend/lib/main.dart", language="dart", content=_build_main_dart(ctx.project_name, screens), description="Flutter app entry point"),
+        GeneratedFile(
+            path="frontend/lib/main.dart",
+            language="dart",
+            content=_build_main_dart(ctx.project_name, screens),
+            description="Flutter app entry point",
+        ),
     ]
 
 
