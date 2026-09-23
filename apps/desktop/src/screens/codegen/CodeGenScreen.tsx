@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree, Download, BookOpen, AlertTriangle
+  ArrowLeft, FileCode2, ChevronRight, Loader2, ThumbsUp, FolderTree, Download, BookOpen, AlertTriangle, Zap, Sparkles
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
@@ -49,9 +49,12 @@ export default function CodeGenScreen() {
 
   const [codegen, setCodegen] = useState<CodeGenResult | null>(null);
   const [stackUsed, setStackUsed] = useState<StackUsed | null>(null);
+  const [generationMode, setGenerationMode] = useState<"ai" | "deterministic">("ai");
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [needsModeChoice, setNeedsModeChoice] = useState(false);
+  const [isGeneratingDeterministic, setIsGeneratingDeterministic] = useState(false);
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
@@ -75,10 +78,14 @@ export default function CodeGenScreen() {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
+      setGenerationMode(data.generation_mode === "deterministic" ? "deterministic" : "ai");
       setSelectedFile(data.codegen.files?.[0] || null);
       setIsLoading(false);
     } catch {
-      await generate();
+      // Nothing generated yet — let the user pick how, rather than
+      // silently defaulting to an AI run they might not have wanted.
+      setIsLoading(false);
+      setNeedsModeChoice(true);
     }
   };
 
@@ -87,6 +94,7 @@ export default function CodeGenScreen() {
   // run survives this screen closing, a dropped connection, even a
   // backend restart, and picks up from the last finished file.
   const generate = async () => {
+    setNeedsModeChoice(false);
     setIsGenerating(true);
     setIsLoading(false);
     try {
@@ -101,6 +109,7 @@ export default function CodeGenScreen() {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
+      setGenerationMode("ai");
       setSelectedFile(data.codegen.files?.[0] || null);
       toast.success("Your code is ready! 💻🐯");
     } catch (error: any) {
@@ -116,6 +125,34 @@ export default function CodeGenScreen() {
         setIsGenerating(false);
         setJob(null);
       }
+    }
+  };
+
+  // Deterministic mode is synchronous — no AI call means no job to poll,
+  // it either returns in this one request or 400s with a clear reason
+  // (today: only the React + FastAPI REST pairing is supported). Safe to
+  // call again later too: any hand-edit inside a VENGAI:CUSTOM section of
+  // a previously generated file survives — see codegen_deterministic.py.
+  const generateDeterministic = async () => {
+    setNeedsModeChoice(false);
+    setIsGeneratingDeterministic(true);
+    try {
+      const { data } = await apiClient.post("/codegen/generate-deterministic", {
+        project_id: projectId,
+      });
+      setCodegen(data.codegen);
+      setStackUsed(data.stack_used || null);
+      setGenerationMode("deterministic");
+      setSelectedFile(data.codegen.files?.[0] || null);
+      setIsLoading(false);
+      toast.success("Code generated instantly — no AI used 🐯⚡");
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.detail || error.message || "Failed to generate code deterministically."
+      );
+      if (!codegen) setNeedsModeChoice(true);
+    } finally {
+      setIsGeneratingDeterministic(false);
     }
   };
 
@@ -208,6 +245,48 @@ export default function CodeGenScreen() {
     );
   }
 
+  if (needsModeChoice) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center h-full bg-[var(--color-background)] px-6">
+        <BabyTiger size={56} expression="happy" />
+        <h1 className="mt-4 text-lg font-semibold text-[var(--color-text-primary)]">
+          How should Baby Tiger write your code?
+        </h1>
+        <p className="mt-1 text-sm text-[var(--color-text-tertiary)] text-center max-w-md">
+          Choose once — you can switch or regenerate later without losing any custom edits.
+        </p>
+        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-xl">
+          <button
+            onClick={generate}
+            className="text-left p-5 rounded-2xl border-2 border-[var(--color-primary)] bg-[var(--color-primary-light)] hover:opacity-90 transition-opacity"
+          >
+            <Sparkles className="w-5 h-5 text-[var(--color-primary)] mb-2" />
+            <p className="text-sm font-semibold text-[var(--color-text-primary)]">AI-Generated</p>
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+              One AI call per file — handles any screen, any logic. Works for every stack.
+            </p>
+          </button>
+          <button
+            onClick={generateDeterministic}
+            disabled={isGeneratingDeterministic}
+            className="text-left p-5 rounded-2xl border-2 border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60"
+          >
+            {isGeneratingDeterministic ? (
+              <Loader2 className="w-5 h-5 text-[var(--color-text-tertiary)] mb-2 animate-spin" />
+            ) : (
+              <Zap className="w-5 h-5 text-[var(--color-text-tertiary)] mb-2" />
+            )}
+            <p className="text-sm font-semibold text-[var(--color-text-primary)]">Deterministic</p>
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+              Instant, free, no AI call — real CRUD code from your database tables. Currently
+              React + FastAPI (REST) only.
+            </p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!codegen) return null;
 
   return (
@@ -233,9 +312,19 @@ export default function CodeGenScreen() {
 
       {/* Summary banner */}
       <div className="px-6 py-3 bg-[var(--color-primary-light)] border-b border-[var(--color-border)] flex-shrink-0">
-        <p className="text-xs text-[var(--color-primary)] leading-relaxed max-w-3xl">
-          {codegen.summary}
-        </p>
+        <div className="flex items-start gap-2 max-w-3xl">
+          {generationMode === "deterministic" ? (
+            <Zap className="w-3.5 h-3.5 text-[var(--color-primary)] flex-shrink-0 mt-0.5" />
+          ) : (
+            <Sparkles className="w-3.5 h-3.5 text-[var(--color-primary)] flex-shrink-0 mt-0.5" />
+          )}
+          <p className="text-xs text-[var(--color-primary)] leading-relaxed">
+            {generationMode === "deterministic" && (
+              <span className="font-semibold">Deterministic — no AI used. </span>
+            )}
+            {codegen.summary}
+          </p>
+        </div>
       </div>
 
       {/* Stack substitution banner — only shown when the chosen stack had to be swapped */}
@@ -332,6 +421,19 @@ export default function CodeGenScreen() {
             This is a starter skeleton — review the structure, then continue to Testing 🧪
           </p>
           <div className="flex items-center gap-3 flex-shrink-0">
+            <button
+              onClick={generateDeterministic}
+              disabled={isGeneratingDeterministic}
+              title="Regenerate deterministically (no AI, instant, free). Any code inside a VENGAI:CUSTOM section is preserved."
+              className="px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 flex items-center gap-2"
+            >
+              {isGeneratingDeterministic ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4" />
+              )}
+              Regenerate (No AI)
+            </button>
             <button
               onClick={handleDownloadDocs}
               disabled={isDownloadingDocs}

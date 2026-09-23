@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { AlertTriangle, ArrowLeft, BookOpen, Download, FileCode2, ThumbsUp } from "lucide-react-native";
+import { AlertTriangle, ArrowLeft, BookOpen, Download, FileCode2, Sparkles, ThumbsUp, Zap } from "lucide-react-native";
 
 import apiClient from "@/lib/api";
 import {
@@ -53,9 +53,12 @@ export default function CodeGenScreen() {
 
   const [codegen, setCodegen] = useState<CodeGenResult | null>(null);
   const [stackUsed, setStackUsed] = useState<StackUsed | null>(null);
+  const [generationMode, setGenerationMode] = useState<"ai" | "deterministic">("ai");
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [needsModeChoice, setNeedsModeChoice] = useState(false);
+  const [isGeneratingDeterministic, setIsGeneratingDeterministic] = useState(false);
   const [job, setJob] = useState<GenerationJob | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
@@ -79,9 +82,13 @@ export default function CodeGenScreen() {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
+      setGenerationMode(data.generation_mode === "deterministic" ? "deterministic" : "ai");
       setIsLoading(false);
     } catch {
-      await generate();
+      // Nothing generated yet — let the user pick how, rather than
+      // silently defaulting to an AI run they might not have wanted.
+      setIsLoading(false);
+      setNeedsModeChoice(true);
     }
   };
 
@@ -90,6 +97,7 @@ export default function CodeGenScreen() {
   // on a phone connection. It runs as a background job we follow, and
   // resumes from the last finished file if anything interrupts it.
   const generate = async () => {
+    setNeedsModeChoice(false);
     setIsGenerating(true);
     setIsLoading(false);
     try {
@@ -104,6 +112,7 @@ export default function CodeGenScreen() {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
+      setGenerationMode("ai");
       showToast("Your code is ready! 💻🐯");
     } catch (error: any) {
       if (abandoned.current) return;
@@ -118,6 +127,34 @@ export default function CodeGenScreen() {
         setIsGenerating(false);
         setJob(null);
       }
+    }
+  };
+
+  // Deterministic mode is synchronous — no AI call means no job to poll,
+  // it either returns in this one request or 400s with a clear reason
+  // (today: only the React + FastAPI REST pairing is supported). Safe to
+  // call again later: any hand-edit inside a VENGAI:CUSTOM section of a
+  // previously generated file survives — see codegen_deterministic.py.
+  const generateDeterministic = async () => {
+    setNeedsModeChoice(false);
+    setIsGeneratingDeterministic(true);
+    try {
+      const { data } = await apiClient.post("/codegen/generate-deterministic", {
+        project_id: projectId,
+      });
+      setCodegen(data.codegen);
+      setStackUsed(data.stack_used || null);
+      setGenerationMode("deterministic");
+      setIsLoading(false);
+      showToast("Code generated instantly — no AI used 🐯⚡");
+    } catch (error: any) {
+      showToast(
+        error.response?.data?.detail || error.message || "Failed to generate code deterministically.",
+        "error"
+      );
+      if (!codegen) setNeedsModeChoice(true);
+    } finally {
+      setIsGeneratingDeterministic(false);
     }
   };
 
@@ -181,6 +218,47 @@ export default function CodeGenScreen() {
     );
   }
 
+  if (needsModeChoice) {
+    return (
+      <View style={[styles.screen, styles.choiceScreen, { backgroundColor: colors.background }]}>
+        <Text style={[styles.choiceTitle, { color: colors.textPrimary }]}>
+          How should Baby Tiger write your code?
+        </Text>
+        <Text style={[styles.choiceSubtitle, { color: colors.textTertiary }]}>
+          Choose once — you can switch or regenerate later without losing any custom edits.
+        </Text>
+
+        <Pressable
+          onPress={generate}
+          style={[styles.choiceCard, { borderColor: colors.primary, backgroundColor: colors.primaryLight }]}
+        >
+          <Sparkles size={20} color={colors.primary} />
+          <Text style={[styles.choiceCardTitle, { color: colors.textPrimary }]}>AI-Generated</Text>
+          <Text style={[styles.choiceCardBody, { color: colors.textSecondary }]}>
+            One AI call per file — handles any screen, any logic. Works for every stack.
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={generateDeterministic}
+          disabled={isGeneratingDeterministic}
+          style={[styles.choiceCard, { borderColor: colors.border, backgroundColor: colors.surface }, isGeneratingDeterministic && { opacity: 0.6 }]}
+        >
+          {isGeneratingDeterministic ? (
+            <ActivityIndicator size="small" color={colors.textTertiary} />
+          ) : (
+            <Zap size={20} color={colors.textTertiary} />
+          )}
+          <Text style={[styles.choiceCardTitle, { color: colors.textPrimary }]}>Deterministic</Text>
+          <Text style={[styles.choiceCardBody, { color: colors.textSecondary }]}>
+            Instant, free, no AI call — real CRUD code from your database tables. Currently React
+            + FastAPI (REST) only.
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   if (!codegen) return null;
 
   return (
@@ -190,8 +268,18 @@ export default function CodeGenScreen() {
         subtitle={`Phase 4 of 7 — ${codegen.files.length} file${codegen.files.length === 1 ? "" : "s"} generated`}
       />
 
-      <View style={[styles.summaryBanner, { backgroundColor: colors.primaryLight, borderBottomColor: colors.border }]}>
-        <Text style={{ color: colors.primary, fontSize: 12, lineHeight: 17 }}>{codegen.summary}</Text>
+      <View style={[styles.summaryBanner, { backgroundColor: colors.primaryLight, borderBottomColor: colors.border, flexDirection: "row", gap: 8 }]}>
+        {generationMode === "deterministic" ? (
+          <Zap size={14} color={colors.primary} style={{ marginTop: 1 }} />
+        ) : (
+          <Sparkles size={14} color={colors.primary} style={{ marginTop: 1 }} />
+        )}
+        <Text style={{ color: colors.primary, fontSize: 12, lineHeight: 17, flex: 1 }}>
+          {generationMode === "deterministic" && (
+            <Text style={{ fontWeight: "700" }}>Deterministic — no AI used. </Text>
+          )}
+          {codegen.summary}
+        </Text>
       </View>
 
       {stackUsed?.fallback_reason && (
@@ -246,6 +334,7 @@ export default function CodeGenScreen() {
       <PhaseFooter
         note="This is a starter skeleton — review the structure, then continue to Testing 🧪"
         secondaryActions={[
+          { label: "Regenerate (No AI)", icon: Zap, onPress: generateDeterministic, loading: isGeneratingDeterministic },
           { label: "Export Docs", icon: BookOpen, onPress: handleDownloadDocs, loading: isDownloadingDocs },
           { label: "Download ZIP", icon: Download, onPress: handleDownload, loading: isDownloading },
         ]}
@@ -261,6 +350,12 @@ export default function CodeGenScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   flex: { flex: 1 },
+  choiceScreen: { alignItems: "center", justifyContent: "center", padding: 24, gap: 14 },
+  choiceTitle: { fontSize: 17, fontWeight: "700", textAlign: "center" },
+  choiceSubtitle: { fontSize: 13, textAlign: "center", marginBottom: 10, lineHeight: 18 },
+  choiceCard: { width: "100%", borderWidth: 2, borderRadius: 16, padding: 16, gap: 6 },
+  choiceCardTitle: { fontSize: 14, fontWeight: "700" },
+  choiceCardBody: { fontSize: 12, lineHeight: 17 },
   summaryBanner: { padding: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   warningBanner: { flexDirection: "row", gap: 8, padding: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   fileListContent: { padding: 12 },

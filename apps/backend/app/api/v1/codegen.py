@@ -30,8 +30,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import codegen_runner
+from app.ai import codegen_deterministic, codegen_runner
 from app.ai.codegen_shared import GeneratedFile
+from app.ai.stack_matrix import get_project_stack
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
 from app.models.generation_job import JOB_CANCELLED, JOB_SUCCEEDED
@@ -63,6 +64,10 @@ class GenerateCodeResponse(BaseModel):
     success: bool = True
     codegen: CodeGenResult
     stack_used: StackUsed
+    # "ai" for the default per-file AI path, "deterministic" for the
+    # schema-driven no-AI path (codegen_deterministic.py). Absent on any
+    # codegen_data written before this field existed, hence the default.
+    generation_mode: str = "ai"
 
 
 class ApproveCodeRequest(BaseModel):
@@ -110,6 +115,7 @@ def _saved_result(project: Project) -> GenerateCodeResponse:
     return GenerateCodeResponse(
         codegen=CodeGenResult(**data.get("codegen", {"summary": "", "files": []})),
         stack_used=StackUsed(**stack_used),
+        generation_mode=data.get("generation_mode", "ai"),
     )
 
 
@@ -226,6 +232,53 @@ async def generate_code(
     return _saved_result(project)
 
 
+@router.post(
+    "/generate-deterministic",
+    response_model=GenerateCodeResponse,
+    summary="Generate real CRUD code deterministically (no AI call) — React + FastAPI (REST) only",
+)
+async def generate_code_deterministic(
+    payload: GenerateCodeRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    An alternative to /generate and /start for the one pairing
+    codegen_deterministic.py supports today. Runs synchronously in this
+    one request — unlike the AI path, there's no AI latency to hide
+    behind a background job, so the generation_jobs machinery is
+    intentionally not used here at all.
+
+    Overwrites project.codegen_data like the AI path does, EXCEPT that
+    any VENGAI:CUSTOM section from a previous generation (AI or
+    deterministic) at the same file path is preserved — see
+    codegen_deterministic.merge_preserving_custom_code().
+    """
+    project = await _get_generatable_project(db, user, payload.project_id)
+    stack_info = get_project_stack(project)
+
+    if not codegen_deterministic.is_supported_stack(stack_info):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Deterministic (schema-driven, no-AI) code generation currently supports "
+                "React + FastAPI (REST) only. Pick that combination in Stack Selection, or "
+                "use AI-generated code for this project's stack."
+            ),
+        )
+
+    try:
+        codegen_data = codegen_deterministic.build_deterministic_codegen_data(project, stack_info)
+    except codegen_deterministic.DeterministicCodegenError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    project.codegen_data = codegen_data
+    await db.commit()
+    await db.refresh(project)
+
+    return _saved_result(project)
+
+
 # ───────────────────────────────────────────────
 #  Results
 # ───────────────────────────────────────────────
@@ -253,6 +306,7 @@ async def get_code(
         "user_approved": project.codegen_data.get("user_approved", False),
         "generated_at": project.codegen_data.get("generated_at"),
         "stack_used": project.codegen_data.get("stack_used"),
+        "generation_mode": project.codegen_data.get("generation_mode", "ai"),
     }
 
 
