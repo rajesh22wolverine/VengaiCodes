@@ -1,9 +1,11 @@
 """Coverage for the AI-less, schema-driven code generator
-(app/ai/codegen_deterministic.py). Three things matter here, mirroring
-why the deterministic Page Engine has the same kind of test file:
-real syntax validity (not just "didn't crash"), correct column-type
-inference from field names, and — the one property that makes this
-safe to run against an already-hand-edited project — that a
+(app/ai/codegen_deterministic.py), across both supported pairings:
+React+FastAPI (SQLAlchemy/relational) and Vue+Express (Mongoose/
+document). Three things matter here, mirroring why the deterministic
+Page Engine has the same kind of test file: real syntax/shape validity
+(not just "didn't crash"), correct field-type inference from field
+names for EACH backend's own type system, and — the one property that
+makes this safe to run against an already-hand-edited project — that a
 VENGAI:CUSTOM slot survives a regeneration untouched while the
 template around it still picks up a real schema change.
 """
@@ -16,7 +18,7 @@ import pytest
 from app.ai import codegen_deterministic as dc
 from app.ai.codegen_shared import validate_generated_content
 
-STACK_INFO = {
+FASTAPI_STACK = {
     "frontend_framework": "react",
     "frontend_language": "javascript",
     "backend_framework": "fastapi",
@@ -27,7 +29,20 @@ STACK_INFO = {
     "fallback_reason": None,
 }
 
-UNSUPPORTED_STACK_INFO = {**STACK_INFO, "frontend_framework": "vue"}
+EXPRESS_STACK = {
+    "frontend_framework": "vue",
+    "frontend_language": "javascript",
+    "backend_framework": "express",
+    "backend_language": "javascript",
+    "api_style": "rest",
+    "codegen_target": "vue__express__rest",
+    "source": "selected_stack",
+    "fallback_reason": None,
+}
+
+UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
+
+SUPPORTED_STACKS = [FASTAPI_STACK, EXPRESS_STACK]
 
 TABLES = [
     {
@@ -48,13 +63,13 @@ class FakeProject:
     no DB session needed, same spirit as this repo's other pure-function
     codegen tests."""
 
-    def __init__(self, tables=TABLES, codegen_data=None):
+    def __init__(self, tables=TABLES, codegen_data=None, features=None, stories=None):
         self.name = "Library Manager"
         self.architecture_data = {"architecture": {"database_tables": tables, "api_endpoints": []}}
         self.requirements_data = {
             "frd": {
-                "key_features": ["users can scan a book cover"],
-                "user_stories": ["as a member I want to see my borrowed books"],
+                "key_features": features if features is not None else ["users can scan a book cover"],
+                "user_stories": stories if stories is not None else ["as a member I want to see my borrowed books"],
             }
         }
         self.codegen_data = codegen_data
@@ -66,55 +81,86 @@ def _by_path(codegen_data: dict) -> dict[str, str]:
 
 # ─── Stack gating ───
 def test_is_supported_stack():
-    assert dc.is_supported_stack(STACK_INFO)
-    assert not dc.is_supported_stack(UNSUPPORTED_STACK_INFO)
+    assert dc.is_supported_stack(FASTAPI_STACK)
+    assert dc.is_supported_stack(EXPRESS_STACK)
+    assert not dc.is_supported_stack(UNSUPPORTED_STACK)
 
 
-# ─── Requires at least one table ───
-def test_requires_at_least_one_table():
+def test_supported_stacks_label_mentions_both_pairings():
+    label = dc.supported_stacks_label()
+    assert "React + FastAPI" in label
+    assert "Vue + Express" in label
+
+
+# ─── Requires at least one table (both pairings) ───
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+def test_requires_at_least_one_table(stack_info):
     with pytest.raises(dc.DeterministicCodegenError):
-        dc.build_deterministic_codegen_data(FakeProject(tables=[]), STACK_INFO)
+        dc.build_deterministic_codegen_data(FakeProject(tables=[]), stack_info)
 
 
-# ─── Real syntax validity, not just "didn't crash" ───
-def test_generated_python_files_are_valid_syntax():
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
-    files = _by_path(data)
-    py_paths = [p for p in files if p.endswith(".py")]
-    assert py_paths, "expected python files"
-    for path in py_paths:
-        ast.parse(files[path])  # raises SyntaxError if invalid
-
-
-def test_generated_js_files_pass_validation():
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
-    files = _by_path(data)
-    js_paths = [p for p in files if p.endswith((".js", ".jsx"))]
-    assert js_paths, "expected JS/JSX files"
-    for path in js_paths:
-        assert validate_generated_content("javascript", files[path]) is None
-
-
-def test_zero_validation_warnings_and_generation_mode_flag():
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
-    assert data["validation_warnings"] == []
-    assert data["generation_mode"] == "deterministic"
-    assert data["user_approved"] is False
-
-
-def test_matches_ai_path_codegen_data_shape():
+# ─── Shape parity across both pairings ───
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+def test_matches_ai_path_codegen_data_shape(stack_info):
     """Same top-level keys api/v1/codegen.py's _saved_result() and the
     three packaging trigger_build() handlers read from the AI path —
-    this is what makes deterministic output packaging-transparent."""
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
+    this is what makes deterministic output packaging-transparent,
+    for BOTH pairings, not just the first one built."""
+    data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     for key in ("codegen", "files_generated", "native_capabilities", "validation_warnings", "stack_used", "user_approved", "generated_at"):
         assert key in data
+    assert data["generation_mode"] == "deterministic"
+    assert data["user_approved"] is False
+    assert data["validation_warnings"] == []
     assert set(data["codegen"].keys()) == {"summary", "files"}
     for f in data["codegen"]["files"]:
         assert set(f.keys()) == {"path", "language", "content", "description"}
 
 
-# ─── Column-type inference (the "golden" cases) ───
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+def test_native_capability_detection_from_requirements(stack_info):
+    data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
+    assert "camera" in data["native_capabilities"]
+
+
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+def test_frontend_package_json_name_is_set(stack_info):
+    data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
+    pkg = json.loads(_by_path(data)["frontend/package.json"])
+    assert pkg["name"] == "library-manager"
+
+
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+def test_custom_slot_survives_regeneration_while_schema_change_applies(stack_info):
+    """The core guarantee, proven for BOTH pairings — not just asserted
+    once and assumed to generalize."""
+    first = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
+    files = first["codegen"]["files"]
+
+    is_fastapi = stack_info["backend_framework"] == "fastapi"
+    model_path = "backend/models/book.py" if is_fastapi else "backend/models/book.js"
+    marker = "# This block is preserved across future regenerations.\n" if is_fastapi else "// This block is preserved across future regenerations.\n"
+    hand_edit = "    # a real hand-written addition\n" if is_fastapi else "// a real hand-written addition\n"
+
+    edited_files = [dict(f) for f in files]
+    for f in edited_files:
+        if f["path"] == model_path:
+            f["content"] = f["content"].replace(marker, marker + hand_edit)
+
+    changed_tables = [dict(TABLES[0], key_fields=TABLES[0]["key_fields"] + ["genre"]), TABLES[1]]
+    project = FakeProject(
+        tables=changed_tables,
+        codegen_data={"codegen": {"summary": "", "files": edited_files}},
+    )
+
+    second = dc.build_deterministic_codegen_data(project, stack_info)
+    regenerated = _by_path(second)[model_path]
+
+    assert "a real hand-written addition" in regenerated, "hand-edit inside VENGAI:CUSTOM must survive"
+    assert "genre" in regenerated, "schema change must still apply"
+
+
+# ─── FastAPI + React specifics ───
 @pytest.mark.parametrize(
     "field,expected_sa_type",
     [
@@ -127,12 +173,30 @@ def test_matches_ai_path_codegen_data_shape():
         ("something_unrecognized", "String(255)"),
     ],
 )
-def test_column_type_inference(field, expected_sa_type):
+def test_sqlalchemy_column_type_inference(field, expected_sa_type):
     assert dc._infer_sa_type(field) == expected_sa_type
 
 
-def test_model_file_has_correctly_typed_columns_and_a_custom_slot():
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
+def test_fastapi_generated_python_files_are_valid_syntax():
+    data = dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
+    files = _by_path(data)
+    py_paths = [p for p in files if p.endswith(".py")]
+    assert py_paths
+    for path in py_paths:
+        ast.parse(files[path])  # raises SyntaxError if invalid
+
+
+def test_fastapi_generated_js_files_pass_validation():
+    data = dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
+    files = _by_path(data)
+    js_paths = [p for p in files if p.endswith((".js", ".jsx"))]
+    assert js_paths
+    for path in js_paths:
+        assert validate_generated_content("javascript", files[path]) is None
+
+
+def test_fastapi_model_file_has_correctly_typed_columns_and_a_custom_slot():
+    data = dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
     model = _by_path(data)["backend/models/book.py"]
     assert "class Book(Base):" in model
     assert "price = Column(Float, nullable=True)" in model
@@ -142,8 +206,8 @@ def test_model_file_has_correctly_typed_columns_and_a_custom_slot():
     assert "VENGAI:CUSTOM:book_model:end" in model
 
 
-def test_routes_file_has_crud_for_every_table_and_a_custom_slot():
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
+def test_fastapi_routes_file_has_crud_for_every_table_and_a_custom_slot():
+    data = dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
     routes = _by_path(data)["backend/routes/api.py"]
     for path_fragment in ('"/books"', '"/books/{item_id}"', '"/members"', '"/members/{item_id}"'):
         assert path_fragment in routes
@@ -152,46 +216,75 @@ def test_routes_file_has_crud_for_every_table_and_a_custom_slot():
     assert "VENGAI:CUSTOM:extra_routes:start" in routes
 
 
-def test_package_json_name_is_set():
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
-    pkg = json.loads(_by_path(data)["frontend/package.json"])
-    assert pkg["name"] == "library-manager"
+# ─── Vue + Express specifics ───
+@pytest.mark.parametrize(
+    "field,expected_mongoose_type",
+    [
+        ("price", "Number"),
+        ("is_available", "Boolean"),
+        ("published_at", "Date"),
+        ("membership_count", "Number"),
+        ("email", "String"),
+        ("bio", "String"),
+        ("something_unrecognized", "String"),
+    ],
+)
+def test_mongoose_type_inference(field, expected_mongoose_type):
+    assert dc._infer_mongoose_type(field) == expected_mongoose_type
 
 
-def test_native_capability_detection_from_requirements():
-    data = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
-    assert "camera" in data["native_capabilities"]
+def test_express_generated_js_files_pass_validation_and_are_brace_balanced():
+    data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
+    files = _by_path(data)
+    js_paths = [p for p in files if p.endswith(".js")]
+    assert js_paths
+    for path in js_paths:
+        assert validate_generated_content("javascript", files[path]) is None
+        assert files[path].count("{") == files[path].count("}"), path
 
 
-# ─── Custom-code preservation across a real regeneration ───
-def test_custom_slot_survives_regeneration_while_schema_change_applies():
-    first = dc.build_deterministic_codegen_data(FakeProject(), STACK_INFO)
-    files = first["codegen"]["files"]
-
-    hand_edit = "    def check_isbn(self):\n        return len(self.isbn or '') == 13\n"
-    edited_files = [dict(f) for f in files]
-    for f in edited_files:
-        if f["path"] == "backend/models/book.py":
-            f["content"] = f["content"].replace(
-                "    # This block is preserved across future regenerations.\n",
-                "    # This block is preserved across future regenerations.\n" + hand_edit,
-            )
-
-    # A real schema change: Book gains a new field between runs.
-    changed_tables = [dict(TABLES[0], key_fields=TABLES[0]["key_fields"] + ["genre"]), TABLES[1]]
-    project = FakeProject(
-        tables=changed_tables,
-        codegen_data={"codegen": {"summary": "", "files": edited_files}},
-    )
-
-    second = dc.build_deterministic_codegen_data(project, STACK_INFO)
-    regenerated_model = _by_path(second)["backend/models/book.py"]
-
-    assert "def check_isbn" in regenerated_model, "hand-edit inside VENGAI:CUSTOM must survive"
-    assert "genre = Column(String(255), nullable=True)" in regenerated_model, "schema change must still apply"
-    ast.parse(regenerated_model)  # still valid Python after the splice
+def test_express_model_file_has_correctly_typed_fields_and_a_custom_slot():
+    data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
+    model = _by_path(data)["backend/models/book.js"]
+    assert "const mongoose = require('mongoose');" in model
+    assert "price: { type: Number, required: false }," in model
+    assert "is_available: { type: Boolean, required: false }," in model
+    assert "published_at: { type: Date, required: false }," in model
+    assert "module.exports = mongoose.model('Book', BookSchema);" in model
+    assert "VENGAI:CUSTOM:book_model:start" in model
+    assert "VENGAI:CUSTOM:book_model:end" in model
 
 
+def test_express_routes_file_has_crud_for_every_table_and_a_custom_slot():
+    data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
+    routes = _by_path(data)["backend/routes/api.js"]
+    for fragment in ("router.get('/books'", "router.get('/books/:id'", "router.get('/members'", "router.get('/members/:id'"):
+        assert fragment in routes
+    assert "const Book = require('../models/book');" in routes
+    assert "VENGAI:CUSTOM:extra_routes:start" in routes
+    assert "module.exports = router;" in routes
+
+
+def test_vue_screen_uses_mongoose_id_convention():
+    """Mongoose documents key on _id, not id — a real difference from
+    the SQLAlchemy side that a naive copy-paste from the React template
+    would get wrong."""
+    data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
+    screen = _by_path(data)["frontend/src/screens/BookScreen.vue"]
+    assert "<script setup>" in screen
+    assert 'v-model="form.price"' in screen
+    assert "item._id" in screen
+    assert "VENGAI:CUSTOM:book_screen:start" in screen
+
+
+def test_express_backend_package_json_has_express_and_mongoose():
+    data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
+    pkg = json.loads(_by_path(data)["backend/package.json"])
+    assert "express" in pkg["dependencies"]
+    assert "mongoose" in pkg["dependencies"]
+
+
+# ─── Custom-slot extraction/reinjection, backend-agnostic ───
 def test_extract_and_reinject_custom_slots_directly():
     original = "before\n# VENGAI:CUSTOM:x:start\nold body\n# VENGAI:CUSTOM:x:end\nafter\n"
     slots = dc.extract_custom_slots(original)

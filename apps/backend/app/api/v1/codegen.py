@@ -235,7 +235,7 @@ async def generate_code(
 @router.post(
     "/generate-deterministic",
     response_model=GenerateCodeResponse,
-    summary="Generate real CRUD code deterministically (no AI call) — React + FastAPI (REST) only",
+    summary="Generate real CRUD code deterministically (no AI call) — React+FastAPI or Vue+Express (REST) only",
 )
 async def generate_code_deterministic(
     payload: GenerateCodeRequest,
@@ -262,8 +262,8 @@ async def generate_code_deterministic(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "Deterministic (schema-driven, no-AI) code generation currently supports "
-                "React + FastAPI (REST) only. Pick that combination in Stack Selection, or "
-                "use AI-generated code for this project's stack."
+                f"{codegen_deterministic.supported_stacks_label()} only. Pick one of those "
+                "combinations in Stack Selection, or use AI-generated code for this project's stack."
             ),
         )
 

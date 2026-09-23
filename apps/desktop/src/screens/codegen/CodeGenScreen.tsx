@@ -130,7 +130,7 @@ export default function CodeGenScreen() {
 
   // Deterministic mode is synchronous — no AI call means no job to poll,
   // it either returns in this one request or 400s with a clear reason
-  // (today: only the React + FastAPI REST pairing is supported). Safe to
+  // (today: React+FastAPI or Vue+Express, REST only). Safe to
   // call again later too: any hand-edit inside a VENGAI:CUSTOM section of
   // a previously generated file survives — see codegen_deterministic.py.
   const generateDeterministic = async () => {
@@ -279,7 +279,7 @@ export default function CodeGenScreen() {
             <p className="text-sm font-semibold text-[var(--color-text-primary)]">Deterministic</p>
             <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
               Instant, free, no AI call — real CRUD code from your database tables. Currently
-              React + FastAPI (REST) only.
+              React + FastAPI or Vue + Express (REST) only.
             </p>
           </button>
         </div>
