@@ -164,6 +164,11 @@ export default function SettingsScreen() {
   };
 
   const handleUseDefault = async () => {
+    // Not a React hook — a Redux Toolkit thunk (createAsyncThunk), same
+    // shape as createAIConfig/setActiveAIConfig/deleteAIConfig below.
+    // eslint's react-hooks plugin flags it purely because the name
+    // starts with "use".
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     await dispatch(useDefaultAI(activeConfig?.id));
     toast.success("Switched back to VengaiCode's default AI.");
     refreshBag();

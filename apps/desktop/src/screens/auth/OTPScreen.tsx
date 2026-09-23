@@ -35,11 +35,6 @@ export default function OTPScreen() {
   const [isResending, setIsResending] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Redirect if no state was passed (e.g. direct navigation to /otp)
-  if (!state?.target || !state?.otpType || !state?.purpose) {
-    return <Navigate to="/login" replace />;
-  }
-
   useEffect(() => {
     dispatch(setTigerExpression("excited"));
     inputRefs.current[0]?.focus();
@@ -68,6 +63,16 @@ export default function OTPScreen() {
       inputRefs.current[0]?.focus();
     }
   }, [error, dispatch]);
+
+  // Redirect if no state was passed (e.g. direct navigation to /otp) —
+  // deliberately AFTER every hook above, so hook call order/count never
+  // changes between renders. This used to sit before the useEffects,
+  // which meant a render with no state skipped all four of them — a
+  // real Rules of Hooks violation (caught by eslint's react-hooks
+  // plugin), not just a style nit.
+  if (!state?.target || !state?.otpType || !state?.purpose) {
+    return <Navigate to="/login" replace />;
+  }
 
   const handleChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return; // Only digits

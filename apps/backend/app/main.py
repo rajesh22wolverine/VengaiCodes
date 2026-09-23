@@ -43,7 +43,10 @@ LOGGING_CONFIG = {
         "level": "DEBUG" if settings.DEBUG else "INFO",
     },
     "loggers": {
-        "vengaicode": {"level": "DEBUG" if settings.DEBUG else "INFO", "propagate": True},
+        "vengaicode": {
+            "level": "DEBUG" if settings.DEBUG else "INFO",
+            "propagate": True,
+        },
         "uvicorn": {"level": "INFO", "propagate": True},
         "sqlalchemy.engine": {"level": "WARNING", "propagate": True},
         "aiosqlite": {"level": "WARNING", "propagate": True},
@@ -113,9 +116,7 @@ async def init_db():
     try:
         # Step 2 — create tables only, no indexes
         async with engine.begin() as conn:
-            await conn.run_sync(
-                lambda c: Base.metadata.create_all(c, checkfirst=True)
-            )
+            await conn.run_sync(lambda c: Base.metadata.create_all(c, checkfirst=True))
         logger.info("✅ Database tables created/verified")
     finally:
         # Step 3 — restore indexes to metadata (important for ORM queries)
@@ -130,12 +131,14 @@ async def init_db():
     # later (e.g. Project.chat_messages), so those silently never reach
     # production until we add them explicitly here.
     async with engine.begin() as conn:
+
         def get_existing_columns(sync_conn):
             inspector = inspect(sync_conn)
             return {
                 table_name: {col["name"] for col in inspector.get_columns(table_name)}
                 for table_name in inspector.get_table_names()
             }
+
         existing_columns = await conn.run_sync(get_existing_columns)
 
         for table in Base.metadata.tables.values():
@@ -209,7 +212,9 @@ async def init_db():
             if nullable is False:
                 try:
                     await conn.execute(
-                        text("ALTER TABLE user_ai_configs ALTER COLUMN user_id DROP NOT NULL")
+                        text(
+                            "ALTER TABLE user_ai_configs ALTER COLUMN user_id DROP NOT NULL"
+                        )
                     )
                     logger.info("✅ Relaxed user_ai_configs.user_id to nullable")
                 except Exception as e:
@@ -217,6 +222,7 @@ async def init_db():
 
     elif engine.dialect.name == "sqlite":
         async with engine.begin() as conn:
+
             def get_state(sync_conn):
                 inspector = inspect(sync_conn)
                 tables = inspector.get_table_names()
@@ -247,9 +253,13 @@ async def init_db():
                         )
                     )
                     await conn.execute(text("DROP TABLE user_ai_configs__pre_nullable"))
-                    logger.info("✅ Recovered leftover rows from an interrupted user_ai_configs migration")
+                    logger.info(
+                        "✅ Recovered leftover rows from an interrupted user_ai_configs migration"
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not recover user_ai_configs__pre_nullable leftovers: {e}")
+                    logger.warning(
+                        f"Could not recover user_ai_configs__pre_nullable leftovers: {e}"
+                    )
 
             elif nullable is False:
                 try:
@@ -262,7 +272,9 @@ async def init_db():
                         await conn.execute(text(f"DROP INDEX IF EXISTS {index.name}"))
 
                     await conn.execute(
-                        text("ALTER TABLE user_ai_configs RENAME TO user_ai_configs__pre_nullable")
+                        text(
+                            "ALTER TABLE user_ai_configs RENAME TO user_ai_configs__pre_nullable"
+                        )
                     )
                     await conn.run_sync(lambda sync_conn: table.create(sync_conn))
                     await conn.execute(
@@ -272,7 +284,9 @@ async def init_db():
                         )
                     )
                     await conn.execute(text("DROP TABLE user_ai_configs__pre_nullable"))
-                    logger.info("✅ Relaxed user_ai_configs.user_id to nullable (SQLite table rebuild)")
+                    logger.info(
+                        "✅ Relaxed user_ai_configs.user_id to nullable (SQLite table rebuild)"
+                    )
                 except Exception as e:
                     logger.warning(
                         f"Could not relax user_ai_configs.user_id: {e} — will retry on next startup "
@@ -313,6 +327,7 @@ async def lifespan(app: FastAPI):
             retire_decommissioned_groq_models,
             backfill_legacy_bag_orders,
         )
+
         await seed_default_ai_configs()
         await retire_decommissioned_groq_models()
         await backfill_legacy_bag_orders()
@@ -328,6 +343,7 @@ async def lifespan(app: FastAPI):
     # ...) already knows to skip Redis instead of each paying its own
     # timeout on the first request.
     from app.core.redis import check_connection as check_redis_connection
+
     if await check_redis_connection():
         logger.info("✅ Redis connection established")
     else:
@@ -336,6 +352,7 @@ async def lifespan(app: FastAPI):
     # ── AI Backend Check (optional) ──
     try:
         from app.ai.orchestrator import check_ai_availability
+
         ai_status = await check_ai_availability()
         if ai_status["ollama"]:
             models = ai_status.get("ollama_models", [])
@@ -375,9 +392,18 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS ──
+    # allow_origins used to be a literal "*" combined with
+    # allow_credentials=True outside development — an origin wildcard
+    # paired with credentials is a combination browsers reject at the
+    # CORS spec level, and Starlette works around that by reflecting
+    # back whatever Origin header the request sent, which in practice
+    # means any site could make a credentialed request. settings.
+    # ALLOWED_ORIGINS already holds the real explicit allowlist (the
+    # production domains, the desktop Tauri origin, local dev ports);
+    # it just wasn't wired in here.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.ALLOWED_ORIGINS,
         allow_credentials=False if settings.ENVIRONMENT == "development" else True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -402,7 +428,9 @@ def create_app() -> FastAPI:
     # fell through to a generic "something went wrong" toast that hid the
     # actual problem from the user.
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ):
         errors = [
             {
                 "field": ".".join(str(p) for p in err["loc"] if p != "body"),
@@ -411,7 +439,11 @@ def create_app() -> FastAPI:
             for err in exc.errors()
         ]
         first = errors[0] if errors else {"field": "", "message": "Invalid request."}
-        message = f"{first['field']}: {first['message']}" if first["field"] else first["message"]
+        message = (
+            f"{first['field']}: {first['message']}"
+            if first["field"]
+            else first["message"]
+        )
         return JSONResponse(
             status_code=422,
             content={"success": False, "message": message, "errors": errors},
@@ -419,6 +451,7 @@ def create_app() -> FastAPI:
 
     # ── Routers ──
     from app.api.v1.router import api_router
+
     app.include_router(
         api_router,
         prefix=settings.API_V1_PREFIX,

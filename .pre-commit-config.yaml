@@ -14,12 +14,6 @@
 # it isn't required to also finish wiring Husky/lint-staged, since having
 # both fully wired would just be two hook systems fighting over the same
 # job.
-#
-# Deliberately NOT running eslint here: `.eslintrc.js` is an empty file
-# (checked directly — running eslint against it fails immediately with a
-# parse error on `const`, since it has no parserOptions/env at all). Wiring
-# in a hook that's broken on contact would be worse than not having it;
-# fixing the actual eslint config is a separate, bigger task.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -40,16 +34,13 @@ repos:
       - id: ruff-check
         args: [--fix]
         files: ^apps/backend/
-      # ruff-format is deliberately NOT wired in here yet: with default
-      # settings it wants to reformat 58 of 78 backend files on first run
-      # (checked directly with `ruff format --check`), and a wider
-      # line-length didn't meaningfully shrink that — this codebase was
-      # simply never run through an auto-formatter before. Turning it on
-      # now would mean someone's next unrelated commit to any touched
-      # file drags in a big, surprising reformat diff. Root package.json's
-      # lint-staged config already lists "ruff format" as intended future
-      # behavior — add the hook back once a deliberate one-time repo-wide
-      # reformat commit has been done separately, not silently here.
+      - id: ruff-format
+        files: ^apps/backend/
+        # The deliberate one-time repo-wide reformat (96 of 121 backend
+        # files) this hook was waiting on landed in its own dedicated
+        # commit — see that commit's message. Safe to enable now: no
+        # unrelated commit will carry a surprise reformat diff anymore,
+        # since the codebase is already at ruff-format's target style.
 
   - repo: local
     hooks:
@@ -60,3 +51,21 @@ repos:
         language: system
         files: \.(js|jsx|ts|tsx|json|md|ya?ml)$
         exclude: ^apps/backend/
+
+      - id: eslint-desktop
+        name: eslint (apps/desktop)
+        description: >
+          apps/desktop/.eslintrc.js used to be a 0-byte stub — this ran
+          against nothing until a real config existed. Scoped to desktop
+          only: mobile's lint runs through `expo lint`, a project-wide
+          Expo CLI command rather than a per-file ESLint invocation, so
+          it doesn't fit this staged-files hook model the same way.
+          Lints the whole apps/desktop/src tree rather than just the
+          staged files — pre-commit hands a hook repo-root-relative
+          paths, which stop resolving once this `cd`s into apps/desktop,
+          and the whole-tree run is the exact command already verified
+          working (`cd apps/desktop && eslint src --ext .ts,.tsx`).
+        entry: bash -c 'cd apps/desktop && npx --no-install eslint src --ext .ts,.tsx'
+        language: system
+        files: ^apps/desktop/src/.*\.(ts|tsx)$
+        pass_filenames: false

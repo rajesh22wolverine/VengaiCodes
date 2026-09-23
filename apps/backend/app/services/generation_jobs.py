@@ -32,8 +32,14 @@ from app.models.generation_job import (
 )
 from app.models.project import Project
 from app.models.user import User
+from app.services.notifications import create_notification
 
 logger = logging.getLogger("vengaicode.jobs")
+
+# Human labels for the two phases this service drives, used only for
+# notification text — job.phase itself stays the raw "code_generation"/
+# "uiux" value everywhere else (route paths, fingerprints, etc.).
+_PHASE_LABELS = {"code_generation": "Code generation", "uiux": "UI/UX design"}
 
 # How often the worker stamps heartbeat_at while a step is in flight.
 HEARTBEAT_INTERVAL_SECONDS = 20
@@ -285,7 +291,9 @@ async def wait_for_completion(job_id: str) -> Optional[GenerationJob]:
             job = await db.get(GenerationJob, job_id)
             if job is None:
                 return None
-            if job.status in (JOB_SUCCEEDED, JOB_FAILED, JOB_CANCELLED) or is_stale(job):
+            if job.status in (JOB_SUCCEEDED, JOB_FAILED, JOB_CANCELLED) or is_stale(
+                job
+            ):
                 return job
         await asyncio.sleep(SYNC_POLL_INTERVAL_SECONDS)
     return None
@@ -334,6 +342,12 @@ async def _run_job(job_id: str, runner: PhaseRunner) -> None:
                 await db.commit()
                 return
 
+            # Captured now, not read off `project` after a possible
+            # rollback below — AsyncSession expires ORM objects on
+            # rollback, and refreshing an expired attribute requires
+            # implicit I/O the async ORM doesn't support outside an
+            # explicit await db.refresh(project) call.
+            project_name = project.name
             state = dict(job.state or {})
 
             try:
@@ -382,6 +396,15 @@ async def _run_job(job_id: str, runner: PhaseRunner) -> None:
                 # every generated file.
                 job.state = {}
                 job.finished_at = _utcnow()
+                phase_label = _PHASE_LABELS.get(runner.phase, runner.phase)
+                await create_notification(
+                    db,
+                    user_id=job.user_id,
+                    title=f"{phase_label} finished",
+                    message=f'Your {phase_label.lower()} for "{project_name}" is ready to review.',
+                    type="success",
+                    link=f"/project/{project.id}/{'codegen' if runner.phase == 'code_generation' else 'uiux'}",
+                )
                 await db.commit()
                 logger.info(f"{runner.phase} job {job.id} finished")
 
@@ -399,6 +422,14 @@ async def _run_job(job_id: str, runner: PhaseRunner) -> None:
                     failed.error = str(e) or e.__class__.__name__
                     failed.current_step = None
                     failed.finished_at = _utcnow()
+                    phase_label = _PHASE_LABELS.get(runner.phase, runner.phase)
+                    await create_notification(
+                        db,
+                        user_id=failed.user_id,
+                        title=f"{phase_label} failed",
+                        message=f'Your {phase_label.lower()} run for "{project_name}" hit a problem: {failed.error}',
+                        type="error",
+                    )
                     await db.commit()
     finally:
         stop_heartbeat.set()

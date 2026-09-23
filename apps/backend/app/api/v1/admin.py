@@ -44,6 +44,7 @@ from app.schemas.ai_config import (
     AdminAIConfigUpdate,
 )
 from app.schemas.auth import ErrorResponse, UserResponse
+from app.services.notifications import create_notification
 
 logger = logging.getLogger("vengaicode.admin")
 router = APIRouter()
@@ -104,7 +105,9 @@ def _serialize_listing(listing: MarketplaceApp, seller: Optional[User] = None) -
         "is_featured": listing.is_featured,
         "view_count": listing.view_count,
         "created_at": listing.created_at.isoformat() if listing.created_at else None,
-        "published_at": listing.published_at.isoformat() if listing.published_at else None,
+        "published_at": listing.published_at.isoformat()
+        if listing.published_at
+        else None,
     }
 
 
@@ -186,7 +189,10 @@ async def list_users(
     return {
         "success": True,
         "users": [
-            {**UserResponse.from_db(u).model_dump(), "projects_count": project_counts.get(u.id, 0)}
+            {
+                **UserResponse.from_db(u).model_dump(),
+                "projects_count": project_counts.get(u.id, 0),
+            }
             for u in users
         ],
         "total": total,
@@ -204,7 +210,9 @@ async def get_user(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
+        )
 
     actions_result = await db.execute(
         select(AdminAction)
@@ -265,7 +273,9 @@ _STATUS_ACTION_MAP = {
 }
 
 
-@router.patch("/users/{user_id}", summary="Update a user's status/tier/restrictions/VIP")
+@router.patch(
+    "/users/{user_id}", summary="Update a user's status/tier/restrictions/VIP"
+)
 async def admin_update_user(
     user_id: str,
     payload: AdminUserUpdateRequest,
@@ -277,11 +287,15 @@ async def admin_update_user(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
+        )
 
     updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
     if not updates:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update."
+        )
 
     previous_state = _user_snapshot(user)
     action_types: list[str] = []
@@ -297,9 +311,15 @@ async def admin_update_user(
             datetime.now(timezone.utc) if updates["is_vip"] else user.vip_granted_at
         )
     if "is_free_extended" in updates:
-        action_types.append("extend_free" if updates["is_free_extended"] else "revoke_free_extension")
-        user.free_extended_by = admin.id if updates["is_free_extended"] else user.free_extended_by
-        user.free_extended_reason = payload.reason if updates["is_free_extended"] else user.free_extended_reason
+        action_types.append(
+            "extend_free" if updates["is_free_extended"] else "revoke_free_extension"
+        )
+        user.free_extended_by = (
+            admin.id if updates["is_free_extended"] else user.free_extended_by
+        )
+        user.free_extended_reason = (
+            payload.reason if updates["is_free_extended"] else user.free_extended_reason
+        )
     if "restriction_level" in updates:
         action_types.append("restrict")
         user.restricted_by = admin.id
@@ -322,6 +342,13 @@ async def admin_update_user(
         reason=payload.reason,
         previous_state=previous_state,
         new_state=new_state,
+    )
+    await create_notification(
+        db,
+        user_id=user.id,
+        title="Your account was updated by an admin",
+        message=payload.reason,
+        type="admin",
     )
 
     await db.commit()
@@ -401,14 +428,20 @@ async def admin_update_listing(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MarketplaceApp).where(MarketplaceApp.id == listing_id))
+    result = await db.execute(
+        select(MarketplaceApp).where(MarketplaceApp.id == listing_id)
+    )
     listing = result.scalar_one_or_none()
     if listing is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found."
+        )
 
     updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
     if not updates:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update."
+        )
 
     previous_state = {
         "status": _jsonable(listing.status),
@@ -419,7 +452,9 @@ async def admin_update_listing(
     if "status" in updates:
         action_types.append("moderate_listing")
     if "is_featured" in updates:
-        action_types.append("feature_listing" if updates["is_featured"] else "unfeature_listing")
+        action_types.append(
+            "feature_listing" if updates["is_featured"] else "unfeature_listing"
+        )
 
     for field, value in updates.items():
         setattr(listing, field, value)
@@ -439,6 +474,13 @@ async def admin_update_listing(
         reason=payload.reason,
         previous_state=previous_state,
         new_state=new_state,
+    )
+    await create_notification(
+        db,
+        user_id=listing.seller_id,
+        title=f'Your listing "{listing.name}" was updated by an admin',
+        message=payload.reason,
+        type="marketplace",
     )
 
     await db.commit()
@@ -559,7 +601,9 @@ async def update_setting(
             "key": setting.key,
             "value": setting.value,
             "updated_by": setting.updated_by,
-            "updated_at": setting.updated_at.isoformat() if setting.updated_at else None,
+            "updated_at": setting.updated_at.isoformat()
+            if setting.updated_at
+            else None,
         },
     }
 
@@ -659,7 +703,11 @@ async def admin_create_ai_config(
         },
         reason="Added a platform-default AI model config.",
         previous_state={},
-        new_state={"id": config.id, "label": config.label, "provider_type": config.provider_type},
+        new_state={
+            "id": config.id,
+            "label": config.label,
+            "provider_type": config.provider_type,
+        },
     )
 
     await db.commit()
@@ -693,7 +741,9 @@ async def admin_update_ai_config(
     if payload.base_url is not None:
         config.base_url = payload.base_url
     if payload.api_key is not None:
-        config.api_key_encrypted = encrypt_secret(payload.api_key) if payload.api_key else None
+        config.api_key_encrypted = (
+            encrypt_secret(payload.api_key) if payload.api_key else None
+        )
     if payload.model_name is not None:
         config.model_name = payload.model_name
     if payload.label is not None:
@@ -761,4 +811,7 @@ async def admin_delete_ai_config(
     await db.delete(config)
     await db.commit()
 
-    return {"success": True, "message": "Platform AI model configuration deleted successfully."}
+    return {
+        "success": True,
+        "message": "Platform AI model configuration deleted successfully.",
+    }

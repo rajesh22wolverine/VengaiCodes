@@ -92,7 +92,7 @@ export default function StackScreen() {
       try {
         const { data: saved } = await apiClient.get(`/stack/${projectId}`);
         if (saved?.selected_stack) {
-          const { buildable_now, validated_at, ...rest } = saved.selected_stack;
+          const { buildable_now: _buildable_now, validated_at: _validated_at, ...rest } = saved.selected_stack;
           initial = rest as StackSelection;
         }
       } catch {
