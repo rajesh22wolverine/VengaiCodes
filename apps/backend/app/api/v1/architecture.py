@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.codegen_shared import get_ordered_pages
+from app.ai.codegen_shared import _slug, get_ordered_pages
 from app.ai.orchestrator import AIError, generate_text
 from app.api.v1.auth import get_current_active_user
 from app.api.v1.reverse_engineer import build_reverse_engineering_directive
@@ -78,6 +78,11 @@ class GenerateArchitectureResponse(BaseModel):
 class ApproveArchitectureRequest(BaseModel):
     project_id: str
     approved: bool = True
+
+
+class EditArchitectureRequest(BaseModel):
+    database_tables: list[DatabaseTable]
+    api_endpoints: list[APIEndpoint]
 
 
 # ─── Prompt builder ───
@@ -242,6 +247,101 @@ def build_erd(database_tables: list["DatabaseTable"]) -> str:
     return "\n".join(lines)
 
 
+class ArchitectureEditError(RuntimeError):
+    """A failure with a message meant for the user, not a stack trace."""
+
+
+_VALID_HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+
+
+def _validate_tables(tables: list[DatabaseTable]) -> None:
+    seen_slugs: set[str] = set()
+    for table in tables:
+        name = (table.name or "").strip()
+        if not name:
+            raise ArchitectureEditError("Every table needs a name.")
+        table.name = name
+        slug = _slug(name)
+        if slug in seen_slugs:
+            raise ArchitectureEditError(f'Two tables both resolve to "{slug}" — table names must be distinct.')
+        seen_slugs.add(slug)
+
+        field_slugs: set[str] = set()
+        for field in table.key_fields:
+            field_name = (field or "").strip()
+            if not field_name:
+                raise ArchitectureEditError(f'Table "{name}" has a blank field name.')
+            field_slug = _slug(field_name)
+            if field_slug in field_slugs:
+                raise ArchitectureEditError(f'Table "{name}" has the field "{field_name}" more than once.')
+            field_slugs.add(field_slug)
+
+
+def _validate_endpoints(endpoints: list[APIEndpoint]) -> None:
+    for endpoint in endpoints:
+        method = (endpoint.method or "").strip().upper()
+        if method not in _VALID_HTTP_METHODS:
+            raise ArchitectureEditError(
+                f'"{endpoint.method}" is not a valid HTTP method — use one of '
+                f"{', '.join(sorted(_VALID_HTTP_METHODS))}."
+            )
+        endpoint.method = method
+
+        path = (endpoint.path or "").strip()
+        if not path.startswith("/"):
+            raise ArchitectureEditError(f'Endpoint path "{endpoint.path}" must start with "/".')
+        endpoint.path = path
+
+
+def apply_architecture_edit(
+    architecture_data: dict | None,
+    uml_diagrams: dict | None,
+    database_tables: list[DatabaseTable],
+    api_endpoints: list[APIEndpoint],
+) -> tuple[dict, dict]:
+    """Rebuilds the saved ArchitectureDesign with user-edited tables and
+    endpoints, leaving every AI-authored field (summary, tech_stack,
+    third_party_services, adrs) untouched, then regenerates the
+    deterministic diagrams from the EDITED data via the exact same
+    build_system_diagram()/build_erd() generate_architecture() itself
+    uses — so an edited diagram is never stale or hand-drawn, just a
+    live view of whatever is currently saved.
+
+    Both the AI codegen path (codegen_runner.build_context()) and the
+    deterministic codegen path (codegen_deterministic.py) read straight
+    from architecture_data.architecture.{database_tables,api_endpoints}
+    — an edit made here is honored by the next codegen run with zero
+    codegen-side changes, the same way approving the AI's first draft
+    always has been.
+
+    Un-approves the architecture (codegen is gated on
+    architecture_data["user_approved"]): an edit is a real change the
+    user should re-review before it drives a build.
+    """
+    if not (architecture_data or {}).get("architecture"):
+        raise ArchitectureEditError("No architecture exists yet to edit — generate one first.")
+
+    _validate_tables(database_tables)
+    _validate_endpoints(api_endpoints)
+
+    current = ArchitectureDesign(**architecture_data["architecture"])
+    updated = current.model_copy(update={
+        "database_tables": database_tables,
+        "api_endpoints": api_endpoints,
+    })
+
+    new_architecture_data = dict(architecture_data)
+    new_architecture_data["architecture"] = updated.model_dump()
+    new_architecture_data["system_diagram"] = build_system_diagram(updated)
+    new_architecture_data["user_approved"] = False
+    new_architecture_data.pop("approved_at", None)
+    new_architecture_data["edited_at"] = datetime.now(timezone.utc).isoformat()
+
+    new_uml_diagrams = {**(uml_diagrams or {}), "erd": build_erd(updated.database_tables)}
+
+    return new_architecture_data, new_uml_diagrams
+
+
 @router.post(
     "/generate",
     response_model=GenerateArchitectureResponse,
@@ -339,6 +439,56 @@ async def get_architecture(
         "generated_at": project.architecture_data.get("generated_at"),
         "system_diagram": project.architecture_data.get("system_diagram"),
         "erd": (project.uml_diagrams or {}).get("erd"),
+    }
+
+
+@router.put(
+    "/{project_id}/edit",
+    summary="Directly edit the saved architecture's tables/endpoints (no AI call)",
+)
+async def edit_architecture(
+    project_id: str,
+    payload: EditArchitectureRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lets a user add/rename/remove tables, fields and endpoints directly,
+    instead of only reviewing what the AI proposed. See
+    apply_architecture_edit()'s docstring for why this needs no codegen
+    or packaging changes to take effect on a later build.
+    """
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user.id,
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    try:
+        new_architecture_data, new_uml_diagrams = apply_architecture_edit(
+            project.architecture_data, project.uml_diagrams,
+            payload.database_tables, payload.api_endpoints,
+        )
+    except ArchitectureEditError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    project.architecture_data = new_architecture_data
+    project.uml_diagrams = new_uml_diagrams
+    await db.commit()
+
+    return {
+        "success": True,
+        "architecture": new_architecture_data.get("architecture"),
+        "user_approved": False,
+        "generated_at": new_architecture_data.get("generated_at"),
+        "system_diagram": new_architecture_data.get("system_diagram"),
+        "erd": new_uml_diagrams.get("erd"),
+        "message": "Changes saved — review and approve again before generating code.",
     }
 
 

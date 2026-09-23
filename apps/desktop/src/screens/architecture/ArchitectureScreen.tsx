@@ -3,7 +3,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowLeft, Layers, Database, Webhook, Package,
-  Loader2, ThumbsUp, BookOpen, GitBranch, Network, Copy, Check
+  Loader2, ThumbsUp, BookOpen, GitBranch, Network, Copy, Check,
+  Pencil, Plus, X, Save, XCircle
 } from "lucide-react";
 import toast from "react-hot-toast";
 import apiClient, { AI_REQUEST_TIMEOUT_MS } from "@/lib/api";
@@ -60,6 +61,8 @@ const METHOD_COLORS: Record<string, string> = {
   DELETE: "var(--color-error)",
 };
 
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
 export default function ArchitectureScreen() {
   const { id: projectId } = useParams();
   const navigate = useNavigate();
@@ -70,6 +73,16 @@ export default function ArchitectureScreen() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
+
+  // Editing tables/endpoints directly — a separate local draft so Cancel
+  // can discard changes without touching the saved architecture. Both the
+  // AI and deterministic codegen paths read straight from these two
+  // fields, so a saved edit is honored by the next generation with no
+  // codegen-side changes.
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [draftTables, setDraftTables] = useState<DatabaseTable[]>([]);
+  const [draftEndpoints, setDraftEndpoints] = useState<APIEndpoint[]>([]);
 
   useEffect(() => {
     loadOrGenerate();
@@ -152,6 +165,61 @@ export default function ArchitectureScreen() {
     }
   };
 
+  const startEditing = () => {
+    if (!architecture) return;
+    // Deep-copy so edits in the draft never mutate the saved architecture
+    // until Save actually round-trips through the backend.
+    setDraftTables(JSON.parse(JSON.stringify(architecture.database_tables)));
+    setDraftEndpoints(JSON.parse(JSON.stringify(architecture.api_endpoints)));
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => setIsEditing(false);
+
+  const saveEdits = async () => {
+    setIsSavingEdit(true);
+    try {
+      const { data } = await apiClient.put(`/architecture/${projectId}/edit`, {
+        database_tables: draftTables,
+        api_endpoints: draftEndpoints,
+      });
+      setArchitecture(data.architecture);
+      setBlueprint({ system_diagram: data.system_diagram, erd: data.erd });
+      setIsEditing(false);
+      toast.success("Changes saved — review and approve again to continue 🐯");
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || error.message || "Failed to save changes.");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const updateTable = (i: number, patch: Partial<DatabaseTable>) => {
+    setDraftTables((prev) => prev.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
+  };
+  const addTable = () => setDraftTables((prev) => [...prev, { name: "", purpose: "", key_fields: [] }]);
+  const removeTable = (i: number) => setDraftTables((prev) => prev.filter((_, idx) => idx !== i));
+  const addField = (tableIndex: number, field: string) => {
+    const trimmed = field.trim();
+    if (!trimmed) return;
+    setDraftTables((prev) =>
+      prev.map((t, idx) => (idx === tableIndex ? { ...t, key_fields: [...t.key_fields, trimmed] } : t))
+    );
+  };
+  const removeField = (tableIndex: number, fieldIndex: number) => {
+    setDraftTables((prev) =>
+      prev.map((t, idx) =>
+        idx === tableIndex ? { ...t, key_fields: t.key_fields.filter((_, j) => j !== fieldIndex) } : t
+      )
+    );
+  };
+
+  const updateEndpoint = (i: number, patch: Partial<APIEndpoint>) => {
+    setDraftEndpoints((prev) => prev.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+  };
+  const addEndpoint = () => setDraftEndpoints((prev) => [...prev, { method: "GET", path: "/", purpose: "" }]);
+  const removeEndpoint = (i: number) => setDraftEndpoints((prev) => prev.filter((_, idx) => idx !== i));
+
   if (isLoading || isGenerating) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[var(--color-background)]">
@@ -221,66 +289,159 @@ export default function ArchitectureScreen() {
           </Section>
 
           {/* Database Tables */}
-          <Section icon={Database} title={`Database Tables (${architecture.database_tables.length})`}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {architecture.database_tables.map((table, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4"
+          <Section
+            icon={Database}
+            title={`Database Tables (${(isEditing ? draftTables : architecture.database_tables).length})`}
+            action={!isEditing && <EditButton onClick={startEditing} />}
+          >
+            {isEditing ? (
+              <div className="space-y-3">
+                {draftTables.map((table, i) => (
+                  <TableEditorCard
+                    key={i}
+                    table={table}
+                    onChange={(patch) => updateTable(i, patch)}
+                    onRemove={() => removeTable(i)}
+                    onAddField={(f) => addField(i, f)}
+                    onRemoveField={(j) => removeField(i, j)}
+                  />
+                ))}
+                <button
+                  onClick={addTable}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors"
                 >
-                  <div className="flex items-center gap-2 mb-2">
-                    <Database className="w-3.5 h-3.5 text-[var(--color-primary)] flex-shrink-0" />
-                    <h4 className="text-sm font-semibold text-[var(--color-text-primary)] font-mono">
-                      {table.name}
-                    </h4>
-                  </div>
-                  <p className="text-xs text-[var(--color-text-secondary)] mb-3 leading-relaxed">
-                    {table.purpose}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {table.key_fields.map((field, j) => (
-                      <span
-                        key={j}
-                        className="px-2 py-1 rounded-md bg-[var(--color-surface)] text-[var(--color-text-tertiary)] text-xs font-mono border border-[var(--color-border)]"
-                      >
-                        {field}
-                      </span>
-                    ))}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+                  <Plus className="w-3.5 h-3.5" /> Add table
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {architecture.database_tables.map((table, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <Database className="w-3.5 h-3.5 text-[var(--color-primary)] flex-shrink-0" />
+                      <h4 className="text-sm font-semibold text-[var(--color-text-primary)] font-mono">
+                        {table.name}
+                      </h4>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-secondary)] mb-3 leading-relaxed">
+                      {table.purpose}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {table.key_fields.map((field, j) => (
+                        <span
+                          key={j}
+                          className="px-2 py-1 rounded-md bg-[var(--color-surface)] text-[var(--color-text-tertiary)] text-xs font-mono border border-[var(--color-border)]"
+                        >
+                          {field}
+                        </span>
+                      ))}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
           </Section>
 
           {/* API Endpoints */}
-          <Section icon={Webhook} title={`API Endpoints (${architecture.api_endpoints.length})`}>
-            <div className="space-y-2">
-              {architecture.api_endpoints.map((endpoint, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-3"
+          <Section
+            icon={Webhook}
+            title={`API Endpoints (${(isEditing ? draftEndpoints : architecture.api_endpoints).length})`}
+            action={!isEditing && <EditButton onClick={startEditing} />}
+          >
+            {isEditing ? (
+              <div className="space-y-2">
+                {draftEndpoints.map((endpoint, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-2.5">
+                    <select
+                      value={endpoint.method}
+                      onChange={(e) => updateEndpoint(i, { method: e.target.value })}
+                      className="px-2 py-1.5 rounded-md text-xs font-bold font-mono bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-primary)] flex-shrink-0"
+                    >
+                      {HTTP_METHODS.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <input
+                      value={endpoint.path}
+                      onChange={(e) => updateEndpoint(i, { path: e.target.value })}
+                      placeholder="/resource"
+                      className="w-40 flex-shrink-0 px-2 py-1.5 rounded-md text-xs font-mono bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-primary)]"
+                    />
+                    <input
+                      value={endpoint.purpose}
+                      onChange={(e) => updateEndpoint(i, { purpose: e.target.value })}
+                      placeholder="What this endpoint does"
+                      className="flex-1 px-2 py-1.5 rounded-md text-xs bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-primary)]"
+                    />
+                    <button onClick={() => removeEndpoint(i)} className="p-1.5 rounded-md text-[var(--color-text-tertiary)] hover:text-[var(--color-error)] hover:bg-[var(--color-surface)] transition-colors flex-shrink-0">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={addEndpoint}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-[var(--color-border)] text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors"
                 >
-                  <span
-                    className="px-2 py-1 rounded-md text-xs font-bold text-white flex-shrink-0 font-mono"
-                    style={{
-                      backgroundColor: METHOD_COLORS[endpoint.method.toUpperCase()] || "var(--color-text-tertiary)",
-                    }}
+                  <Plus className="w-3.5 h-3.5" /> Add endpoint
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {architecture.api_endpoints.map((endpoint, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-3"
                   >
-                    {endpoint.method.toUpperCase()}
-                  </span>
-                  <code className="text-xs font-mono text-[var(--color-text-primary)] flex-shrink-0">
-                    {endpoint.path}
-                  </code>
-                  <span className="text-xs text-[var(--color-text-tertiary)] truncate">
-                    {endpoint.purpose}
-                  </span>
-                </div>
-              ))}
-            </div>
+                    <span
+                      className="px-2 py-1 rounded-md text-xs font-bold text-white flex-shrink-0 font-mono"
+                      style={{
+                        backgroundColor: METHOD_COLORS[endpoint.method.toUpperCase()] || "var(--color-text-tertiary)",
+                      }}
+                    >
+                      {endpoint.method.toUpperCase()}
+                    </span>
+                    <code className="text-xs font-mono text-[var(--color-text-primary)] flex-shrink-0">
+                      {endpoint.path}
+                    </code>
+                    <span className="text-xs text-[var(--color-text-tertiary)] truncate">
+                      {endpoint.purpose}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </Section>
+
+          {isEditing && (
+            <div className="sticky bottom-0 flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg">
+              <p className="text-xs text-[var(--color-text-tertiary)] px-2">
+                Saving will require re-approval before the next code generation.
+              </p>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={cancelEditing}
+                  disabled={isSavingEdit}
+                  className="px-4 py-2 rounded-xl border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                >
+                  <XCircle className="w-3.5 h-3.5" /> Cancel
+                </button>
+                <button
+                  onClick={saveEdits}
+                  disabled={isSavingEdit}
+                  className="px-4 py-2 rounded-xl bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                >
+                  {isSavingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Third-Party Services */}
           {architecture.third_party_services.length > 0 && (
@@ -436,10 +597,12 @@ function DiagramBlock({ label, code }: { label: string; code: string }) {
 function Section({
   icon: Icon,
   title,
+  action,
   children,
 }: {
   icon: React.ElementType;
   title: string;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -448,13 +611,99 @@ function Section({
       animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5"
     >
-      <div className="flex items-center gap-2 mb-3">
-        <Icon className="w-4 h-4 text-[var(--color-primary)]" />
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
-          {title}
-        </h3>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2">
+          <Icon className="w-4 h-4 text-[var(--color-primary)]" />
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {title}
+          </h3>
+        </div>
+        {action}
       </div>
       {children}
     </motion.div>
+  );
+}
+
+function EditButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-primary-light)] transition-colors"
+    >
+      <Pencil className="w-3 h-3" /> Edit
+    </button>
+  );
+}
+
+/** One editable table card: name, purpose, and a chip list of fields
+ * with per-field remove + an inline "add field" input (Enter to add). */
+function TableEditorCard({
+  table,
+  onChange,
+  onRemove,
+  onAddField,
+  onRemoveField,
+}: {
+  table: DatabaseTable;
+  onChange: (patch: Partial<DatabaseTable>) => void;
+  onRemove: () => void;
+  onAddField: (field: string) => void;
+  onRemoveField: (fieldIndex: number) => void;
+}) {
+  const [newField, setNewField] = useState("");
+
+  const commitField = () => {
+    if (!newField.trim()) return;
+    onAddField(newField);
+    setNewField("");
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4">
+      <div className="flex items-start gap-2 mb-2">
+        <input
+          value={table.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="table_name"
+          className="flex-1 px-2 py-1.5 rounded-md text-sm font-mono font-semibold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-primary)]"
+        />
+        <button onClick={onRemove} className="p-1.5 rounded-md text-[var(--color-text-tertiary)] hover:text-[var(--color-error)] hover:bg-[var(--color-surface)] transition-colors flex-shrink-0">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <input
+        value={table.purpose}
+        onChange={(e) => onChange({ purpose: e.target.value })}
+        placeholder="What this table is for"
+        className="w-full mb-3 px-2 py-1.5 rounded-md text-xs bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]"
+      />
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {table.key_fields.map((field, j) => (
+          <span
+            key={j}
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-surface)] text-[var(--color-text-tertiary)] text-xs font-mono border border-[var(--color-border)]"
+          >
+            {field}
+            <button onClick={() => onRemoveField(j)} className="hover:text-[var(--color-error)]">
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <input
+        value={newField}
+        onChange={(e) => setNewField(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commitField();
+          }
+        }}
+        onBlur={commitField}
+        placeholder="+ add field, press Enter"
+        className="w-full px-2 py-1 rounded-md text-xs font-mono bg-transparent border border-dashed border-[var(--color-border)] text-[var(--color-text-secondary)]"
+      />
+    </div>
   );
 }
