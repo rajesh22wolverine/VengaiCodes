@@ -116,7 +116,30 @@ jobs:
           python3 -m venv sidecar_venv
           VENV_PY=sidecar_venv/bin/python
           "$VENV_PY" -m pip install --quiet -r requirements.txt pyinstaller
-          "$VENV_PY" -m PyInstaller --onefile --name backend --distpath dist --workpath pybuild --specpath spec _sidecar_run.py
+          # Deterministic ("No AI") FastAPI projects ship versioned Alembic
+          # migrations, applied at every startup. Alembic reads
+          # migrations/env.py and migrations/versions/*.py from DISK (the
+          # generated app/core/migrate.py points it at sys._MEIPASS/migrations
+          # when frozen), and PyInstaller's import analysis never sees them —
+          # so the folder goes in as data. The absolute path and separator
+          # come from the venv's own python (":" here, ";" on Windows — older
+          # PyInstaller only accepts the OS one), absolute because --specpath
+          # makes relative paths resolve against spec/. Projects without
+          # migrations get no extra data.
+          EXTRA_ARGS=()
+          # SQLAlchemy imports the async SQLite driver by NAME when
+          # create_async_engine("sqlite+aiosqlite://...") runs — invisible to
+          # PyInstaller's analysis, so a frozen FastAPI backend (AI-generated
+          # or No-AI alike) died at startup with "No module named 'aiosqlite'"
+          # (reproduced with a local onefile build, 2026-09-25).
+          if grep -qi '^aiosqlite' requirements.txt; then
+            EXTRA_ARGS+=(--hidden-import aiosqlite)
+          fi
+          if [ -d migrations ]; then
+            MIGRATIONS_DATA=$("$VENV_PY" -c "import os; print(os.path.abspath('migrations') + os.pathsep + 'migrations')")
+            EXTRA_ARGS+=(--add-data "$MIGRATIONS_DATA" --collect-submodules alembic)
+          fi
+          "$VENV_PY" -m PyInstaller --onefile --name backend --distpath dist --workpath pybuild --specpath spec "${EXTRA_ARGS[@]}" _sidecar_run.py
           echo "PyInstaller output:"
           ls -la dist
 

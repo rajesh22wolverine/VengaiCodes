@@ -12,8 +12,21 @@
 #  since WiringCtx carries no api_style field by design (see its
 #  docstring) — REST and GraphQL never write to the same path, so this
 #  is unambiguous.
+#
+#  2026-09-24: manifest_files/entry_point_files(ctx, migrations=True) —
+#  used only by the deterministic (no-AI) generator, whose schema is
+#  owned by versioned Alembic migrations — add alembic to
+#  requirements.txt and swap in a database.py with an env-overridable
+#  DATABASE_URL plus SQLite's foreign_keys pragma, and a main.py that
+#  runs the migrations at startup instead of create_all. The default
+#  (AI path) output is byte-for-byte what it was before;
+#  tests/unit/test_deterministic_codegen.py pins that.
 # ═══════════════════════════════════════════════════════════════
 
+import json
+
+from app.ai import db_schema
+from app.ai.migrations_gen import MIGRATION_PYTHON_REQUIREMENTS
 from app.ai.codegen.manifests.requirements_txt import build_requirements_txt
 from app.ai.codegen.types import (
     BackendAdapter,
@@ -36,7 +49,7 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     prompt = f"""Write ONE complete, real SQLAlchemy model file for the "{table_name}" table of this app.
 
 Table purpose: {ctx.table.get("purpose", "")}
-Fields: {", ".join(ctx.table.get("key_fields", []))}
+{db_schema.describe_table_for_prompt(ctx.table, ctx.all_tables or [ctx.table])}
 
 Requirements:
 - Real column types, constraints (nullable, unique, defaults) matching the fields above.
@@ -219,13 +232,56 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 """
 
+# Migrations mode (deterministic generator only). Two real differences
+# from _DATABASE_PY, both load-bearing for a schema with foreign keys:
+#   - DATABASE_URL comes from the environment (SQLite file by default),
+#     so the same generated code runs against Postgres in production —
+#     the Alembic migrations read the very same variable.
+#   - SQLite ignores every FOREIGN KEY clause, including the ON DELETE
+#     CASCADE / SET NULL / RESTRICT rules the Architecture declares,
+#     unless "PRAGMA foreign_keys=ON" is issued on each new connection.
+#     Without this listener those rules would silently do nothing on
+#     the default database. (engine.sync_engine is where SQLAlchemy
+#     documents pool events for an async engine.)
+_DATABASE_PY_MIGRATIONS = """import os
+from typing import AsyncGenerator
+
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
+
+Base = declarative_base()
+engine = create_async_engine(DATABASE_URL)
+AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    # SQLite only enforces FOREIGN KEY constraints (and their ON DELETE
+    # rules) when this is switched on for the connection.
+    if engine.dialect.name == "sqlite":
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        yield session
+"""
+
 
 def _model_import_name(file: GeneratedFile) -> str:
     return file.path.removeprefix("backend/").removesuffix(".py").replace("/", ".")
 
 
 def _build_main_py(
-    project_name: str, model_files: list[GeneratedFile], graphql: bool
+    project_name: str,
+    model_files: list[GeneratedFile],
+    graphql: bool,
+    run_migrations: bool = False,
 ) -> str:
     model_imports = "\n".join(
         f"import {_model_import_name(f)}  # noqa: F401 — registers the table with Base.metadata"
@@ -240,6 +296,9 @@ graphql_app = GraphQLRouter(schema)"""
     else:
         router_import = "from routes.api import router as api_router"
         router_mount = "app.include_router(api_router)"
+
+    if run_migrations:
+        return _build_main_py_migrating(project_name, router_import, router_mount)
 
     return f"""from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -273,7 +332,53 @@ def root():
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def _build_main_py_migrating(
+    project_name: str, router_import: str, router_mount: str
+) -> str:
+    # No model imports here, unlike the create_all version: nothing at
+    # startup reads Base.metadata any more (migrations/env.py imports every
+    # model itself, for `alembic revision --autogenerate`). The project name
+    # goes through json.dumps so a quote or backslash in it can't break the
+    # file.
+    title = json.dumps(project_name)
+    message = json.dumps(f"{project_name} API is running")
+    return f"""import asyncio
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.migrate import run_migrations
+{router_import}
+
+app = FastAPI(title={title})
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+{router_mount}
+
+
+@app.on_event("startup")
+async def _migrate_database():
+    # The versioned Alembic scripts in migrations/versions/ own the database
+    # schema (not Base.metadata.create_all), so an existing database is
+    # upgraded in place, rows kept, whenever the tables change. Alembic's
+    # upgrade blocks and runs its own event loop, hence the worker thread.
+    await asyncio.to_thread(run_migrations)
+
+
+@app.get("/")
+def root():
+    return {{"message": {message}}}
+"""
+
+
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
     packages = [
         "fastapi==0.109.2",
         "uvicorn[standard]==0.27.1",
@@ -296,6 +401,8 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         # Version confirmed live on PyPI at the time this was written —
         # see PyPI's own release history if this ever needs bumping.
         packages.append("strawberry-graphql[fastapi]==0.327.7")
+    if migrations:
+        packages += MIGRATION_PYTHON_REQUIREMENTS
     content = build_requirements_txt(packages)
     return [
         GeneratedFile(
@@ -307,18 +414,23 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
     return [
         GeneratedFile(
             path="backend/app/core/database.py",
             language="python",
-            content=_DATABASE_PY,
+            content=_DATABASE_PY_MIGRATIONS if migrations else _DATABASE_PY,
             description="Async SQLAlchemy engine/session setup",
         ),
         GeneratedFile(
             path="backend/main.py",
             language="python",
-            content=_build_main_py(ctx.project_name, ctx.model_files, _is_graphql(ctx)),
+            content=_build_main_py(
+                ctx.project_name,
+                ctx.model_files,
+                _is_graphql(ctx),
+                run_migrations=migrations,
+            ),
             description="FastAPI entry point",
         ),
     ]

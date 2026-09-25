@@ -12,7 +12,7 @@
 #  app/ai/codegen/o3de.py instead, kept outside this registry.
 # ═══════════════════════════════════════════════════════════════
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +52,19 @@ class ModelCtx(_PromptCtx):
     # rather than forcing every construction site to supply it).
     user: Optional[User] = None
     db: Optional[AsyncSession] = None
+    # The architecture's FULL database_tables list, not just `table`. A
+    # model prompt describes its foreign keys by the referenced table's
+    # physical name and type, which db_schema.describe_table_for_prompt()
+    # can only resolve with every table in view. Empty (the default, so
+    # existing constructors stay valid) means "describe `table` alone" —
+    # its own columns still come out typed, only cross-table references
+    # can't be resolved.
+    all_tables: list[dict] = field(default_factory=list)
+    # "rest" | "graphql" | "grpc" — the project's API style. An adapter
+    # whose GraphQL schema is generated deterministically (spring_boot.py)
+    # tells the entity prompt the exact property types that schema binds
+    # to. Default "rest" keeps every existing construction site valid.
+    api_style: str = "rest"
 
 
 @dataclass

@@ -34,10 +34,21 @@
 #  actually compiled with `mvn compile` while writing this — protoc ran
 #  and produced real ApiServiceGrpc.ApiServiceImplBase classes, which
 #  the service implementation compiled against successfully.
+#
+#  2026-09-24: typed columns. schema.graphqls uses a table's DECLARED
+#  column types (and marks required columns non-null) where the
+#  Architecture editor declared them; undeclared columns keep the name-
+#  based guess (unless it contradicts the column's default or a check —
+#  typed_schema.keeps_guess), and a table that declares nothing produces exactly the
+#  SDL it always did — see typed_schema.py. A GraphQL project's entity
+#  prompt dictates the exact Java type of every property that SDL binds
+#  to, so the two can't disagree. The .proto is untouched.
 # ═══════════════════════════════════════════════════════════════
 
 import re
 
+from app.ai import db_schema
+from app.ai.codegen.backend import typed_schema
 from app.ai.codegen.types import (
     BackendAdapter,
     FileResult,
@@ -57,7 +68,43 @@ def _camel_first(s: str) -> str:
     return s[0].lower() + s[1:] if s else s
 
 
-def _infer_graphql_type(field_name: str) -> str:
+# Spring for GraphQL ships only the five spec scalars (a Date/JSON scalar
+# needs graphql-java-extended-scalars, which this pom doesn't pull in), so
+# dates and JSON travel as their ISO/JSON text — the same String the
+# name-based guess already gives a date-like field.
+_GRAPHQL_TYPES = {
+    "string": "String",
+    "text": "String",
+    "integer": "Int",
+    "float": "Float",
+    "decimal": "Float",
+    "boolean": "Boolean",
+    "date": "String",
+    "datetime": "String",
+    "json": "String",
+}
+
+# The Java property type each of those scalars binds to (the same
+# mapping the controller prompt dictates for @Argument parameters).
+_JAVA_TYPES = {
+    "String": "String",
+    "Int": "Integer",
+    "Float": "Double",
+    "Boolean": "Boolean",
+}
+
+
+# The db_schema type each of _guess_graphql_type()'s scalars amounts to.
+_GUESSED_FIELD_TYPES = {
+    "Boolean": "boolean",
+    "Int": "integer",
+    "Float": "float",
+    "String": "string",
+}
+
+
+def _guess_graphql_type(field_name: str) -> str:
+    """The name-based guess this schema has always used."""
     lowered = field_name.lower()
     if any(
         k in lowered for k in ("done", "active", "enabled", "completed", "is_", "has_")
@@ -68,6 +115,22 @@ def _infer_graphql_type(field_name: str) -> str:
     if any(k in lowered for k in ("price", "amount", "total", "cost")):
         return "Float"
     return "String"
+
+
+def _infer_graphql_type(
+    field_name: str,
+    col: db_schema.ResolvedColumn | None = None,
+    schema: db_schema.ResolvedSchema | None = None,
+) -> str:
+    """A declared (or foreign-key-fixed) type wins, as does db_schema's
+    type wherever the name-based guess would contradict something the
+    user wrote against it (a default, a check — see
+    typed_schema.keeps_guess); otherwise the name-based guess."""
+    guessed = _guess_graphql_type(field_name)
+    if col is not None and schema is not None:
+        if not typed_schema.keeps_guess(col, _GUESSED_FIELD_TYPES[guessed], schema):
+            return _GRAPHQL_TYPES[col.type]
+    return guessed
 
 
 def _camel_field(field_name: str) -> str:
@@ -93,18 +156,35 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
     class_name = _pascal(table_name)
     package_name = _package_name(ctx.project_name)
+    all_tables = ctx.all_tables or [ctx.table]
+    graphql_types = ""
+    if ctx.api_style == "graphql":
+        # schema.graphqls is generated deterministically (_graphql_schema)
+        # and Spring for GraphQL binds it to these properties at runtime,
+        # so the entity must use exactly the Java type each field maps to
+        # — the schema's type wins over the field list's where they differ.
+        fields = _type_fields(ctx.table, typed_schema.resolve_if_typed(all_tables))
+        graphql_types = (
+            "\n- This app's GraphQL schema binds to these exact properties, so declare each with exactly"
+            "\n  this Java type: "
+            + ", ".join(
+                f"`{_JAVA_TYPES[scalar]} {name}`" for name, scalar, _nn, _req in fields
+            )
+            + "."
+        )
 
     prompt = f"""Write ONE complete, real Spring Data JPA entity class for the "{table_name}" table of this app.
 
 Table purpose: {ctx.table.get("purpose", "")}
-Fields: {", ".join(ctx.table.get("key_fields", []))}
+{db_schema.describe_table_for_prompt(ctx.table, all_tables)}
 
 Requirements:
 - Package declaration: `package {package_name};`
 - Class name: {class_name}, annotated `@Entity`, with `@Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;`
   plus real fields/column annotations (`@Column(nullable = ..., unique = ...)`) matching the
   fields above, and public getters/setters for every field (Lombok is NOT available — write them
-  by hand).
+  by hand). Field names are the camelCase form of the column names above (e.g. `due_date` ->
+  `dueDate`) — the GraphQL schema binds to exactly those property names.{graphql_types}
 - Implement any validation or computed properties implied by the key features / user stories
   above — not a bare field list.
 - No placeholders or TODOs — every field and method must be fully implemented.
@@ -189,19 +269,49 @@ Return ONLY the raw Java code for this one file. No markdown fences, no explanat
     ]
 
 
-def _graphql_type_block(table: dict) -> str:
+def _type_fields(
+    table: dict, schema: db_schema.ResolvedSchema | None
+) -> list[tuple[str, str, bool, bool]]:
+    """(field, graphql type, non-null, required on create) per column —
+    one source for the type block and both mutations' arguments. A table
+    that declares nothing keeps its original shape (all optional)."""
+    rt = typed_schema.typed_table(schema, table)
+    if rt is None:
+        return [
+            (_camel_field(f), _infer_graphql_type(f), False, False)
+            for f in (table.get("key_fields", []) or [])
+        ]
+    return [
+        (
+            _camel_field(c.name),
+            _infer_graphql_type(c.name, c, schema),
+            not c.nullable,
+            not c.nullable and c.default is None,
+        )
+        for c in rt.columns
+    ]
+
+
+def _graphql_type_block(
+    table: dict, schema: db_schema.ResolvedSchema | None = None
+) -> str:
     name = _pascal(table.get("name", "Item"))
-    fields = table.get("key_fields", []) or []
     field_lines = "\n".join(
-        f"  {_camel_field(f)}: {_infer_graphql_type(f)}" for f in fields
+        f"  {field}: {graphql_type}{'!' if non_null else ''}"
+        for field, graphql_type, non_null, _required in _type_fields(table, schema)
     )
     return f"type {name} {{\n  id: ID!\n{field_lines}\n}}"
 
 
-def _mutation_field_args(table: dict, include_id: bool) -> str:
-    fields = table.get("key_fields", []) or []
+def _mutation_field_args(
+    table: dict, include_id: bool, schema: db_schema.ResolvedSchema | None = None
+) -> str:
+    # Create (no id) makes a typed table's required-without-default
+    # columns non-null — the database would reject the row without them.
+    # Update stays all-optional: it only changes what it's given.
     parts = (["id: ID!"] if include_id else []) + [
-        f"{_camel_field(f)}: {_infer_graphql_type(f)}" for f in fields
+        f"{field}: {graphql_type}{'!' if required and not include_id else ''}"
+        for field, graphql_type, _non_null, required in _type_fields(table, schema)
     ]
     return ", ".join(parts)
 
@@ -217,7 +327,8 @@ def _graphql_schema(tables: list[dict]) -> str:
     if not tables:
         return "type Query {\n  _placeholder: Boolean\n}\n"
 
-    types = "\n\n".join(_graphql_type_block(t) for t in tables)
+    schema = typed_schema.resolve_if_typed(tables)
+    types = "\n\n".join(_graphql_type_block(t, schema) for t in tables)
     query_fields, mutation_fields = [], []
     for t in tables:
         name = _pascal(t.get("name", "Item"))
@@ -226,10 +337,10 @@ def _graphql_schema(tables: list[dict]) -> str:
         query_fields.append(f"  {plural}: [{name}!]!")
         query_fields.append(f"  {singular}(id: ID!): {name}")
         mutation_fields.append(
-            f"  create{name}({_mutation_field_args(t, False)}): {name}!"
+            f"  create{name}({_mutation_field_args(t, False, schema)}): {name}!"
         )
         mutation_fields.append(
-            f"  update{name}({_mutation_field_args(t, True)}): {name}!"
+            f"  update{name}({_mutation_field_args(t, True, schema)}): {name}!"
         )
         mutation_fields.append(f"  delete{name}(id: ID!): Boolean!")
 

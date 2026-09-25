@@ -233,9 +233,15 @@ def test_fastapi_model_file_has_correctly_typed_columns_and_a_custom_slot():
     data = dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
     model = _by_path(data)["backend/models/book.py"]
     assert "class Book(Base):" in model
-    assert "price = Column(Float, nullable=True)" in model
-    assert "is_available = Column(Boolean, nullable=True)" in model
-    assert "published_at = Column(DateTime(timezone=True), nullable=True)" in model
+    assert '__tablename__ = "books"' in model
+    # Undeclared fields keep the by-name inference, now as explicit
+    # sqlalchemy types (the same code the migration renders).
+    assert "price = sa.Column(sa.Float(), nullable=True)" in model
+    assert "is_available = sa.Column(sa.Boolean(), nullable=True)" in model
+    assert (
+        "published_at = sa.Column(sa.DateTime(timezone=True), nullable=True)" in model
+    )
+    assert "isbn = sa.Column(sa.String(length=255), nullable=True)" in model
     assert "VENGAI:CUSTOM:book_model:start" in model
     assert "VENGAI:CUSTOM:book_model:end" in model
 
@@ -286,10 +292,12 @@ def test_express_model_file_has_correctly_typed_fields_and_a_custom_slot():
     data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
     model = _by_path(data)["backend/models/book.js"]
     assert "const mongoose = require('mongoose');" in model
-    assert "price: { type: Number, required: false }," in model
-    assert "is_available: { type: Boolean, required: false }," in model
-    assert "published_at: { type: Date, required: false }," in model
-    assert "module.exports = mongoose.model('Book', BookSchema);" in model
+    assert "price: { type: Number }," in model
+    assert "is_available: { type: Boolean }," in model
+    assert "published_at: { type: Date }," in model
+    assert 'collection: "books",' in model
+    assert "autoIndex: false," in model
+    assert 'module.exports = mongoose.model("Book", BookSchema);' in model
     assert "VENGAI:CUSTOM:book_model:start" in model
     assert "VENGAI:CUSTOM:book_model:end" in model
 
@@ -304,7 +312,8 @@ def test_express_routes_file_has_crud_for_every_table_and_a_custom_slot():
         "router.get('/members/:id'",
     ):
         assert fragment in routes
-    assert "const Book = require('../models/book');" in routes
+    # <Class>Model, so a table named e.g. "Date" can't hide the JS built-in.
+    assert "const BookModel = require('../models/book');" in routes
     assert "VENGAI:CUSTOM:extra_routes:start" in routes
     assert "module.exports = router;" in routes
 
@@ -316,7 +325,8 @@ def test_vue_screen_uses_mongoose_id_convention():
     data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
     screen = _by_path(data)["frontend/src/screens/BookScreen.vue"]
     assert "<script setup>" in screen
-    assert 'v-model="form.price"' in screen
+    assert 'v-model="form[field.key]"' in screen
+    assert '{ key: "price", label: "price", type: "float"' in screen
     assert "item._id" in screen
     assert "VENGAI:CUSTOM:book_screen:start" in screen
 

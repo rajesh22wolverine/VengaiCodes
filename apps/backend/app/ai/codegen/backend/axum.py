@@ -52,6 +52,9 @@ async def _rest_routes(ctx: RoutesCtx) -> list[FileResult]:
 Already-generated data structs to import and use:
 {model_imports}
 
+Database tables, created at startup by exactly this SQL (use these table and column names):
+{rust_common.schema_sql_for_prompt(ctx.tables)}
+
 API endpoints to implement (use the EXACT function name given for each — main.rs registers
 these exact names on the router):
 {endpoints_text}
@@ -110,6 +113,10 @@ async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
     prompt = f"""Write ONE complete, real async-graphql schema file for this app, covering every capability below.
 
 Tables available (real SQLite tables, already created): {tables_text}
+
+They are created at startup by exactly this SQL (use these table and column names, and Rust types
+that decode each column's SQL type: TEXT -> String, INTEGER -> i64, REAL -> f64, BOOLEAN -> bool):
+{rust_common.schema_sql_for_prompt(ctx.tables)}
 
 Capabilities to expose as GraphQL fields (each was originally described as a REST endpoint — turn
 each GET-shaped one into a Query field, and each POST/PUT/PATCH/DELETE-shaped one into a Mutation
@@ -212,10 +219,7 @@ _METHOD_TO_AXUM_FN = {
 
 
 def _build_main_rs(endpoints: list[dict], tables: list[dict]) -> str:
-    create_tables = "\n".join(
-        f'    sqlx::query(r#"{rust_common.build_create_table_sql(t)}"#).execute(&pool).await.expect("failed to create table");'
-        for t in tables
-    )
+    create_tables = rust_common.create_tables_block(tables)
 
     by_path: dict[str, list[dict]] = defaultdict(list)
     for e in endpoints:
@@ -260,10 +264,7 @@ async fn main() {{
 # GraphiQL served on GET /graphql, real queries/mutations on POST /graphql —
 # same shape as the module header documents was actually compiled and run.
 def _build_main_rs_graphql(tables: list[dict]) -> str:
-    create_tables = "\n".join(
-        f'    sqlx::query(r#"{rust_common.build_create_table_sql(t)}"#).execute(&pool).await.expect("failed to create table");'
-        for t in tables
-    )
+    create_tables = rust_common.create_tables_block(tables)
 
     return f"""use async_graphql::{{EmptySubscription, Schema}};
 use async_graphql_axum::{{GraphQLRequest, GraphQLResponse}};

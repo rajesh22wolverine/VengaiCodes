@@ -20,6 +20,10 @@
 #    POST /start         — start/resume and return immediately
 #    GET  /{id}/job      — progress of the current run
 #    POST /cancel        — ask the current run to stop
+#    POST /generate-deterministic — the no-AI, schema-driven path
+#                          (codegen_deterministic.py), synchronous; also
+#                          writes the generated app's next versioned
+#                          database migration (migrations_gen.py)
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -30,7 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import codegen_deterministic, codegen_runner
+from app.ai import codegen_deterministic, codegen_runner, migrations_gen
 from app.ai.codegen_shared import GeneratedFile
 from app.ai.stack_matrix import get_project_stack
 from app.api.v1.auth import get_current_active_user
@@ -47,6 +51,12 @@ router = APIRouter()
 # ─── Schemas ───
 class GenerateCodeRequest(BaseModel):
     project_id: str
+
+
+class GenerateDeterministicRequest(GenerateCodeRequest):
+    # Only ever true on a retry after the user confirmed a 409: the new
+    # migration drops a table/column or changes a column's type.
+    allow_destructive_migration: bool = False
 
 
 class CodeGenResult(BaseModel):
@@ -68,6 +78,9 @@ class GenerateCodeResponse(BaseModel):
     # schema-driven no-AI path (codegen_deterministic.py). Absent on any
     # codegen_data written before this field existed, hence the default.
     generation_mode: str = "ai"
+    # The generated app's versioned database migrations (deterministic
+    # runs only) — migrations_gen.public_migration_info(); None otherwise.
+    migrations: dict | None = None
 
 
 class ApproveCodeRequest(BaseModel):
@@ -122,6 +135,7 @@ def _saved_result(project: Project) -> GenerateCodeResponse:
         codegen=CodeGenResult(**data.get("codegen", {"summary": "", "files": []})),
         stack_used=StackUsed(**stack_used),
         generation_mode=data.get("generation_mode", "ai"),
+        migrations=migrations_gen.public_migration_info(data.get("migrations")),
     )
 
 
@@ -248,7 +262,7 @@ async def generate_code(
     summary="Generate real CRUD code deterministically (no AI call) — React+FastAPI or Vue+Express (REST) only",
 )
 async def generate_code_deterministic(
-    payload: GenerateCodeRequest,
+    payload: GenerateDeterministicRequest,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -262,7 +276,14 @@ async def generate_code_deterministic(
     Overwrites project.codegen_data like the AI path does, EXCEPT that
     any VENGAI:CUSTOM section from a previous generation (AI or
     deterministic) at the same file path is preserved — see
-    codegen_deterministic.merge_preserving_custom_code().
+    codegen_deterministic.merge_preserving_custom_code() — and earlier
+    migration files are carried over unchanged.
+
+    Answers, besides 200: 409 when the next migration would permanently
+    change existing data (drop a table/column, change a type) and
+    allow_destructive_migration wasn't set — nothing is saved, and the
+    client may ask the user and retry with it; 400 for anything the user
+    has to fix first (schema issues, a change no migration can apply).
     """
     project = await _get_generatable_project(db, user, payload.project_id)
     stack_info = get_project_stack(project)
@@ -279,9 +300,21 @@ async def generate_code_deterministic(
 
     try:
         codegen_data = codegen_deterministic.build_deterministic_codegen_data(
-            project, stack_info
+            project,
+            stack_info,
+            allow_destructive_migration=payload.allow_destructive_migration,
         )
-    except codegen_deterministic.DeterministicCodegenError as e:
+    except migrations_gen.DestructiveMigrationError as e:
+        # Checked before its parent class: this one is a question for the
+        # user, not a refusal.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{e}\nConfirm to write this migration anyway, or change the schema back in Architecture.",
+        ) from e
+    except (
+        migrations_gen.MigrationError,
+        codegen_deterministic.DeterministicCodegenError,
+    ) as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
         ) from e
@@ -321,6 +354,9 @@ async def get_code(
         "generated_at": project.codegen_data.get("generated_at"),
         "stack_used": project.codegen_data.get("stack_used"),
         "generation_mode": project.codegen_data.get("generation_mode", "ai"),
+        "migrations": migrations_gen.public_migration_info(
+            project.codegen_data.get("migrations")
+        ),
     }
 
 

@@ -11,6 +11,7 @@
 #  the .proto so method names/types can't drift between the two.
 # ═══════════════════════════════════════════════════════════════
 
+from app.ai import db_schema
 from app.ai.codegen.manifests.package_json import build_package_json
 from app.ai.codegen.types import (
     BackendAdapter,
@@ -35,7 +36,7 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     prompt = f"""Write ONE complete, real TypeORM entity file for the "{table_name}" table of this app.
 
 Table purpose: {ctx.table.get("purpose", "")}
-Fields: {", ".join(ctx.table.get("key_fields", []))}
+{db_schema.describe_table_for_prompt(ctx.table, ctx.all_tables or [ctx.table])}
 
 Requirements:
 - Real column types, constraints (nullable, unique, default) matching the fields above.

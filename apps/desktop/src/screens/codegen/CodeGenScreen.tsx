@@ -15,6 +15,16 @@ import {
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import GenerationProgress from "@/components/generation/GenerationProgress";
 import ChatPanel from "@/components/chat/ChatPanel";
+import {
+  findRevisionFile,
+  MigrationsInfo,
+  newRevisions,
+  parseMigrations,
+  refusalFixTarget,
+  requestDeterministicCodegen,
+} from "./deterministicCodegen";
+import MigrationsPanel from "./MigrationsPanel";
+import { DestructiveMigrationDialog, GenerationRefusedPanel } from "./DeterministicNotices";
 
 interface GeneratedFile {
   path: string;
@@ -61,6 +71,19 @@ export default function CodeGenScreen() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
 
+  // The generated app's versioned database migrations (deterministic runs
+  // only — null for AI-generated code or a project generated before
+  // migrations existed).
+  const [migrations, setMigrations] = useState<MigrationsInfo | null>(null);
+  const [migrationsOpen, setMigrationsOpen] = useState(false);
+  // The backend's explanation when a deterministic run answered 409: its
+  // migration would drop a table/column or change a column's type, so it
+  // wrote nothing and waits for an explicit go-ahead.
+  const [destructiveConfirm, setDestructiveConfirm] = useState<string | null>(null);
+  // A deterministic run the backend refused (400): every problem, one
+  // per line, kept on screen until dismissed or the next run.
+  const [refusal, setRefusal] = useState<string | null>(null);
+
   // Generation runs on the server, not here — leaving the screen stops
   // us watching it, it doesn't stop the run.
   const abandoned = useRef(false);
@@ -71,6 +94,9 @@ export default function CodeGenScreen() {
     return () => {
       abandoned.current = true;
     };
+    // Once per project: loadOrGenerate is a new function every render, so
+    // listing it would re-run the load on each one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const loadOrGenerate = async () => {
@@ -78,6 +104,7 @@ export default function CodeGenScreen() {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
+      setMigrations(parseMigrations(data.migrations));
       setGenerationMode(data.generation_mode === "deterministic" ? "deterministic" : "ai");
       setSelectedFile(data.codegen.files?.[0] || null);
       setIsLoading(false);
@@ -95,6 +122,7 @@ export default function CodeGenScreen() {
   // backend restart, and picks up from the last finished file.
   const generate = async () => {
     setNeedsModeChoice(false);
+    setRefusal(null);
     setIsGenerating(true);
     setIsLoading(false);
     try {
@@ -109,6 +137,7 @@ export default function CodeGenScreen() {
       const { data } = await apiClient.get(`/codegen/${projectId}`);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
+      setMigrations(parseMigrations(data.migrations));
       setGenerationMode("ai");
       setSelectedFile(data.codegen.files?.[0] || null);
       toast.success("Your code is ready! 💻🐯");
@@ -130,31 +159,77 @@ export default function CodeGenScreen() {
 
   // Deterministic mode is synchronous — no AI call means no job to poll,
   // it either returns in this one request or 400s with a clear reason
-  // (today: React+FastAPI or Vue+Express, REST only). Safe to
-  // call again later too: any hand-edit inside a VENGAI:CUSTOM section of
-  // a previously generated file survives — see codegen_deterministic.py.
-  const generateDeterministic = async () => {
-    setNeedsModeChoice(false);
+  // (today: React+FastAPI or Vue+Express, REST only; or the schema
+  // problems the Architecture screen lists). Safe to call again later
+  // too: any hand-edit inside a VENGAI:CUSTOM section of a previously
+  // generated file survives — see codegen_deterministic.py.
+  //
+  // A run that changes the schema also writes a new database migration.
+  // When that migration would lose data (drop a table/column, change a
+  // column's type) the backend answers 409 and writes nothing; the dialog
+  // asks, and a "yes" repeats this exact request with the go-ahead flag.
+  //
+  // The mode-choice screen stays up until a run succeeds, so a first run
+  // shows its spinner there, and a refusal or a declined confirmation
+  // lands back on the choice rather than a blank screen.
+  const generateDeterministic = async (allowDestructiveMigration = false) => {
     setIsGeneratingDeterministic(true);
+    setRefusal(null);
     try {
-      const { data } = await apiClient.post("/codegen/generate-deterministic", {
-        project_id: projectId,
-      });
+      const outcome = await requestDeterministicCodegen(apiClient, projectId!, allowDestructiveMigration);
+      if (abandoned.current) return;
+      if (outcome.kind === "needs_confirmation") {
+        setDestructiveConfirm(outcome.detail);
+        return;
+      }
+      if (outcome.kind === "refused") {
+        setRefusal(outcome.detail);
+        return;
+      }
+      const { data } = outcome;
+      const added = newRevisions(migrations, outcome.migrations);
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
+      setMigrations(outcome.migrations);
       setGenerationMode("deterministic");
-      setSelectedFile(data.codegen.files?.[0] || null);
+      setSelectedFile(data.codegen?.files?.[0] || null);
+      setNeedsModeChoice(false);
       setIsLoading(false);
-      toast.success("Code generated instantly — no AI used 🐯⚡");
+      const newest = added[added.length - 1];
+      if (newest) {
+        // A new migration is news worth seeing — open the panel on it.
+        setMigrationsOpen(true);
+        toast.success(`Code generated instantly — no AI used. New database migration: ${newest.filename || newest.id} 🐯⚡`);
+      } else {
+        toast.success("Code generated instantly — no AI used 🐯⚡");
+      }
     } catch (error: any) {
-      toast.error(
-        error.response?.data?.detail || error.message || "Failed to generate code deterministically."
-      );
-      if (!codegen) setNeedsModeChoice(true);
+      if (abandoned.current) return;
+      toast.error(error.message || "Failed to generate code deterministically.");
     } finally {
-      setIsGeneratingDeterministic(false);
+      if (!abandoned.current) setIsGeneratingDeterministic(false);
     }
   };
+
+  const confirmDestructiveRegeneration = () => {
+    setDestructiveConfirm(null);
+    generateDeterministic(true);
+  };
+
+  const openMigrationFile = (filename: string) => {
+    const file = codegen ? findRevisionFile(codegen.files, filename) : undefined;
+    if (file) setSelectedFile(file);
+  };
+
+  const refusalTarget = refusal ? refusalFixTarget(refusal) : "architecture";
+  const refusalPanelProps = refusal
+    ? {
+        detail: refusal,
+        onDismiss: () => setRefusal(null),
+        fixLabel: refusalTarget === "stack" ? "Open Stack Selection" : "Fix in Architecture",
+        onFix: () => navigate(`/project/${projectId}/${refusalTarget === "stack" ? "stack" : "architecture"}`),
+      }
+    : null;
 
   const handleCancelGeneration = async () => {
     setIsCancelling(true);
@@ -231,6 +306,14 @@ export default function CodeGenScreen() {
     }
   };
 
+  const destructiveDialog = destructiveConfirm !== null && (
+    <DestructiveMigrationDialog
+      detail={destructiveConfirm}
+      onCancel={() => setDestructiveConfirm(null)}
+      onConfirm={confirmDestructiveRegeneration}
+    />
+  );
+
   if (isLoading || isGenerating) {
     return (
       <GenerationProgress
@@ -258,7 +341,8 @@ export default function CodeGenScreen() {
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-xl">
           <button
             onClick={generate}
-            className="text-left p-5 rounded-2xl border-2 border-[var(--color-primary)] bg-[var(--color-primary-light)] hover:opacity-90 transition-opacity"
+            disabled={isGeneratingDeterministic}
+            className="text-left p-5 rounded-2xl border-2 border-[var(--color-primary)] bg-[var(--color-primary-light)] hover:opacity-90 transition-opacity disabled:opacity-60"
           >
             <Sparkles className="w-5 h-5 text-[var(--color-primary)] mb-2" />
             <p className="text-sm font-semibold text-[var(--color-text-primary)]">AI-Generated</p>
@@ -267,7 +351,7 @@ export default function CodeGenScreen() {
             </p>
           </button>
           <button
-            onClick={generateDeterministic}
+            onClick={() => generateDeterministic()}
             disabled={isGeneratingDeterministic}
             className="text-left p-5 rounded-2xl border-2 border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60"
           >
@@ -283,6 +367,8 @@ export default function CodeGenScreen() {
             </p>
           </button>
         </div>
+        {refusalPanelProps && <GenerationRefusedPanel {...refusalPanelProps} className="mt-6 w-full max-w-xl" />}
+        {destructiveDialog}
       </div>
     );
   }
@@ -337,6 +423,25 @@ export default function CodeGenScreen() {
             </p>
           </div>
         </div>
+      )}
+
+      {/* A refused No-AI regeneration — the code below is the last good run */}
+      {refusalPanelProps && (
+        <div className="px-6 py-3 border-b border-[var(--color-border)] flex-shrink-0">
+          <GenerationRefusedPanel {...refusalPanelProps} className="max-w-3xl" />
+        </div>
+      )}
+
+      {/* The generated app's versioned database migrations */}
+      {migrations && (
+        <MigrationsPanel
+          migrations={migrations}
+          open={migrationsOpen}
+          onToggle={() => setMigrationsOpen((v) => !v)}
+          onOpenFile={openMigrationFile}
+          hasFile={(filename) => !!findRevisionFile(codegen.files, filename)}
+          fromEarlierRun={generationMode !== "deterministic"}
+        />
       )}
 
       {/* Main content — file tree + code preview */}
@@ -422,7 +527,7 @@ export default function CodeGenScreen() {
           </p>
           <div className="flex items-center gap-3 flex-shrink-0">
             <button
-              onClick={generateDeterministic}
+              onClick={() => generateDeterministic()}
               disabled={isGeneratingDeterministic}
               title="Regenerate deterministically (no AI, instant, free). Any code inside a VENGAI:CUSTOM section is preserved."
               className="px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] font-medium text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 flex items-center gap-2"
@@ -474,6 +579,7 @@ export default function CodeGenScreen() {
         </div>
       </div>
       <ChatPanel projectId={projectId} phase="codegen" />
+      {destructiveDialog}
     </div>
   );
 }

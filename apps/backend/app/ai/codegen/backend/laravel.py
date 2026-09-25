@@ -21,10 +21,25 @@
 #  can't express declaratively (custom validation, computed fields) via
 #  a `@field(resolver:)`-bound resolver class, kept genuinely optional
 #  since most CRUD needs nothing beyond directives.
+#
+#  2026-09-24: typed columns. A table that declares field types, foreign
+#  keys, uniques, indexes or checks in the Architecture editor gets them
+#  in its migration (foreignId()->constrained()->cascadeOnDelete(),
+#  ->nullable(), ->default(), ->unique(), $table->index()) and in its
+#  Lighthouse type; migrations run parents-first, and a typed table's
+#  columns are required/optional exactly as the editor shows (instead
+#  of Laravel's blanket NOT NULL). Laravel's schema
+#  builder has no portable CHECK constraint, so a check becomes a clear
+#  comment in the migration (and a rule in the model prompt) instead of
+#  a fake one. A table that declares nothing still produces exactly the
+#  output it always did — see typed_schema.py.
 # ═══════════════════════════════════════════════════════════════
 
+import json
 import re
 
+from app.ai import db_schema
+from app.ai.codegen.backend import typed_schema
 from app.ai.codegen.types import (
     BackendAdapter,
     FileResult,
@@ -74,19 +89,39 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
     class_name = _pascal(table_name)
     fields = ctx.table.get("key_fields", []) or []
+    all_tables = ctx.all_tables or [ctx.table]
+    schema = typed_schema.resolve_if_typed(all_tables)
+    rt = typed_schema.typed_table(schema, ctx.table)
+    if rt is not None:
+        # The exact column names the typed migration creates.
+        fields = [c.column for c in rt.columns]
+    column_types = ", ".join(
+        f"{column} {method}"
+        for column, method in _migration_column_types(ctx.table, schema)
+    )
+    # Laravel's migration can't create a CHECK constraint (see
+    # _check_comment_lines), so the model is where those rules live.
+    check_rule = (
+        "\n- Enforce every check constraint listed above in this model (e.g. a `saving` model event"
+        "\n  that throws on a violation) — the migration can't enforce them in the database."
+        if rt is not None and rt.checks
+        else ""
+    )
 
     prompt = f"""Write ONE complete, real Eloquent model class for the "{table_name}" table of this app.
 
 Table purpose: {ctx.table.get("purpose", "")}
-Fields (already defined as DB columns by a migration — do NOT redeclare them as properties):
-{", ".join(fields)}
+The columns below are ALREADY created by a migration — do NOT redeclare them as properties.
+{db_schema.describe_table_for_prompt(ctx.table, all_tables)}
+Column types the migration really creates (where these differ from the list above, these are
+what the database has): {column_types or "(none besides id and timestamps)"}
 
 Requirements:
 - Class name: {class_name} extends Model (`use Illuminate\\Database\\Eloquent\\Model;`).
 - Declare `protected $fillable = [{", ".join(repr(f) for f in fields)}];` for mass assignment.
-- Add `$casts` for any boolean/datetime/decimal fields, real relationships (`hasMany`/
-  `belongsTo`) if implied by the key features / user stories, and any real accessor/mutator
-  methods the app's behavior needs.
+- Add `$casts` for any boolean/date/datetime/decimal fields, a real `belongsTo` relationship for
+  every foreign key listed above (plus any `hasMany`/`belongsTo` implied by the key features /
+  user stories), and any real accessor/mutator methods the app's behavior needs.{check_rule}
 - No placeholders or TODOs.
 
 Return ONLY the raw PHP code for this one file (including `<?php` and `namespace App\\Models;`).
@@ -160,7 +195,34 @@ No markdown fences, no explanation, no JSON."""
     ]
 
 
+# Lighthouse scalar for each db_schema type. Date/DateTime are Lighthouse's
+# own built-in scalar classes (declared at the top of a typed schema —
+# see _SCALAR_DECLARATIONS). Lighthouse ships no JSON scalar, so a json
+# column is exposed as its JSON text (String) rather than pulling in an
+# extra package just for it.
+_LIGHTHOUSE_TYPES = {
+    "string": "String",
+    "text": "String",
+    "integer": "Int",
+    "float": "Float",
+    "decimal": "Float",
+    "boolean": "Boolean",
+    "date": "Date",
+    "datetime": "DateTime",
+    "json": "String",
+}
+
+# Lighthouse resolves a custom scalar only if the schema declares it
+# with its implementing class (Nuwave\Lighthouse\Schema\Types\Scalars\*).
+_SCALAR_DECLARATIONS = {
+    "Date": 'scalar Date @scalar(class: "Nuwave\\\\Lighthouse\\\\Schema\\\\Types\\\\Scalars\\\\Date")',
+    "DateTime": 'scalar DateTime @scalar(class: "Nuwave\\\\Lighthouse\\\\Schema\\\\Types\\\\Scalars\\\\DateTime")',
+}
+
+
 def _lighthouse_scalar(field_name: str) -> str:
+    """A table that declares nothing: the same name-based guess its
+    migration's column type came from."""
     graphql_type = {
         "boolean": "Boolean",
         "dateTime": "DateTime",
@@ -170,10 +232,39 @@ def _lighthouse_scalar(field_name: str) -> str:
     return graphql_type
 
 
-def _table_type_block(table: dict) -> str:
+def _type_fields(
+    table: dict, schema: db_schema.ResolvedSchema | None
+) -> list[tuple[str, str, bool, bool]]:
+    """(field, scalar, non-null, required on create) per user column —
+    the one source for the type block, the mutation arguments and the
+    prompt that describes them. A table that declares nothing keeps its
+    original shape (every field optional); a typed table's scalars and
+    nullability follow the exact column its migration creates."""
+    rt = typed_schema.typed_table(schema, table)
+    if rt is None:
+        return [
+            (_slug(f), _lighthouse_scalar(f), False, False)
+            for f in (table.get("key_fields", []) or [])
+        ]
+    return [
+        (
+            c.column,
+            _LIGHTHOUSE_TYPES[_laravel_column(c, schema)[2]],
+            not c.nullable,
+            not c.nullable and c.default is None,
+        )
+        for c in rt.columns
+    ]
+
+
+def _table_type_block(
+    table: dict, schema: db_schema.ResolvedSchema | None = None
+) -> str:
     name = _pascal(table.get("name", "Item"))
-    fields = table.get("key_fields", []) or []
-    field_lines = "\n".join(f"  {_slug(f)}: {_lighthouse_scalar(f)}" for f in fields)
+    field_lines = "\n".join(
+        f"  {field}: {scalar}{'!' if non_null else ''}"
+        for field, scalar, non_null, _required in _type_fields(table, schema)
+    )
     return f"""type {name} {{
   id: ID!
 {field_lines}
@@ -182,10 +273,19 @@ def _table_type_block(table: dict) -> str:
 }}"""
 
 
-def _mutation_args(table: dict, required: bool) -> str:
-    fields = table.get("key_fields", []) or []
-    suffix = "!" if required else ""
-    return ", ".join(f"{_slug(f)}: {_lighthouse_scalar(f)}{suffix}" for f in fields)
+def _mutation_args(
+    table: dict,
+    required: bool,
+    schema: db_schema.ResolvedSchema | None = None,
+    on_create: bool = False,
+) -> str:
+    """`required` marks every argument non-null. With `on_create`, a
+    typed table's required columns that have no default are non-null
+    too — the database would reject a create without them anyway."""
+    return ", ".join(
+        f"{field}: {scalar}{'!' if required or (on_create and required_on_create) else ''}"
+        for field, scalar, _non_null, required_on_create in _type_fields(table, schema)
+    )
 
 
 def _search_field_name(table_name: str) -> str:
@@ -204,7 +304,8 @@ def _graphql_schema(tables: list[dict]) -> str:
     if not tables:
         return "type Query {\n  _placeholder: Boolean\n}\n"
 
-    types = "\n\n".join(_table_type_block(t) for t in tables)
+    schema = typed_schema.resolve_if_typed(tables)
+    types = "\n\n".join(_table_type_block(t, schema) for t in tables)
     query_fields, mutation_fields = [], []
     for t in tables:
         name = _pascal(t.get("name", "Item"))
@@ -217,25 +318,37 @@ def _graphql_schema(tables: list[dict]) -> str:
             f'@field(resolver: "App\\\\GraphQL\\\\Queries\\\\CustomQueries@{_search_field_name(t.get("name", "Item"))}")'
         )
         mutation_fields.append(
-            f"  create{name}({_mutation_args(t, False)}): {name}! @create"
+            f"  create{name}({_mutation_args(t, False, schema, on_create=True)}): {name}! @create"
         )
         mutation_fields.append(
-            f"  update{name}(id: ID!, {_mutation_args(t, False)}): {name}! @update"
+            f"  update{name}(id: ID!, {_mutation_args(t, False, schema)}): {name}! @update"
         )
         mutation_fields.append(f"  delete{name}(id: ID! @whereKey): {name} @delete")
 
     query_block = "type Query {\n" + "\n".join(query_fields) + "\n}"
     mutation_block = "type Mutation {\n" + "\n".join(mutation_fields) + "\n}"
-    return f"{query_block}\n\n{mutation_block}\n\n{types}\n"
+    sdl = f"{query_block}\n\n{mutation_block}\n\n{types}\n"
+    if schema is None:
+        return sdl
+    # A typed schema declares every Lighthouse scalar it uses (DateTime
+    # always — every type has created_at/updated_at).
+    used = [s for s in _SCALAR_DECLARATIONS if re.search(rf":\s*{s}\b", sdl)]
+    declarations = "\n".join(_SCALAR_DECLARATIONS[s] for s in used)
+    return f"{declarations}\n\n{sdl}" if declarations else sdl
 
 
 async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
     schema_sdl = _graphql_schema(ctx.tables)
+    schema = typed_schema.resolve_if_typed(ctx.tables)
     tables_text = (
         "\n".join(
             f"- {_search_field_name(t.get('name', 'Item'))}($root, array $args): searches "
-            f"{_pascal(t.get('name', 'Item'))} (fields: {', '.join(_slug(f) for f in (t.get('key_fields', []) or []))}) "
-            f"by the string argument $args['term']"
+            f"{_pascal(t.get('name', 'Item'))} (fields: "
+            + ", ".join(
+                f"{field} {scalar}"
+                for field, scalar, _nn, _req in _type_fields(t, schema)
+            )
+            + ") by the string argument $args['term']"
             for t in ctx.tables
         )
         or "(no tables)"
@@ -314,17 +427,195 @@ def _is_graphql(ctx: WiringCtx) -> bool:
     return any(f.path == _GRAPHQL_SCHEMA_PATH for f in ctx.routes_files)
 
 
-def _build_migration_php(index: int, table: dict) -> tuple[str, str]:
+# db_schema type -> Blueprint column method + extra arguments. Sizes match
+# db_schema's own (string 255, decimal 12,2).
+_LARAVEL_TYPES: dict[str, tuple[str, str]] = {
+    "string": ("string", f", {db_schema.STRING_LENGTH}"),
+    "text": ("text", ""),
+    "integer": ("integer", ""),
+    "float": ("float", ""),
+    "decimal": (
+        "decimal",
+        f", {db_schema.DECIMAL_PRECISION}, {db_schema.DECIMAL_SCALE}",
+    ),
+    "boolean": ("boolean", ""),
+    "date": ("date", ""),
+    "datetime": ("dateTime", ""),
+    "json": ("json", ""),
+}
+
+_LARAVEL_ON_DELETE = {
+    "cascade": "cascadeOnDelete()",
+    "set_null": "nullOnDelete()",
+    "restrict": "restrictOnDelete()",
+}
+
+
+def _php_str(text: str) -> str:
+    # Single-quoted: only \ and ' are special, so no "$var" interpolation.
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+_DECIMAL_LITERAL_RE = re.compile(r"-?\d+(\.\d+)?")
+
+
+def _php_default(default: dict, field_type: str) -> str:
+    """The modifier that sets a column's default."""
+    kind = default["kind"]
+    if kind == "now":
+        return "->useCurrent()"
+    if kind == "today":
+        # Parenthesized so it's also a valid default expression on MySQL.
+        return (
+            "->default(new \\Illuminate\\Database\\Query\\Expression('(CURRENT_DATE)'))"
+        )
+    value = default["value"]
+    if field_type == "json":
+        literal = _php_str(json.dumps(value, sort_keys=True))
+    elif (
+        field_type == "decimal"
+        and isinstance(value, str)
+        and _DECIMAL_LITERAL_RE.fullmatch(value)
+    ):
+        literal = value  # db_schema's exact decimal string, e.g. "9.99"
+    elif isinstance(value, bool):
+        literal = "true" if value else "false"
+    elif isinstance(value, (int, float)):
+        literal = repr(value)
+    else:
+        literal = _php_str(str(value))
+    return f"->default({literal})"
+
+
+def _laravel_column(
+    col: db_schema.ResolvedColumn, schema: db_schema.ResolvedSchema
+) -> tuple[str, str, str]:
+    """(Blueprint method, its extra arguments, the db_schema type that
+    amounts to) — the last is what the column's default and its
+    Lighthouse scalar are rendered from, so neither can disagree with
+    the column the migration actually creates."""
+    ref_col = typed_schema.referenced_column(schema, col)
+    if ref_col is not None:
+        # Same column type as the column it points at.
+        return _laravel_column(ref_col, schema)
+    if col.fk is not None:
+        return "foreignId", "", "integer"  # $table->id() is an unsigned bigint
+    guessed = _infer_column_type(col.name)
+    field_type = "datetime" if guessed == "dateTime" else guessed
+    if typed_schema.keeps_guess(col, field_type, schema):
+        return guessed, "", field_type
+    return (*_LARAVEL_TYPES[col.type], col.type)
+
+
+def _comment_text(text: str) -> str:
+    """Safe inside a PHP `//` comment: a newline would end the comment,
+    and `?>` would end PHP mode even inside one."""
+    return re.sub(r"\s+", " ", text).replace("?>", "? >")
+
+
+def _typed_migration_columns(
+    rt: db_schema.ResolvedTable, schema: db_schema.ResolvedSchema
+) -> tuple[list[str], list[str]]:
+    """(column lines, lines that go after $table->timestamps())."""
+    indent = "            "
+    columns: list[str] = []
+    constraints: list[str] = []
+    for col in rt.columns:
+        fk = col.fk
+        method, args, field_type = _laravel_column(col, schema)
+        line = f"$table->{method}('{col.column}'{args})"
+        # Laravel makes a column NOT NULL unless told ->nullable(). A
+        # table that declares nothing keeps that (its legacy output), but
+        # a typed table follows db_schema's required/optional for every
+        # column — what the Architecture editor showed, what the model
+        # prompt says, and what the GraphQL arguments below require.
+        if col.nullable:
+            line += "->nullable()"
+        default = typed_schema.rendered_default(col, field_type)
+        if default is not None:
+            line += _php_default(default, field_type)
+        if col.unique:
+            line += f"->unique('{col.unique_constraint_name}')"
+        if fk is not None and fk.ref_column == "id":
+            # Column modifiers must come before constrained() — Laravel
+            # applies everything after it to the foreign key instead.
+            line += (
+                f"->constrained('{_table_slug(fk.ref_table)}', 'id', '{fk.constraint_name}')"
+                f"->{_LARAVEL_ON_DELETE[fk.on_delete]}"
+            )
+        elif fk is not None:
+            constraints.append(
+                f"{indent}$table->foreign('{col.column}', '{fk.constraint_name}')"
+                f"->references('{fk.ref_column}')->on('{_table_slug(fk.ref_table)}')"
+                f"->{_LARAVEL_ON_DELETE[fk.on_delete]};"
+            )
+        columns.append(f"{indent}{line};")
+    for idx in rt.indexes:
+        cols = ", ".join(f"'{c}'" for c in idx.columns)
+        method = "unique" if idx.unique else "index"
+        constraints.append(f"{indent}$table->{method}([{cols}], '{idx.name}');")
+    for chk in rt.checks:
+        constraints += _check_comment_lines(chk, rt, indent)
+    return columns, constraints
+
+
+def _check_comment_lines(
+    chk: db_schema.ResolvedCheck, rt: db_schema.ResolvedTable, indent: str
+) -> list[str]:
+    """Laravel's schema builder has no CHECK constraint method, and raw
+    ALTER TABLE ... ADD CONSTRAINT isn't possible on SQLite (this app's
+    database) — so rather than fake one, say plainly that the database
+    does NOT enforce the rule and where it is enforced instead (the
+    model prompt tells the AI to enforce every check)."""
+    return [
+        f'{indent}// CHECK "{_comment_text(chk.name)}" ({chk.constraint_name}): {_comment_text(chk.sql)}',
+        f"{indent}// Not enforced by the database — Laravel's schema builder has no portable CHECK",
+        f"{indent}// constraint. The App\\Models\\{rt.class_name} model enforces it before every save.",
+    ]
+
+
+def _migration_column_types(
+    table: dict, schema: db_schema.ResolvedSchema | None
+) -> list[tuple[str, str]]:
+    """(column, Blueprint method) for every column _build_migration_php
+    creates besides id/timestamps — what the model prompt quotes, so the
+    AI's $casts match the real column types."""
+    rt = typed_schema.typed_table(schema, table)
+    if rt is None:
+        return [
+            (_slug(f), _infer_column_type(f))
+            for f in (table.get("key_fields", []) or [])
+            if _slug(f) not in ("created_at", "updated_at")
+        ]
+    return [(c.column, _laravel_column(c, schema)[0]) for c in rt.columns]
+
+
+def _build_migration_php(
+    index: int, table: dict, schema: db_schema.ResolvedSchema | None = None
+) -> tuple[str, str]:
+    """`schema` is the whole architecture resolved (typed_schema.
+    resolve_if_typed) — needed to type a foreign key after the column
+    it references; None resolves this table on its own."""
     table_name = table.get("name", "Item")
     plural = _table_slug(table_name)
-    fields = [
-        f
-        for f in (table.get("key_fields", []) or [])
-        if _slug(f) not in ("created_at", "updated_at")
-    ]
-    columns = "\n".join(
-        f"            $table->{_infer_column_type(f)}('{_slug(f)}');" for f in fields
-    )
+    if schema is None:
+        schema = typed_schema.resolve_if_typed([table])
+    rt = typed_schema.typed_table(schema, table)
+    if rt is not None:
+        column_lines, after_timestamps = _typed_migration_columns(rt, schema)
+        columns = "\n".join(column_lines)
+        trailing = "".join(f"\n{line}" for line in after_timestamps)
+    else:
+        fields = [
+            f
+            for f in (table.get("key_fields", []) or [])
+            if _slug(f) not in ("created_at", "updated_at")
+        ]
+        columns = "\n".join(
+            f"            $table->{_infer_column_type(f)}('{_slug(f)}');"
+            for f in fields
+        )
+        trailing = ""
 
     content = f"""<?php
 
@@ -339,7 +630,7 @@ return new class extends Migration
         Schema::create('{plural}', function (Blueprint $table) {{
             $table->id();
 {columns}
-            $table->timestamps();
+            $table->timestamps();{trailing}
         }});
     }}
 
@@ -436,8 +727,6 @@ _ROUTES_CONSOLE_PHP = """<?php
 
 
 def _composer_json(project_name: str, graphql: bool) -> str:
-    import json
-
     package_name = f"vengaicode/{_slug(project_name).replace('_', '-')}"
     require = {
         "php": "^8.2",
@@ -474,8 +763,14 @@ DB_DATABASE=database/database.sqlite
 """
 
 
-def _database_php() -> str:
-    return """<?php
+def _database_php(foreign_keys: bool = False) -> str:
+    # SQLite ignores foreign keys unless each connection turns them on,
+    # and this config replaces Laravel's stock one (which does) — so any
+    # project that declares a foreign key needs the flag, or ON DELETE
+    # rules would silently never fire. Left out otherwise so a project
+    # without foreign keys keeps the exact file it always had.
+    fk_line = "\n            'foreign_key_constraints' => true," if foreign_keys else ""
+    return f"""<?php
 
 return [
     'default' => 'sqlite',
@@ -483,11 +778,16 @@ return [
         'sqlite' => [
             'driver' => 'sqlite',
             'database' => database_path('database.sqlite'),
-            'prefix' => '',
+            'prefix' => '',{fk_line}
         ],
     ],
 ];
 """
+
+
+def _has_foreign_keys(tables: list[dict]) -> bool:
+    schema = typed_schema.resolve_if_typed(tables)
+    return schema is not None and any(c.fk for t in schema.tables for c in t.columns)
 
 
 def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
@@ -507,7 +807,7 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         GeneratedFile(
             path="backend/config/database.php",
             language="php",
-            content=_database_php(),
+            content=_database_php(_has_foreign_keys(ctx.tables)),
             description="Database config",
         ),
     ]
@@ -562,8 +862,16 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
                 description="API routing, deterministically wired to the exact controller method names dictated to the AI",
             )
         )
-    for index, table in enumerate(ctx.tables):
-        filename, content = _build_migration_php(index, table)
+    schema = typed_schema.resolve_if_typed(ctx.tables)
+    # Parents first, so a foreign key's table always exists when the
+    # table referencing it is created (identity order with no FKs).
+    order = (
+        typed_schema.migration_order(ctx.tables, schema)
+        if schema is not None
+        else range(len(ctx.tables))
+    )
+    for index, table in enumerate(ctx.tables[i] for i in order):
+        filename, content = _build_migration_php(index, table, schema)
         files.append(
             GeneratedFile(
                 path=f"backend/database/migrations/{filename}",

@@ -16,6 +16,7 @@
 #  api_style field by design (see its docstring).
 # ═══════════════════════════════════════════════════════════════
 
+from app.ai import db_schema
 from app.ai.codegen.manifests.requirements_txt import build_requirements_txt
 from app.ai.codegen.types import (
     BackendAdapter,
@@ -38,7 +39,7 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     prompt = f"""Write ONE complete, real Flask-SQLAlchemy model file for the "{table_name}" table of this app.
 
 Table purpose: {ctx.table.get("purpose", "")}
-Fields: {", ".join(ctx.table.get("key_fields", []))}
+{db_schema.describe_table_for_prompt(ctx.table, ctx.all_tables or [ctx.table])}
 
 Requirements:
 - Real column types, constraints (nullable, unique, defaults) matching the fields above.

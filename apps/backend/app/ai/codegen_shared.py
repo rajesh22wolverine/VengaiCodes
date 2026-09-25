@@ -238,6 +238,25 @@ VALIDATORS: dict[str, Callable[[str], str | None]] = {
 }
 
 
+_JS_BRACKETS = "{([" + "})]"
+_JS_BRACKET_ESCAPES = {ord(ch): f"\\u{ord(ch):04x}" for ch in _JS_BRACKETS}
+
+
+def js_string_literal(text: str) -> str:
+    """A JS string literal for user-supplied text (a table or field name,
+    a seed value) in a DETERMINISTICALLY generated file. Same string at
+    runtime, but brackets that don't pair up are written as \\u escapes
+    and "TODO" is split the same way, so the file still passes
+    _validate_brace_heuristic above — which counts brackets everywhere,
+    string contents included, and would otherwise hold back packaging
+    for a project whose table is called, say, "Notes :)". "</" becomes
+    "<\\/" so a value can't end a Vue file's <script> block early."""
+    literal = json.dumps(str(text))
+    if sum(literal.count(c) for c in "{([") != sum(literal.count(c) for c in "})]"):
+        literal = literal.translate(_JS_BRACKET_ESCAPES)
+    return literal.replace("TODO", "TOD\\u004f").replace("</", "<\\/")
+
+
 def validate_generated_content(language: str, content: str) -> str | None:
     """Returns a problem description, or None if the file looks OK."""
     if not content.strip():

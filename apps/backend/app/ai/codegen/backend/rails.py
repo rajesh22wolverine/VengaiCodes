@@ -24,10 +24,20 @@
 #  keeping the schema deterministic here too avoids the AI inventing
 #  a MutationType.rb that doesn't attach the exact mutation classes it
 #  wrote in the other file.
+#
+#  2026-09-24: typed columns. A table that declares field types, foreign
+#  keys, uniques, indexes or checks in the Architecture editor gets them
+#  in its migration (t.references ... foreign_key:, t.index, Rails 7.1's
+#  t.check_constraint) and in its GraphQL type; migrations run parents-
+#  first so every referenced table exists. A table that declares nothing
+#  still produces exactly the output it always did — see
+#  typed_schema.py.
 # ═══════════════════════════════════════════════════════════════
 
 import re
 
+from app.ai import db_schema
+from app.ai.codegen.backend import typed_schema
 from app.ai.codegen.types import (
     BackendAdapter,
     FileResult,
@@ -76,19 +86,30 @@ def _rails_path(path: str) -> str:
 async def generate_model(ctx: ModelCtx) -> FileResult:
     table_name = ctx.table.get("name", "Item")
     class_name = _pascal(table_name)
+    all_tables = ctx.all_tables or [ctx.table]
+    column_types = ", ".join(
+        f"{column} {rails_type}"
+        for column, rails_type in _migration_column_types(
+            ctx.table, typed_schema.resolve_if_typed(all_tables)
+        )
+    )
 
     prompt = f"""Write ONE complete, real ActiveRecord model class for the "{table_name}" table of this app.
 
 Table purpose: {ctx.table.get("purpose", "")}
-Fields (already defined as DB columns by a migration — do NOT redeclare them, just use them):
-{", ".join(ctx.table.get("key_fields", []))}
+The columns below are ALREADY created by a migration — do NOT redeclare them, just use them.
+{db_schema.describe_table_for_prompt(ctx.table, all_tables)}
+Column types the migration really creates (where these differ from the list above, these are
+what the database has): {column_types or "(none besides id and timestamps)"}
 
 Requirements:
 - Class name: {class_name} < ApplicationRecord
 - Do NOT declare any columns/attributes — ActiveRecord infers those from the database schema
-  automatically. This file is ONLY: `validates` calls for real validation rules, `has_many`/
-  `belongs_to` associations if implied by the key features / user stories, and any real instance/
-  class methods the app's behavior needs.
+  automatically. This file is ONLY: `validates` calls for real validation rules (including one
+  for every required field, unique field and check constraint listed above), `has_many`/
+  `belongs_to` associations for every foreign key listed above (`optional: true` on an optional
+  one) plus any implied by the key features / user stories, and any real instance/class methods
+  the app's behavior needs.
 - No placeholders or TODOs.
 
 Return ONLY the raw Ruby code for this one file. No markdown fences, no explanation, no JSON."""
@@ -158,20 +179,63 @@ Return ONLY the raw Ruby code for this one file. No markdown fences, no explanat
     ]
 
 
-def _graphql_type_field(field_name: str) -> str:
-    graphql_type = {
+# graphql-ruby's own built-in scalars for each db_schema type — ISO8601Date
+# and JSON ship with graphql-ruby itself, so a declared date/json column
+# needs no extra gem. decimal stays Float, same as the name-based guess.
+_GRAPHQL_RUBY_TYPES = {
+    "string": "String",
+    "text": "String",
+    "integer": "Integer",
+    "float": "Float",
+    "decimal": "Float",
+    "boolean": "Boolean",
+    "date": "GraphQL::Types::ISO8601Date",
+    "datetime": "GraphQL::Types::ISO8601DateTime",
+    "json": "GraphQL::Types::JSON",
+}
+
+
+def _graphql_scalar(field_name: str) -> str:
+    """A table that declares nothing: the same name-based guess its
+    migration's column type came from."""
+    return {
         "boolean": "Boolean",
         "datetime": "GraphQL::Types::ISO8601DateTime",
         "decimal": "Float",
         "integer": "Integer",
     }.get(_infer_column_type(field_name), "String")
-    return f"    field :{_slug(field_name)}, {graphql_type}"
 
 
-def _table_type_rb(table: dict) -> str:
+def _type_fields(
+    table: dict, schema: db_schema.ResolvedSchema | None
+) -> list[tuple[str, str, bool]]:
+    """(field, graphql type, non-null) for every column the table's
+    GraphQL type exposes — shared by the deterministic type file and the
+    prompts that describe it, so the two can't disagree. A typed table's
+    scalars follow the exact column its migration creates."""
+    rt = typed_schema.typed_table(schema, table)
+    if rt is None:
+        return [
+            (_slug(f), _graphql_scalar(f), False)
+            for f in (table.get("key_fields", []) or [])
+        ]
+    fields = [
+        (c.column, _GRAPHQL_RUBY_TYPES[_rails_column(c, schema)[2]], not c.nullable)
+        for c in rt.columns
+    ]
+    # t.timestamps always creates both (NOT NULL), so the type can too.
+    return fields + [
+        ("created_at", "GraphQL::Types::ISO8601DateTime", True),
+        ("updated_at", "GraphQL::Types::ISO8601DateTime", True),
+    ]
+
+
+def _table_type_rb(table: dict, schema: db_schema.ResolvedSchema | None = None) -> str:
     name = _pascal(table.get("name", "Item"))
-    fields = table.get("key_fields", []) or []
-    field_lines = "\n".join(_graphql_type_field(f) for f in fields)
+    field_lines = "\n".join(
+        f"    field :{field}, {graphql_type}{', null: false' if non_null else ''}"
+        for field, graphql_type, non_null in _type_fields(table, schema)
+    )
     return f"""module Types
   class {name}Type < Types::BaseObject
     field :id, ID, null: false
@@ -187,13 +251,19 @@ async def _graphql_routes(ctx: RoutesCtx) -> list[FileResult]:
     schema is still split the same way as every other backend's
     deterministic-contract + AI-implementation design: {Table}Type
     wrapping is pure field-list boilerplate (built here, mirroring the
-    REST migration's own column-type inference), so the AI's two calls
-    are scoped to what's actually business logic — real query filtering
+    REST migration's own column types), so the AI's two calls are
+    scoped to what's actually business logic — real query filtering
     and real mutation validation/persistence."""
+    schema = typed_schema.resolve_if_typed(ctx.tables)
     models_text = ", ".join(_pascal(t.get("name", "Item")) for t in ctx.tables)
     types_text = "\n".join(
         f"- Types::{_pascal(t.get('name', 'Item'))}Type wraps the {_pascal(t.get('name', 'Item'))} model "
-        f"(fields: {', '.join(_slug(f) for f in (t.get('key_fields', []) or []))})"
+        f"(fields: "
+        + ", ".join(
+            f"{field} {graphql_type}{' (required)' if non_null else ''}"
+            for field, graphql_type, non_null in _type_fields(t, schema)
+        )
+        + ")"
         for t in ctx.tables
     )
     endpoints_text = "\n".join(
@@ -274,7 +344,7 @@ Return ONLY the raw Ruby code for this one file. No markdown fences, no explanat
             GeneratedFile(
                 path=f"backend/app/graphql/types/{_slug(t.get('name', 'item'))}_type.rb",
                 language="ruby",
-                content=_table_type_rb(t),
+                content=_table_type_rb(t, schema),
                 description=f"GraphQL object type wrapping {t.get('name', 'Item')} (deterministic)",
             ),
             None,
@@ -320,11 +390,205 @@ def _is_graphql(ctx: WiringCtx) -> bool:
     return any(f.path == _GRAPHQL_QUERY_TYPE_PATH for f in ctx.routes_files)
 
 
-def _build_migration_rb(index: int, table: dict) -> tuple[str, str]:
-    """Returns (filename, content) for one table's migration."""
+# db_schema type -> (ActiveRecord column type, its type options). Sizes
+# match db_schema's own (string 255, decimal 12,2) so a Rails app and the
+# no-AI generator agree on what a declared type means.
+_RAILS_TYPES: dict[str, tuple[str, str]] = {
+    "string": ("string", f"limit: {db_schema.STRING_LENGTH}"),
+    "text": ("text", ""),
+    "integer": ("integer", ""),
+    "float": ("float", ""),
+    "decimal": (
+        "decimal",
+        f"precision: {db_schema.DECIMAL_PRECISION}, scale: {db_schema.DECIMAL_SCALE}",
+    ),
+    "boolean": ("boolean", ""),
+    "date": ("date", ""),
+    "datetime": ("datetime", ""),
+    "json": ("json", ""),
+}
+
+_RAILS_ON_DELETE = {
+    "cascade": ":cascade",
+    "set_null": ":nullify",
+    "restrict": ":restrict",
+}
+
+
+def _ruby_str(text: str) -> str:
+    # Single-quoted: only \ and ' are special, so no #{...} interpolation
+    # can sneak in from a user-written default or check expression.
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _ruby_value(value) -> str:
+    if value is None:
+        return "nil"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_ruby_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        pairs = ", ".join(
+            f"{_ruby_str(str(k))} => {_ruby_value(v)}" for k, v in value.items()
+        )
+        return "{ " + pairs + " }" if pairs else "{}"
+    return _ruby_str(str(value))
+
+
+_DECIMAL_LITERAL_RE = re.compile(r"-?\d+(\.\d+)?")
+
+
+def _ruby_default(default: dict, field_type: str) -> str:
+    kind = default["kind"]
+    if kind == "now":
+        return '-> { "CURRENT_TIMESTAMP" }'
+    if kind == "today":
+        return '-> { "CURRENT_DATE" }'
+    value = default["value"]
+    # db_schema keeps decimals as exact strings ("9.99") — a bare numeric
+    # literal, not a quoted string, is what a decimal column's default is.
+    if (
+        field_type == "decimal"
+        and isinstance(value, str)
+        and _DECIMAL_LITERAL_RE.fullmatch(value)
+    ):
+        return value
+    return _ruby_value(value)
+
+
+def _rails_column(
+    col: db_schema.ResolvedColumn, schema: db_schema.ResolvedSchema
+) -> tuple[str, str, str]:
+    """(ActiveRecord column type, its type options, the db_schema type
+    that amounts to) — the last is what the column's default and its
+    GraphQL scalar are rendered from, so neither can disagree with the
+    column the migration actually creates."""
+    ref_col = typed_schema.referenced_column(schema, col)
+    if ref_col is not None:
+        # Same column type as the column it points at.
+        return _rails_column(ref_col, schema)
+    if col.fk is not None:
+        return "bigint", "", "integer"  # Rails' own primary keys are bigint
+    guessed = _infer_column_type(col.name)  # always a db_schema type name too
+    if typed_schema.keeps_guess(col, guessed, schema):
+        return guessed, "", guessed
+    return (*_RAILS_TYPES[col.type], col.type)
+
+
+def _typed_migration_body(
+    rt: db_schema.ResolvedTable, schema: db_schema.ResolvedSchema
+) -> list[str]:
+    """The lines inside create_table — columns, then t.timestamps, then
+    every constraint and index, all created in the one CREATE TABLE."""
+    columns: list[str] = []
+    constraints: list[str] = []
+    for col in rt.columns:
+        rails_type, type_opts, field_type = _rails_column(col, schema)
+        opts: list[str] = []
+        if not col.nullable:
+            opts.append("null: false")
+        default = typed_schema.rendered_default(col, field_type)
+        if default is not None:
+            opts.append(f"default: {_ruby_default(default, field_type)}")
+        fk = col.fk
+        if (
+            fk is not None
+            and fk.ref_column == "id"
+            and col.column.endswith("_id")
+            and len(col.column) > 3
+        ):
+            # `t.references :author` IS the author_id column, its index and
+            # (with foreign_key:) the constraint, in Rails' own idiom.
+            opts.append(
+                f"foreign_key: {{ to_table: :{_table_slug(fk.ref_table)}, "
+                f'on_delete: {_RAILS_ON_DELETE[fk.on_delete]}, name: "{fk.constraint_name}" }}'
+            )
+            if col.unique:
+                opts.append(
+                    f'index: {{ unique: true, name: "{col.unique_constraint_name}" }}'
+                )
+            columns.append(f"      t.references :{col.column[:-3]}, {', '.join(opts)}")
+            continue
+        all_opts = ", ".join(o for o in [type_opts, *opts] if o)
+        columns.append(
+            f"      t.{rails_type} :{col.column}{', ' + all_opts if all_opts else ''}"
+        )
+        if col.unique:
+            constraints.append(
+                f'      t.index [:{col.column}], name: "{col.unique_constraint_name}", unique: true'
+            )
+        if fk is not None:
+            # Not a <table>_id -> id reference, so t.references doesn't
+            # fit — a typed column plus t.foreign_key does. Declared inside
+            # create_table it's part of the CREATE TABLE itself (no SQLite
+            # table rebuild, which a later add_foreign_key would need).
+            primary_key = (
+                f", primary_key: :{fk.ref_column}" if fk.ref_column != "id" else ""
+            )
+            constraints.append(
+                f"      t.foreign_key :{_table_slug(fk.ref_table)}, column: :{col.column}"
+                f"{primary_key}, on_delete: {_RAILS_ON_DELETE[fk.on_delete]}, "
+                f'name: "{fk.constraint_name}"'
+            )
+    for idx in rt.indexes:
+        cols = ", ".join(f":{c}" for c in idx.columns)
+        unique = ", unique: true" if idx.unique else ""
+        constraints.append(f'      t.index [{cols}], name: "{idx.name}"{unique}')
+    for chk in rt.checks:
+        # Rails 7.1 emits this inside CREATE TABLE on SQLite and Postgres
+        # alike. chk.sql is rendered from db_schema's parsed expression,
+        # never the raw text, so it's the same portable SQL every other
+        # target enforces.
+        constraints.append(
+            f'      t.check_constraint {_ruby_str(chk.sql)}, name: "{chk.constraint_name}"'
+        )
+    return columns + ["      t.timestamps"] + constraints
+
+
+def _migration_column_types(
+    table: dict, schema: db_schema.ResolvedSchema | None
+) -> list[tuple[str, str]]:
+    """(column, ActiveRecord type) for every column _build_migration_rb
+    creates besides id/timestamps — what the model prompt quotes, so the
+    AI's validations match the real column types."""
+    rt = typed_schema.typed_table(schema, table)
+    if rt is None:
+        return [
+            (_slug(f), _infer_column_type(f))
+            for f in (table.get("key_fields", []) or [])
+            if _slug(f) not in ("created_at", "updated_at")
+        ]
+    return [(c.column, _rails_column(c, schema)[0]) for c in rt.columns]
+
+
+def _build_migration_rb(
+    index: int, table: dict, schema: db_schema.ResolvedSchema | None = None
+) -> tuple[str, str]:
+    """Returns (filename, content) for one table's migration. `schema` is
+    the whole architecture resolved (typed_schema.resolve_if_typed) —
+    needed to type a foreign key after the column it references; None
+    resolves this table on its own."""
     table_name = table.get("name", "Item")
     plural = _table_slug(table_name)
     class_name = f"Create{_pascal(plural)}"
+    if schema is None:
+        schema = typed_schema.resolve_if_typed([table])
+    rt = typed_schema.typed_table(schema, table)
+    if rt is not None:
+        body = "\n".join(_typed_migration_body(rt, schema))
+        content = f"""class {class_name} < ActiveRecord::Migration[7.1]
+  def change
+    create_table :{plural} do |t|
+{body}
+    end
+  end
+end
+"""
+        return f"{20240101000000 + index:014d}_{_slug(plural)}.rb", content
+
     # created_at/updated_at are already provided by `t.timestamps` below —
     # declaring them again would be a duplicate-column error when the
     # migration actually runs.
@@ -666,8 +930,16 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
                 description="URL routing, deterministically wired to the exact controller method names dictated to the AI",
             )
         )
-    for index, table in enumerate(ctx.tables):
-        filename, content = _build_migration_rb(index, table)
+    schema = typed_schema.resolve_if_typed(ctx.tables)
+    # Parents first, so a foreign key's table always exists when the
+    # table referencing it is created (identity order with no FKs).
+    order = (
+        typed_schema.migration_order(ctx.tables, schema)
+        if schema is not None
+        else range(len(ctx.tables))
+    )
+    for index, table in enumerate(ctx.tables[i] for i in order):
+        filename, content = _build_migration_rb(index, table, schema)
         files.append(
             GeneratedFile(
                 path=f"backend/db/migrate/{filename}",

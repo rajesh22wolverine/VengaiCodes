@@ -28,8 +28,13 @@ def client():
     # No route under test touches the DB unless project_id/design_id is
     # sent, and those cases are covered separately with a real session.
     app.dependency_overrides[get_db] = lambda: None
-    with TestClient(app) as test_client:
-        yield test_client
+    # Deliberately NOT `with TestClient(app)`: the context-manager form
+    # runs the app's lifespan, whose init_db() connects to whatever
+    # DATABASE_URL points at — a local .env's SQLite file on a dev
+    # machine, but a Postgres on localhost:5432 that doesn't exist in
+    # Backend CI, which errored every test here. No route under test
+    # needs startup to have run.
+    yield TestClient(app)
     app.dependency_overrides.clear()
 
 

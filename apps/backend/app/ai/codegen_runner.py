@@ -228,6 +228,10 @@ async def run_step(ctx: StepCtx) -> None:
                     language=c["stack_info"]["backend_language"],
                     user=ctx.user,
                     db=ctx.db,
+                    # So the prompt can resolve this table's foreign keys
+                    # (and their types) against the tables they point at.
+                    all_tables=c["tables"],
+                    api_style=c["stack_info"]["api_style"],
                 )
             )
             _record(ctx.state, "model", [result])

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { AlertTriangle, ArrowLeft, BookOpen, Download, FileCode2, Sparkles, ThumbsUp, Zap } from "lucide-react-native";
+import { AlertTriangle, ArrowLeft, BookOpen, Download, FileCode2, Sparkles, ThumbsUp, X, Zap } from "lucide-react-native";
 
 import apiClient from "@/lib/api";
+import { MigrationInfo, interpretDeterministicResponse, parseMigrationInfo } from "@/lib/codegenMigrations";
+import MigrationsPanel from "@/components/architecture/MigrationsPanel";
 import {
   GenerationCancelled,
   GenerationJob,
@@ -53,6 +55,12 @@ export default function CodeGenScreen() {
 
   const [codegen, setCodegen] = useState<CodeGenResult | null>(null);
   const [stackUsed, setStackUsed] = useState<StackUsed | null>(null);
+  // The versioned database migrations shipped with a No-AI build (null
+  // for an AI build, or an older backend).
+  const [migrations, setMigrations] = useState<MigrationInfo | null>(null);
+  // Why the last No-AI run was refused — often a multi-line list (schema
+  // problems, migration blockers), so it gets a panel, not a toast.
+  const [deterministicError, setDeterministicError] = useState<string | null>(null);
   const [generationMode, setGenerationMode] = useState<"ai" | "deterministic">("ai");
   const [selectedFile, setSelectedFile] = useState<GeneratedFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -83,6 +91,7 @@ export default function CodeGenScreen() {
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
       setGenerationMode(data.generation_mode === "deterministic" ? "deterministic" : "ai");
+      setMigrations(parseMigrationInfo(data.migrations));
       setIsLoading(false);
     } catch {
       // Nothing generated yet — let the user pick how, rather than
@@ -113,6 +122,8 @@ export default function CodeGenScreen() {
       setCodegen(data.codegen);
       setStackUsed(data.stack_used || null);
       setGenerationMode("ai");
+      setMigrations(parseMigrationInfo(data.migrations));
+      setDeterministicError(null);
       showToast("Your code is ready! 💻🐯");
     } catch (error: any) {
       if (abandoned.current) return;
@@ -135,27 +146,61 @@ export default function CodeGenScreen() {
   // (today: React+FastAPI or Vue+Express, REST only). Safe to
   // call again later: any hand-edit inside a VENGAI:CUSTOM section of a
   // previously generated file survives — see codegen_deterministic.py.
-  const generateDeterministic = async () => {
+  //
+  // Each run also writes the next versioned database migration. If that
+  // migration would delete or convert existing data (a dropped table or
+  // column, a changed column type) the backend answers 409 instead of
+  // building; the user confirms, and the retry says so explicitly with
+  // allow_destructive_migration. 400/409 are expected answers here, so
+  // they're taken as responses — the shared axios interceptor would
+  // otherwise turn them into an Error with no status to tell them apart.
+  const generateDeterministic = async (allowDestructive = false) => {
     setNeedsModeChoice(false);
     setIsGeneratingDeterministic(true);
+    setDeterministicError(null);
+    let backToChoice = false;
     try {
-      const { data } = await apiClient.post("/codegen/generate-deterministic", {
-        project_id: projectId,
-      });
-      setCodegen(data.codegen);
-      setStackUsed(data.stack_used || null);
-      setGenerationMode("deterministic");
-      setIsLoading(false);
-      showToast("Code generated instantly — no AI used 🐯⚡");
-    } catch (error: any) {
-      showToast(
-        error.response?.data?.detail || error.message || "Failed to generate code deterministically.",
-        "error"
+      const response = await apiClient.post(
+        "/codegen/generate-deterministic",
+        { project_id: projectId, allow_destructive_migration: allowDestructive },
+        { validateStatus: (s) => (s >= 200 && s < 300) || s === 400 || s === 409 }
       );
-      if (!codegen) setNeedsModeChoice(true);
+      const outcome = interpretDeterministicResponse(response.status, response.data);
+      if (outcome.kind === "ok") {
+        const data = outcome.data;
+        setCodegen(data.codegen);
+        setStackUsed(data.stack_used || null);
+        setGenerationMode("deterministic");
+        setMigrations(parseMigrationInfo(data.migrations));
+        setSelectedFile(null);
+        setIsLoading(false);
+        showToast("Code generated instantly — no AI used 🐯⚡");
+      } else if (outcome.kind === "confirm-destructive") {
+        backToChoice = !codegen;
+        confirmDestructiveMigration(outcome.message);
+      } else {
+        backToChoice = !codegen;
+        setDeterministicError(outcome.message);
+      }
+    } catch (error: any) {
+      backToChoice = !codegen;
+      setDeterministicError(error.message || "Failed to generate code deterministically.");
     } finally {
       setIsGeneratingDeterministic(false);
+      if (backToChoice) setNeedsModeChoice(true);
     }
+  };
+
+  const confirmDestructiveMigration = (details: string) => {
+    Alert.alert(
+      "This would change existing data",
+      `${details}\n\nA database that already holds data loses it when this migration runs. Generate anyway?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Generate anyway", style: "destructive", onPress: () => void generateDeterministic(true) },
+      ],
+      { cancelable: true }
+    );
   };
 
   const handleCancelGeneration = async () => {
@@ -240,7 +285,7 @@ export default function CodeGenScreen() {
         </Pressable>
 
         <Pressable
-          onPress={generateDeterministic}
+          onPress={() => generateDeterministic()}
           disabled={isGeneratingDeterministic}
           style={[styles.choiceCard, { borderColor: colors.border, backgroundColor: colors.surface }, isGeneratingDeterministic && { opacity: 0.6 }]}
         >
@@ -255,6 +300,10 @@ export default function CodeGenScreen() {
             React + FastAPI or Vue + Express (REST) only.
           </Text>
         </Pressable>
+
+        {deterministicError && (
+          <DeterministicErrorPanel message={deterministicError} onDismiss={() => setDeterministicError(null)} />
+        )}
       </View>
     );
   }
@@ -291,6 +340,12 @@ export default function CodeGenScreen() {
         </View>
       )}
 
+      {deterministicError && (
+        <View style={styles.errorPanelWrap}>
+          <DeterministicErrorPanel message={deterministicError} onDismiss={() => setDeterministicError(null)} />
+        </View>
+      )}
+
       {selectedFile ? (
         <View style={styles.flex}>
           <Pressable onPress={() => setSelectedFile(null)} style={styles.backToFilesRow}>
@@ -311,6 +366,7 @@ export default function CodeGenScreen() {
         </View>
       ) : (
         <ScrollView style={styles.flex} contentContainerStyle={styles.fileListContent}>
+          {migrations && <MigrationsPanel info={migrations} />}
           {codegen.files.map((file, i) => (
             <Pressable
               key={i}
@@ -334,7 +390,7 @@ export default function CodeGenScreen() {
       <PhaseFooter
         note="This is a starter skeleton — review the structure, then continue to Testing 🧪"
         secondaryActions={[
-          { label: "Regenerate (No AI)", icon: Zap, onPress: generateDeterministic, loading: isGeneratingDeterministic },
+          { label: "Regenerate (No AI)", icon: Zap, onPress: () => generateDeterministic(), loading: isGeneratingDeterministic },
           { label: "Export Docs", icon: BookOpen, onPress: handleDownloadDocs, loading: isDownloadingDocs },
           { label: "Download ZIP", icon: Download, onPress: handleDownload, loading: isDownloading },
         ]}
@@ -343,6 +399,29 @@ export default function CodeGenScreen() {
         onPrimaryPress={handleApprove}
         primaryLoading={isApproving}
       />
+    </View>
+  );
+}
+
+/** Why a No-AI run was refused, in full — the backend lists every schema
+ *  problem or migration blocker on its own line. Selectable, so it can be
+ *  copied into a message. */
+function DeterministicErrorPanel({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.errorPanel, { borderColor: colors.error, backgroundColor: `${colors.error}1a` }]}>
+      <AlertTriangle size={14} color={colors.error} style={{ marginTop: 1 }} />
+      <ScrollView style={styles.errorScroll} nestedScrollEnabled>
+        <Text style={{ color: colors.textPrimary, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>
+          No-AI generation couldn't run
+        </Text>
+        <Text selectable style={{ color: colors.textPrimary, fontSize: 12, lineHeight: 18 }}>
+          {message}
+        </Text>
+      </ScrollView>
+      <Pressable onPress={onDismiss} hitSlop={8} accessibilityLabel="Dismiss">
+        <X size={14} color={colors.textTertiary} />
+      </Pressable>
     </View>
   );
 }
@@ -365,4 +444,7 @@ const styles = StyleSheet.create({
   mono: { fontFamily: "monospace" },
   codeScroll: { padding: 12 },
   code: { fontSize: 11, lineHeight: 16, padding: 12, borderRadius: 10 },
+  errorPanelWrap: { paddingHorizontal: 12, paddingTop: 12 },
+  errorPanel: { width: "100%", flexDirection: "row", alignItems: "flex-start", gap: 8, borderWidth: 1, borderRadius: 12, padding: 12 },
+  errorScroll: { flex: 1, maxHeight: 220 },
 });

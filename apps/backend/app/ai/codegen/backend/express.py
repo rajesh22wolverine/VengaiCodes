@@ -18,8 +18,17 @@
 #  _is_graphql() detects which style was actually generated from the
 #  routes file's own path since WiringCtx carries no api_style field by
 #  design (see its docstring).
+#
+#  2026-09-25: manifest_files/entry_point_files(ctx, migrations=True) —
+#  used only by the deterministic (no-AI) generator, whose collections,
+#  validators and indexes are owned by versioned migrate-mongo
+#  migrations: package.json gains migrate-mongo (+ its mongodb peer) and
+#  the migrate scripts, and server.js applies pending migrations after
+#  connecting and before it accepts a request. The default (AI path)
+#  output is byte-for-byte what it was before.
 # ═══════════════════════════════════════════════════════════════
 
+from app.ai import db_schema
 from app.ai.codegen.manifests.package_json import build_package_json
 from app.ai.codegen.types import (
     BackendAdapter,
@@ -34,7 +43,9 @@ from app.ai.codegen_shared import (
     _pascal,
     _slug,
     generate_text_validated,
+    js_string_literal,
 )
+from app.ai.migrations_gen import MIGRATION_NPM_DEPENDENCIES, MIGRATION_NPM_SCRIPTS
 
 
 async def generate_model(ctx: ModelCtx) -> FileResult:
@@ -43,7 +54,7 @@ async def generate_model(ctx: ModelCtx) -> FileResult:
     prompt = f"""Write ONE complete, real Mongoose schema/model file for the "{table_name}" collection of this app.
 
 Collection purpose: {ctx.table.get("purpose", "")}
-Fields: {", ".join(ctx.table.get("key_fields", []))}
+{db_schema.describe_table_for_prompt(ctx.table, ctx.all_tables or [ctx.table])}
 
 Requirements:
 - Real field types and validation (required, unique, defaults) matching the fields above.
@@ -224,6 +235,46 @@ mongoose
 """
 
 
+def _build_server_js_migrating(project_name: str) -> str:
+    # The project name goes in through js_string_literal, so a quote or an
+    # unpaired bracket in it can't break the file.
+    message = js_string_literal(f"{project_name} API is running")
+    return f"""const express = require('express');
+const cors = require('cors');
+require('dotenv').config();
+const mongoose = require('mongoose');
+const apiRouter = require('./routes/api');
+const {{ runMigrations }} = require('./lib/migrate');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.use('/api', apiRouter);
+
+app.get('/', (req, res) => {{
+  res.json({{ message: {message} }});
+}});
+
+const PORT = process.env.PORT || 5000;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/app';
+
+async function start() {{
+  await mongoose.connect(MONGODB_URI);
+  // The versioned migrate-mongo scripts in migrations/ own the collections,
+  // their validators and indexes (the models set autoCreate/autoIndex off),
+  // so pending ones are applied before the first request is served.
+  await runMigrations();
+  app.listen(PORT, () => console.log(`Server running on port ${{PORT}}`));
+}}
+
+start().catch((err) => {{
+  console.error('Failed to start server:', err);
+  process.exit(1);
+}});
+"""
+
+
 def _build_server_js_graphql(project_name: str) -> str:
     # No top-level await — this is a CommonJS file (`require`), so
     # server startup is wrapped in an async function instead. Mirrors
@@ -263,7 +314,7 @@ start().catch((err) => {{
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
     from app.core.naming import slugify_app_name
 
     dependencies = {
@@ -280,9 +331,13 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         dependencies["@apollo/server"] = "^5.5.1"
         dependencies["graphql"] = "^16.14.2"
         dependencies["@as-integrations/express4"] = "^1.1.2"
+    scripts = {"start": "node server.js"}
+    if migrations:
+        dependencies.update(MIGRATION_NPM_DEPENDENCIES)
+        scripts.update(MIGRATION_NPM_SCRIPTS)
     content = build_package_json(
         name=slugify_app_name(ctx.project_name),
-        scripts={"start": "node server.js"},
+        scripts=scripts,
         dependencies=dependencies,
     )
     return [
@@ -295,8 +350,11 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
-    builder = _build_server_js_graphql if _is_graphql(ctx) else _build_server_js
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        builder = _build_server_js_migrating
+    else:
+        builder = _build_server_js_graphql if _is_graphql(ctx) else _build_server_js
     return [
         GeneratedFile(
             path="backend/server.js",
