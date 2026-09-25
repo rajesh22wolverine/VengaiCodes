@@ -578,7 +578,7 @@ Respond with ONLY the JSON object, nothing else."""
     for i, raw in enumerate(parsed.get("test_files", [])[:3]):
         language = raw.get("language", "")
         content = strip_code_fences(raw.get("content", ""))
-        issue = validate_generated_content(language, content)
+        issue = validate_generated_content(language, content, raw.get("path"))
         if issue:
             warnings.append(f"{raw.get('path', '?')}: {issue}")
 
@@ -1076,7 +1076,7 @@ Respond with ONLY the JSON object, nothing else."""
         path = fix.get("path", "")
         content = strip_code_fences(fix.get("content", ""))
         language = fix.get("language", "")
-        issue = validate_generated_content(language, content)
+        issue = validate_generated_content(language, content, path or None)
         if issue:
             logger.warning(f"Auto-fix produced invalid content for {path}: {issue}")
             continue

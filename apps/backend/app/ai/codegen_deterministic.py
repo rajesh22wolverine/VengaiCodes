@@ -1994,7 +1994,7 @@ def build_deterministic_codegen_data(
 
     validation_warnings: list[dict] = []
     for f in real_files + plan.files:
-        issue = validate_generated_content(f.language, f.content)
+        issue = validate_generated_content(f.language, f.content, f.path)
         if issue:
             validation_warnings.append({"path": f.path, "reason": issue})
 
