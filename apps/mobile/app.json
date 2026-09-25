@@ -32,6 +32,14 @@
           "cameraPermission": "Allow VengaiCode to use your camera to capture a design sketch or mockup."
         }
       ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow VengaiCode to use your camera to scan QR codes of shared projects.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
       "expo-asset"
     ],
     "extra": {

@@ -13,6 +13,7 @@ import {
   Monitor,
   Package,
   PartyPopper,
+  QrCode,
   Smartphone,
   Terminal,
   TestTube2,
@@ -486,6 +487,20 @@ export default function ExportScreen() {
           </Pressable>
         </View>
 
+        {/* Share via QR — download link / blueprint / QR sequence */}
+        <Pressable
+          onPress={() => router.push(`/(app)/project/${projectId}/share` as any)}
+          style={[styles.card, styles.shareCard, { borderColor: colors.primary, backgroundColor: colors.primaryLight }]}
+        >
+          <QrCode size={22} color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary, marginBottom: 2 }]}>Share via QR code</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17 }}>
+              A download link, a one-code blueprint, or the whole project as a QR sequence another phone can scan.
+            </Text>
+          </View>
+        </Pressable>
+
         <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}>
           <View style={styles.cardHeaderRow}>
             <Monitor size={16} color={colors.primary} />
@@ -830,6 +845,7 @@ const styles = StyleSheet.create({
   celebrationTitle: { fontSize: 19, fontWeight: "700", textAlign: "center", marginBottom: 6 },
   celebrationSubtitle: { fontSize: 13, textAlign: "center", lineHeight: 19 },
   card: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 16 },
+  shareCard: { flexDirection: "row", alignItems: "center", gap: 12 },
   cardHeaderRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 14 },
   cardTitle: { fontSize: 14, fontWeight: "700", marginBottom: 12 },
   journeyRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },

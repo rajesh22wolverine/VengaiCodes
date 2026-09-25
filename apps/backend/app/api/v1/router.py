@@ -227,6 +227,15 @@ api_router.include_router(
     tags=["Export"],
 )
 
+# ── Share via QR (download link / blueprint / QR sequence) ──
+from app.api.v1 import share
+
+api_router.include_router(
+    share.router,
+    prefix="/share",
+    tags=["Share"],
+)
+
 # ── Testing ──
 from app.api.v1 import testing
 

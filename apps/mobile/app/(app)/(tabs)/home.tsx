@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { CheckCircle2, Clock, Globe, FileText, ImagePlus, Plus, RefreshCw, RotateCcw, Sparkles, X, GitBranch, Wrench } from "lucide-react-native";
+import { CheckCircle2, Clock, Globe, FileText, ImagePlus, Plus, RefreshCw, RotateCcw, ScanLine, Sparkles, X, GitBranch, Wrench } from "lucide-react-native";
 
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { createProject, deleteProject, fetchProjects, Project } from "@/store/slices/projectSlice";
@@ -52,8 +52,17 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+      <View style={[styles.header, styles.headerRow, { borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Dashboard</Text>
+        {/* Receives all three Share-via-QR codes: link, blueprint, sequence. */}
+        <Pressable
+          onPress={() => router.push("/(app)/scan" as any)}
+          accessibilityLabel="Scan a VengaiCode QR code"
+          style={[styles.scanButton, { borderColor: colors.border }]}
+        >
+          <ScanLine size={15} color={colors.primary} />
+          <Text style={{ color: colors.textPrimary, fontSize: 13, fontWeight: "600" }}>Scan QR</Text>
+        </Pressable>
       </View>
 
       <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
@@ -611,6 +620,8 @@ function ProjectList({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   header: { padding: 20, borderBottomWidth: StyleSheet.hairlineWidth },
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  scanButton: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
   headerTitle: { fontSize: 20, fontWeight: "700" },
   tabBar: { flexDirection: "row", paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   tabButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 14 },

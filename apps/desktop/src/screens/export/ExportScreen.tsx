@@ -11,6 +11,7 @@ import toast from "react-hot-toast";
 import apiClient from "@/lib/api";
 import BabyTiger from "@/components/baby-tiger/BabyTiger";
 import ChatPanel from "@/components/chat/ChatPanel";
+import ShareQrPanel from "./ShareQrPanel";
 
 type BuildStatus = "idle" | "queued" | "in_progress" | "completed" | "failed";
 
@@ -850,6 +851,9 @@ export default function ExportScreen() {
               )}
             </div>
           </motion.div>
+
+          {/* Share via QR — download link / blueprint / QR sequence */}
+          {projectId && <ShareQrPanel projectId={projectId} projectName={appName.trim() || summary?.name || ""} />}
 
           {/* Windows Installer — build & poll */}
           <motion.div

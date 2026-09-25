@@ -30,6 +30,10 @@ passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
 cryptography==42.0.2
 
+# ── QR codes (Share via QR — services/qr_share.py) ──
+# Pure Python, no dependencies (writes PNG itself, no Pillow), BSD licence.
+segno==1.6.6
+
 # ── Redis ──
 redis[hiredis]==5.0.1
 

@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { motion } from "framer-motion";
-import { Plus, RefreshCw, Clock, CheckCircle2 } from "lucide-react";
+import { Plus, RefreshCw, Clock, CheckCircle2, QrCode } from "lucide-react";
 
 import { AppDispatch, RootState } from "@/store";
 import { setActiveTab } from "@/store/slices/uiSlice";
@@ -9,6 +10,7 @@ import CreateTab from "./CreateTab";
 import ReverseAppTab from "./ReverseAppTab";
 import PendingTab from "./PendingTab";
 import CompletedTab from "./CompletedTab";
+import ImportQrDialog from "./ImportQrDialog";
 
 type TabId = "create" | "reverse" | "pending" | "completed";
 
@@ -23,6 +25,7 @@ export default function HomeScreen() {
   const dispatch = useDispatch<AppDispatch>();
   const { activeTab } = useSelector((state: RootState) => state.ui);
   const { projects } = useSelector((state: RootState) => state.project);
+  const [importOpen, setImportOpen] = useState(false);
 
   const pendingCount = projects.filter(
     (p) => p.status === "draft" || p.status === "in_progress"
@@ -88,7 +91,15 @@ export default function HomeScreen() {
             </button>
           );
         })}
+        <button
+          onClick={() => setImportOpen(true)}
+          className="ml-auto mb-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-raised)] flex items-center gap-1.5"
+        >
+          <QrCode className="w-3.5 h-3.5" /> Import from QR
+        </button>
       </div>
+
+      {importOpen && <ImportQrDialog onClose={() => setImportOpen(false)} />}
 
       {/* Tab content */}
       {activeTab === "create" && <CreateTab />}

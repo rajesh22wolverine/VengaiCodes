@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
     API_V1_PREFIX: str = "/api/v1"
+    # The address OTHER devices reach this backend at, e.g.
+    # https://api.example.com — what a "Share via QR" download link (and
+    # its QR code) points to. Empty = the address the request came in on,
+    # which is right behind a normal domain but useless when the app talks
+    # to localhost (the share screen warns when that happens).
+    PUBLIC_BASE_URL: str = ""
 
     # ───────────────────────────────────────────
     #  Security

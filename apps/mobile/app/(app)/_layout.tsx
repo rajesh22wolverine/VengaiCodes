@@ -18,6 +18,8 @@ export default function AppLayout() {
       <Stack.Screen name="project/[id]/codegen" options={{ headerShown: true, title: "Code Generation" }} />
       <Stack.Screen name="project/[id]/testing" options={{ headerShown: true, title: "Testing" }} />
       <Stack.Screen name="project/[id]/export" options={{ headerShown: true, title: "Export" }} />
+      <Stack.Screen name="project/[id]/share" options={{ headerShown: true, title: "Share via QR" }} />
+      <Stack.Screen name="scan" options={{ headerShown: true, title: "Scan QR" }} />
       <Stack.Screen name="admin/index" options={{ headerShown: true, title: "Admin" }} />
       <Stack.Screen name="admin/users/[id]" options={{ headerShown: true, title: "User Detail" }} />
       <Stack.Screen name="admin/ai-models" options={{ headerShown: true, title: "AI Models" }} />
