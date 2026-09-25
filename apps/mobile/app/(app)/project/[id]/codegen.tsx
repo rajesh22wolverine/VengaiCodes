@@ -72,6 +72,17 @@ export default function CodeGenScreen() {
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isDownloadingDocs, setIsDownloadingDocs] = useState(false);
+  // Which stacks the No-AI generator supports, as the backend words it
+  // ("React or Vue with Express or FastAPI (REST)") — the list grows there.
+  const [noAiStacks, setNoAiStacks] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!needsModeChoice || noAiStacks) return;
+    apiClient
+      .get("/codegen/deterministic/stacks")
+      .then(({ data }) => setNoAiStacks(typeof data?.label === "string" ? data.label : null))
+      .catch(() => {});
+  }, [needsModeChoice, noAiStacks]);
 
   // Generation runs on the server, not here — leaving the screen stops
   // us watching it, it doesn't stop the run.
@@ -143,7 +154,7 @@ export default function CodeGenScreen() {
 
   // Deterministic mode is synchronous — no AI call means no job to poll,
   // it either returns in this one request or 400s with a clear reason
-  // (today: React+FastAPI or Vue+Express, REST only). Safe to
+  // (the stacks GET /codegen/deterministic/stacks lists). Safe to
   // call again later: any hand-edit inside a VENGAI:CUSTOM section of a
   // previously generated file survives — see codegen_deterministic.py.
   //
@@ -296,8 +307,8 @@ export default function CodeGenScreen() {
           )}
           <Text style={[styles.choiceCardTitle, { color: colors.textPrimary }]}>Deterministic</Text>
           <Text style={[styles.choiceCardBody, { color: colors.textSecondary }]}>
-            Instant, free, no AI call — real CRUD code from your database tables. Currently
-            React + FastAPI or Vue + Express (REST) only.
+            Instant, free, no AI call — real CRUD code from your database tables.
+            {noAiStacks ? ` Stacks: ${noAiStacks}.` : ""}
           </Text>
         </Pressable>
 

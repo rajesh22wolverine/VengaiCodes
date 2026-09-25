@@ -126,6 +126,10 @@ class WiringCtx:
     screen_files: list[GeneratedFile]
     endpoints: list[dict]
     tables: list[dict]
+    # Where a Vite dev server should forward /api/* (e.g. the backend's
+    # http://localhost:8000). Set when the generated screens call relative
+    # /api URLs (deterministic mode); None leaves the config without a proxy.
+    api_proxy_target: Optional[str] = None
 
 
 @dataclass(frozen=True)

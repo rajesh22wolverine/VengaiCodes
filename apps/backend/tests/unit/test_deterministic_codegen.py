@@ -40,9 +40,27 @@ EXPRESS_STACK = {
     "fallback_reason": None,
 }
 
+# The cross pairings: any supported frontend with any supported backend.
+REACT_EXPRESS_STACK = {
+    **EXPRESS_STACK,
+    "frontend_framework": "react",
+    "codegen_target": "react__express__rest",
+}
+VUE_FASTAPI_STACK = {
+    **FASTAPI_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__fastapi__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
-SUPPORTED_STACKS = [FASTAPI_STACK, EXPRESS_STACK]
+SUPPORTED_STACKS = [
+    FASTAPI_STACK,
+    EXPRESS_STACK,
+    REACT_EXPRESS_STACK,
+    VUE_FASTAPI_STACK,
+]
+STACK_IDS = ["react-fastapi", "vue-express", "react-express", "vue-fastapi"]
 
 TABLES = [
     {
@@ -93,27 +111,35 @@ def _by_path(codegen_data: dict) -> dict[str, str]:
 
 
 # ─── Stack gating ───
-def test_is_supported_stack():
-    assert dc.is_supported_stack(FASTAPI_STACK)
-    assert dc.is_supported_stack(EXPRESS_STACK)
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
+def test_is_supported_stack(stack_info):
+    assert dc.is_supported_stack(stack_info)
+
+
+def test_unsupported_stack():
     assert not dc.is_supported_stack(UNSUPPORTED_STACK)
+    assert not dc.is_supported_stack({**FASTAPI_STACK, "api_style": "graphql"})
 
 
-def test_supported_stacks_label_mentions_both_pairings():
-    label = dc.supported_stacks_label()
-    assert "React + FastAPI" in label
-    assert "Vue + Express" in label
+def test_supported_stacks_label_and_list():
+    assert dc.supported_stacks_label() == "React or Vue with Express or FastAPI (REST)"
+    assert {
+        "frontend": "vue",
+        "backend": "fastapi",
+        "api_style": "rest",
+    } in dc.supported_stacks()
+    assert len(dc.supported_stacks()) == 4
 
 
 # ─── Requires at least one table (both pairings) ───
-@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
 def test_requires_at_least_one_table(stack_info):
     with pytest.raises(dc.DeterministicCodegenError):
         dc.build_deterministic_codegen_data(FakeProject(tables=[]), stack_info)
 
 
 # ─── Shape parity across both pairings ───
-@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
 def test_matches_ai_path_codegen_data_shape(stack_info):
     """Same top-level keys api/v1/codegen.py's _saved_result() and the
     three packaging trigger_build() handlers read from the AI path —
@@ -138,20 +164,20 @@ def test_matches_ai_path_codegen_data_shape(stack_info):
         assert set(f.keys()) == {"path", "language", "content", "description"}
 
 
-@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
 def test_native_capability_detection_from_requirements(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     assert "camera" in data["native_capabilities"]
 
 
-@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
 def test_frontend_package_json_name_is_set(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     pkg = json.loads(_by_path(data)["frontend/package.json"])
     assert pkg["name"] == "library-manager"
 
 
-@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=["fastapi", "express"])
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
 def test_custom_slot_survives_regeneration_while_schema_change_applies(stack_info):
     """The core guarantee, proven for BOTH pairings — not just asserted
     once and assumed to generalize."""
@@ -318,6 +344,59 @@ def test_express_routes_file_has_crud_for_every_table_and_a_custom_slot():
     assert "module.exports = router;" in routes
 
 
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
+def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
+    """Screens are the only frontend code that knows the backend: the
+    record id's key ("id" for SQL, "_id" for MongoDB), and whether a
+    foreign key holds a document id."""
+    data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
+    for f in data["codegen"]["files"]:
+        if not f["path"].endswith(".md"):  # the README's code fences are the point
+            assert (
+                validate_generated_content(f["language"], f["content"], f["path"])
+                is None
+            ), f["path"]
+    files = _by_path(data)
+    ext = "jsx" if stack_info["frontend_framework"] == "react" else "vue"
+    screen = files[f"frontend/src/screens/BookScreen.{ext}"]
+    id_key = "_id" if stack_info["backend_framework"] == "express" else "id"
+    assert f'const ID_KEY = "{id_key}";' in screen
+    assert "item[ID_KEY]" in screen
+    assert "item.id" not in screen and "item._id" not in screen
+
+
+@pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
+def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
+    data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
+    vite = _by_path(data)["frontend/vite.config.js"]
+    port = 8000 if stack_info["backend_framework"] == "fastapi" else 5000
+    assert "'/api': {" in vite
+    assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
+
+
+def test_foreign_keys_follow_the_backend_not_the_frontend():
+    tables = [
+        {"name": "authors", "key_fields": ["name"]},
+        {
+            "name": "books",
+            "key_fields": ["title", "author_id"],
+            "foreign_keys": [{"field": "author_id", "references_table": "authors"}],
+        },
+    ]
+    react_mongo = _by_path(
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=tables), REACT_EXPRESS_STACK
+        )
+    )["frontend/src/screens/BooksScreen.jsx"]
+    vue_sql = _by_path(
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=tables), VUE_FASTAPI_STACK
+        )
+    )["frontend/src/screens/BooksScreen.vue"]
+    assert 'type: "reference"' in react_mongo and 'valueKey: "_id"' in react_mongo
+    assert 'type: "integer"' in vue_sql and 'valueKey: "id"' in vue_sql
+
+
 def test_vue_screen_uses_mongoose_id_convention():
     """Mongoose documents key on _id, not id — a real difference from
     the SQLAlchemy side that a naive copy-paste from the React template
@@ -327,7 +406,7 @@ def test_vue_screen_uses_mongoose_id_convention():
     assert "<script setup>" in screen
     assert 'v-model="form[field.key]"' in screen
     assert '{ key: "price", label: "price", type: "float"' in screen
-    assert "item._id" in screen
+    assert 'const ID_KEY = "_id";' in screen
     assert "VENGAI:CUSTOM:book_screen:start" in screen
 
 
@@ -359,3 +438,25 @@ def test_reinject_leaves_new_slot_names_untouched():
     fresh_template = "# VENGAI:CUSTOM:new_table_model:start\ndefault\n# VENGAI:CUSTOM:new_table_model:end\n"
     merged = dc.reinject_custom_slots(fresh_template, old_slots={})
     assert merged == fresh_template
+
+
+# ─── What the clients show next to the No-AI option ───
+def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from app.api.v1.auth import get_current_active_user
+    from app.config import settings
+    from app.main import app
+
+    url = f"{settings.API_V1_PREFIX}/codegen/deterministic/stacks"
+    client = TestClient(app)
+    assert client.get(url).status_code in (401, 403)
+    app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(id="u1")
+    try:
+        body = client.get(url).json()
+    finally:
+        app.dependency_overrides.clear()
+    assert body["label"] == dc.supported_stacks_label()
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 4

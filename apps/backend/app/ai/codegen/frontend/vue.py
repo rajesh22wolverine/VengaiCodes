@@ -7,6 +7,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 from app.ai.codegen.manifests.package_json import build_package_json
+from app.ai.codegen.manifests.vite_config import build_vite_config
 from app.ai.codegen.types import FileResult, FrontendAdapter, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
     GRAPHQL_CALLING_CONVENTION,
@@ -125,14 +126,6 @@ _POSTCSS_CONFIG = """module.exports = {
 };
 """
 
-_VITE_CONFIG = """import { defineConfig } from 'vite';
-import vue from '@vitejs/plugin-vue';
-
-export default defineConfig({
-  plugins: [vue()],
-});
-"""
-
 
 def _index_html(project_name: str) -> str:
     return f"""<!doctype html>
@@ -186,7 +179,9 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
         GeneratedFile(
             path="frontend/vite.config.js",
             language="javascript",
-            content=_VITE_CONFIG,
+            content=build_vite_config(
+                "import vue from '@vitejs/plugin-vue';", "vue()", ctx.api_proxy_target
+            ),
             description="Vite build config",
         ),
         GeneratedFile(

@@ -256,10 +256,26 @@ async def generate_code(
     return _saved_result(project)
 
 
+@router.get(
+    "/deterministic/stacks",
+    summary="The stacks deterministic (no-AI) code generation supports",
+)
+async def get_deterministic_stacks(
+    user: User = Depends(get_current_active_user),
+):
+    """What the clients show next to the No-AI option, so the list lives
+    in one place (codegen_deterministic.SUPPORTED_STACKS)."""
+    return {
+        "success": True,
+        "stacks": codegen_deterministic.supported_stacks(),
+        "label": codegen_deterministic.supported_stacks_label(),
+    }
+
+
 @router.post(
     "/generate-deterministic",
     response_model=GenerateCodeResponse,
-    summary="Generate real CRUD code deterministically (no AI call) — React+FastAPI or Vue+Express (REST) only",
+    summary="Generate real CRUD code deterministically (no AI call) — the stacks in /deterministic/stacks",
 )
 async def generate_code_deterministic(
     payload: GenerateDeterministicRequest,
@@ -267,8 +283,8 @@ async def generate_code_deterministic(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    An alternative to /generate and /start for the one pairing
-    codegen_deterministic.py supports today. Runs synchronously in this
+    An alternative to /generate and /start for the pairings
+    codegen_deterministic.py supports. Runs synchronously in this
     one request — unlike the AI path, there's no AI latency to hide
     behind a background job, so the generation_jobs machinery is
     intentionally not used here at all.

@@ -83,6 +83,17 @@ export default function CodeGenScreen() {
   // A deterministic run the backend refused (400): every problem, one
   // per line, kept on screen until dismissed or the next run.
   const [refusal, setRefusal] = useState<string | null>(null);
+  // Which stacks the No-AI generator supports, as the backend words it
+  // ("React or Vue with Express or FastAPI (REST)") — the list grows there.
+  const [noAiStacks, setNoAiStacks] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!needsModeChoice || noAiStacks) return;
+    apiClient
+      .get("/codegen/deterministic/stacks")
+      .then(({ data }) => setNoAiStacks(typeof data?.label === "string" ? data.label : null))
+      .catch(() => {});
+  }, [needsModeChoice, noAiStacks]);
 
   // Generation runs on the server, not here — leaving the screen stops
   // us watching it, it doesn't stop the run.
@@ -362,8 +373,8 @@ export default function CodeGenScreen() {
             )}
             <p className="text-sm font-semibold text-[var(--color-text-primary)]">Deterministic</p>
             <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-              Instant, free, no AI call — real CRUD code from your database tables. Currently
-              React + FastAPI or Vue + Express (REST) only.
+              Instant, free, no AI call — real CRUD code from your database tables.
+              {noAiStacks && ` Stacks: ${noAiStacks}.`}
             </p>
           </button>
         </div>
