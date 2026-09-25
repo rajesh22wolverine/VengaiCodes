@@ -69,7 +69,9 @@ def test_name_rules(tables, fragment):
             "model_year",
             False,
         ),  # a plain field that merely starts with model_
-        ("flask", "sa", False),
+        ("flask", "sa", True),  # Flask's generated models use sqlalchemy as sa too
+        ("flask", "query", True),  # Flask-SQLAlchemy's Model.query
+        ("django", "sa", False),
         ("express", "save", True),
         ("express", "class", False),
         (None, "class", False),

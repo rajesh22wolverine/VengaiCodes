@@ -100,8 +100,8 @@ _add(
         migrations="Flask-Migrate (Alembic)",
         layout={
             "factory": "backend/app/__init__.py (create_app)",
-            "models": "backend/app/models.py",
-            "routes": "backend/app/routes.py",
+            "models": "backend/app/models/<table>.py",
+            "routes": "backend/app/routes/api.py (Blueprint, under /api)",
         },
         commands={
             "install": "pip install -r requirements.txt",

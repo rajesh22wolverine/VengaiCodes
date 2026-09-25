@@ -86,12 +86,13 @@ _PYTHON_RESERVED = frozenset(k.lower() for k in keyword.kwlist) | {
     "registry",
 }
 
-# Field names the deterministic FastAPI generator can't give a column:
-# "sa" is its name for the sqlalchemy module inside every model class body
-# (a column called sa would replace it halfway through the class), and
-# these are real methods/attributes of Pydantic's BaseModel, which the
-# generated request models subclass — Pydantic refuses a field that
-# replaces one outright (NameError at import).
+# Field names the deterministic FastAPI and Flask generators can't give a
+# column: "sa" is their name for the sqlalchemy module inside every model
+# class body (a column called sa would replace it halfway through the
+# class), and these are real methods/attributes of Pydantic's BaseModel,
+# which both backends' generated request models subclass — Pydantic
+# refuses a field that replaces one outright (NameError at import).
+_PYDANTIC_MODEL_BACKENDS = frozenset({"fastapi", "flask"})
 _FASTAPI_FIELD_RESERVED = frozenset(
     {
         "sa",
@@ -516,7 +517,11 @@ class _TableInfo:
 def _reserved_reason(slug: str, backend: str | None, field: bool = False) -> str | None:
     if backend in PYTHON_BACKENDS and slug in _PYTHON_RESERVED:
         return "a reserved word in Python/SQLAlchemy"
-    if field and backend == "fastapi" and slug in _FASTAPI_FIELD_RESERVED:
+    if (
+        field
+        and backend in _PYDANTIC_MODEL_BACKENDS
+        and slug in _FASTAPI_FIELD_RESERVED
+    ):
         return "a name the generated SQLAlchemy/Pydantic code already uses"
     if backend in MONGOOSE_BACKENDS and slug in _MONGOOSE_RESERVED:
         return "a reserved name in Mongoose"

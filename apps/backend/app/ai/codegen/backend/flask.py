@@ -14,10 +14,18 @@
 #  documented pattern. _is_graphql() detects which style was actually
 #  generated from the routes file's own path since WiringCtx carries no
 #  api_style field by design (see its docstring).
+#
+#  2026-09-26: migrations mode (the deterministic generator only) —
+#  versioned Alembic migrations run by create_app() instead of
+#  db.create_all(), DATABASE_URL from the environment, SQLite foreign
+#  keys switched on, and pydantic for the request models.
 # ═══════════════════════════════════════════════════════════════
+
+import json
 
 from app.ai import db_schema
 from app.ai.codegen.manifests.requirements_txt import build_requirements_txt
+from app.ai.migrations_gen import MIGRATION_PYTHON_REQUIREMENTS
 from app.ai.codegen.types import (
     BackendAdapter,
     FileResult,
@@ -269,8 +277,83 @@ if __name__ == '__main__':
     app.run(debug=True)
 """
 
+# Migrations mode (deterministic generator only). DATABASE_URL is made
+# absolute here because Flask-SQLAlchemy resolves a RELATIVE SQLite path
+# against the instance/ folder while Alembic (migrations/env.py) resolves
+# it against the working directory — the same "sqlite:///app.db" would be
+# two different databases. Absolute, both open backend/app.db (run from
+# backend/, as the README says), like the FastAPI backend's ./app.db.
+_EXTENSIONS_PY_MIGRATIONS = """import os
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+from flask_sqlalchemy import SQLAlchemy
+
+DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite:///" + os.path.abspath("app.db")
+
+db = SQLAlchemy()
+
+
+def enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
+    # SQLite only enforces FOREIGN KEY constraints (and their ON DELETE
+    # rules) when this is switched on for each connection.
+    if type(dbapi_connection).__module__.startswith("sqlite3"):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+"""
+
+
+def _build_init_py_migrating(project_name: str) -> str:
+    message = json.dumps(f"{project_name} API is running")
+    return f"""from flask import Flask
+from flask_cors import CORS
+from sqlalchemy import event
+
+from app.extensions import DATABASE_URL, db, enable_sqlite_foreign_keys
+from app.migrate import run_migrations
+
+
+def create_app() -> Flask:
+    # The versioned Alembic scripts in migrations/versions/ own the database
+    # schema (not db.create_all), so an existing database is upgraded in
+    # place, rows kept, whenever the tables change.
+    run_migrations()
+
+    app = Flask(__name__)
+    app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+
+    CORS(app)
+    db.init_app(app)
+    with app.app_context():
+        event.listen(db.engine, "connect", enable_sqlite_foreign_keys)
+
+    from app.routes.api import bp as api_bp
+
+    app.register_blueprint(api_bp, url_prefix="/api")
+
+    @app.get("/")
+    def root():
+        return {{"message": {message}}}
+
+    return app
+"""
+
+
+# FLASK_DEBUG=1 turns on the reloader and debugger; never in production.
+_RUN_PY_MIGRATIONS = """import os
+
+from app import create_app
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(
+        port=int(os.environ.get("PORT", "5000")),
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+    )
+"""
+
+
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
     packages = [
         "flask==3.0.2",
         "flask-sqlalchemy==3.1.1",
@@ -279,6 +362,12 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     if _is_graphql(ctx):
         # Version confirmed live on PyPI at the time this was written.
         packages.append("ariadne==1.1.0")
+    if migrations:
+        # The request models validate with pydantic, the same version the
+        # FastAPI backend pins; SQLAlchemy pinned to what the migrations
+        # were tested with (flask-sqlalchemy 3.1 needs >= 2.0.16).
+        packages += ["pydantic==2.6.1", "sqlalchemy==2.0.27"]
+        packages += MIGRATION_PYTHON_REQUIREMENTS
     content = build_requirements_txt(packages)
     return [
         GeneratedFile(
@@ -290,7 +379,28 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        return [
+            GeneratedFile(
+                path="backend/app/extensions.py",
+                language="python",
+                content=_EXTENSIONS_PY_MIGRATIONS,
+                description="Shared Flask-SQLAlchemy db instance and database URL",
+            ),
+            GeneratedFile(
+                path="backend/app/__init__.py",
+                language="python",
+                content=_build_init_py_migrating(ctx.project_name),
+                description="Flask app factory (runs pending migrations first)",
+            ),
+            GeneratedFile(
+                path="backend/run.py",
+                language="python",
+                content=_RUN_PY_MIGRATIONS,
+                description="Flask entry point",
+            ),
+        ]
     return [
         GeneratedFile(
             path="backend/app/extensions.py",

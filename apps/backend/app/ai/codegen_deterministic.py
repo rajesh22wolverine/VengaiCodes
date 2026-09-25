@@ -12,6 +12,9 @@
 #  DETERMINISTIC_BACKENDS, over REST —
 #    - frontends: React, Vue
 #    - backends:  FastAPI (SQLAlchemy over Postgres/SQLite),
+#                 Flask (Flask-SQLAlchemy over Postgres/SQLite — the
+#                 same model columns and Alembic migrations as FastAPI,
+#                 sync instead of async),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -79,7 +82,7 @@ from app.models.project import Project
 # Every frontend here works with every backend here: the screens only need
 # to know the record id's key (SQL "id", MongoDB "_id") — see _id_key().
 DETERMINISTIC_FRONTENDS: tuple[str, ...] = ("react", "vue")
-DETERMINISTIC_BACKENDS: tuple[str, ...] = ("fastapi", "express")
+DETERMINISTIC_BACKENDS: tuple[str, ...] = ("fastapi", "flask", "express")
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
     (fe, be, "rest") for fe in DETERMINISTIC_FRONTENDS for be in DETERMINISTIC_BACKENDS
 }
@@ -281,6 +284,34 @@ def _sa_column_code(col: db_schema.ResolvedColumn) -> str:
 
 
 def generate_model_file_fastapi(table: db_schema.ResolvedTable) -> GeneratedFile:
+    return _sqlalchemy_model_file(
+        table,
+        path=f"backend/models/{table.slug}.py",
+        base_import="from app.core.database import Base",
+        base_class="Base",
+        description=f"Deterministic SQLAlchemy model for {table.name}",
+    )
+
+
+def generate_model_file_flask(table: db_schema.ResolvedTable) -> GeneratedFile:
+    # Flask-SQLAlchemy's db.Model with plain sqlalchemy columns: the class
+    # body is the FastAPI model's, so both backends share one migration history.
+    return _sqlalchemy_model_file(
+        table,
+        path=f"backend/app/models/{table.slug}.py",
+        base_import="from app.extensions import db",
+        base_class="db.Model",
+        description=f"Deterministic Flask-SQLAlchemy model for {table.name}",
+    )
+
+
+def _sqlalchemy_model_file(
+    table: db_schema.ResolvedTable,
+    path: str,
+    base_import: str,
+    base_class: str,
+    description: str,
+) -> GeneratedFile:
     # __table_args__ names every constraint and index exactly as the
     # migration that created them did (both read db_schema), so
     # `alembic revision --autogenerate` finds nothing to change.
@@ -309,10 +340,10 @@ def generate_model_file_fastapi(table: db_schema.ResolvedTable) -> GeneratedFile
         "",
         "import sqlalchemy as sa",
         "",
-        "from app.core.database import Base",
+        base_import,
         "",
         "",
-        f"class {table.class_name}(Base):",
+        f"class {table.class_name}({base_class}):",
         f"    __tablename__ = {_py_str(table.sql_name)}",
     ]
     if table_args:
@@ -338,10 +369,10 @@ def generate_model_file_fastapi(table: db_schema.ResolvedTable) -> GeneratedFile
         f"    # VENGAI:CUSTOM:{table.slug}_model:end",
     ]
     return GeneratedFile(
-        path=f"backend/models/{table.slug}.py",
+        path=path,
         language="python",
         content="\n".join(lines) + "\n",
-        description=f"Deterministic SQLAlchemy model for {table.name}",
+        description=description,
     )
 
 
@@ -399,12 +430,29 @@ class _PyTypes:
         return imports, aliases
 
 
-def _model_refs(schema: db_schema.ResolvedSchema) -> dict[str, str]:
+# The same, for the Flask routes file (app/routes/api.py).
+_FLASK_ROUTES_IMPORTED_NAMES = frozenset(
+    {
+        "Any",
+        "ApiError",
+        "BaseModel",
+        "Blueprint",
+        "ConfigDict",
+        "Decimal",
+        "Field",
+        "IntegrityError",
+        "Optional",
+        "ValidationError",
+    }
+)
+
+
+def _model_refs(
+    schema: db_schema.ResolvedSchema, imported: frozenset[str] = _ROUTES_IMPORTED_NAMES
+) -> dict[str, str]:
     return {
         t.sql_name: (
-            f"{t.class_name}Model"
-            if t.class_name in _ROUTES_IMPORTED_NAMES
-            else t.class_name
+            f"{t.class_name}Model" if t.class_name in imported else t.class_name
         )
         for t in schema.tables
     }
@@ -491,42 +539,13 @@ def _crud_block_fastapi(
     references_name = f"_{_upper(table.slug)}_REFERENCES"
     label = _py_str(table.name)
     path = f"/{table.sql_name}"
-    config = (
-        ["    model_config = ConfigDict(protected_namespaces=())", ""]
-        if any(c.column.startswith("model_") for c in table.columns)
-        else []
-    )
 
-    lines = [f"# ─── {_one_line(table.name)} ───", f"class {create_name}(BaseModel):"]
-    lines += config
-    lines += [_pydantic_field_line(c, types, "create") for c in table.columns] or [
-        "    pass"
-    ]
-    lines += ["", "", f"class {update_name}(BaseModel):"]
-    lines += config
-    lines += [_pydantic_field_line(c, types, "update") for c in table.columns] or [
-        "    pass"
-    ]
+    lines = [f"# ─── {_one_line(table.name)} ───"]
+    lines += _request_models(table, types)
     lines += ["", ""]
-
-    fk_columns = [c for c in table.columns if c.fk]
-    lines.append(f"{references_name} = [")
-    for c in fk_columns:
-        parent = schema.table(c.fk.ref_table_sql)
-        lines.append(
-            f"    ({_py_str(c.column)}, {refs[parent.sql_name]}, {_py_str(c.fk.ref_column)}, {_py_str(parent.name)}),"
-        )
-    lines += ["]", ""]
-
-    blockers = [
-        child.name
-        for child, fk in schema.referencing(table.sql_name)
-        if fk.fk.on_delete == "restrict"
-    ]
-    if blockers:
-        restrict = f"Can't delete this record: {', '.join(sorted(set(blockers)))} still refer to it."
-    else:
-        restrict = "Can't delete this record: other records still refer to it."
+    lines += _references_lines(table, schema, refs)
+    lines += [""]
+    restrict = _restrict_message(table, schema)
 
     lines += [
         "",
@@ -702,6 +721,293 @@ def generate_routes_file_fastapi(schema: db_schema.ResolvedSchema) -> GeneratedF
     ]
     return GeneratedFile(
         path="backend/routes/api.py",
+        language="python",
+        content="\n".join(lines) + "\n",
+        description="Deterministic CRUD routes for every database table",
+    )
+
+
+def _request_models(table: db_schema.ResolvedTable, types: _PyTypes) -> list[str]:
+    """The <Class>Create / <Class>Update pydantic models both Python
+    backends validate request bodies with."""
+    create_name, update_name = f"{table.class_name}Create", f"{table.class_name}Update"
+    config = (
+        ["    model_config = ConfigDict(protected_namespaces=())", ""]
+        if any(c.column.startswith("model_") for c in table.columns)
+        else []
+    )
+    lines = [f"class {create_name}(BaseModel):"]
+    lines += config
+    lines += [_pydantic_field_line(c, types, "create") for c in table.columns] or [
+        "    pass"
+    ]
+    lines += ["", "", f"class {update_name}(BaseModel):"]
+    lines += config
+    lines += [_pydantic_field_line(c, types, "update") for c in table.columns] or [
+        "    pass"
+    ]
+    return lines
+
+
+def _references_lines(
+    table: db_schema.ResolvedTable,
+    schema: db_schema.ResolvedSchema,
+    refs: dict[str, str],
+) -> list[str]:
+    lines = [f"_{_upper(table.slug)}_REFERENCES = ["]
+    for c in table.columns:
+        if c.fk:
+            parent = schema.table(c.fk.ref_table_sql)
+            lines.append(
+                f"    ({_py_str(c.column)}, {refs[parent.sql_name]}, {_py_str(c.fk.ref_column)}, {_py_str(parent.name)}),"
+            )
+    return lines + ["]"]
+
+
+def _restrict_message(
+    table: db_schema.ResolvedTable, schema: db_schema.ResolvedSchema
+) -> str:
+    blockers = [
+        child.name
+        for child, fk in schema.referencing(table.sql_name)
+        if fk.fk.on_delete == "restrict"
+    ]
+    if blockers:
+        return f"Can't delete this record: {', '.join(sorted(set(blockers)))} still refer to it."
+    return "Can't delete this record: other records still refer to it."
+
+
+# ═══════════════════════════════════════════════
+#  Flask backend (Flask-SQLAlchemy over SQLite/Postgres, Alembic migrations)
+# ═══════════════════════════════════════════════
+def _crud_block_flask(
+    table: db_schema.ResolvedTable,
+    schema: db_schema.ResolvedSchema,
+    refs: dict[str, str],
+    types: _PyTypes,
+) -> list[str]:
+    model = refs[table.sql_name]
+    create_name, update_name = f"{table.class_name}Create", f"{table.class_name}Update"
+    references_name = f"_{_upper(table.slug)}_REFERENCES"
+    label = _py_str(table.name)
+    path = f"/{table.sql_name}"
+    item_path = f"{path}/<int(signed=True):item_id>"
+
+    lines = [f"# ─── {_one_line(table.name)} ───"]
+    lines += _request_models(table, types)
+    lines += ["", ""]
+    lines += _references_lines(table, schema, refs)
+    lines += [
+        "",
+        "",
+        f'@bp.get("{path}")',
+        f"def list_{table.sql_name}():",
+        f"    items = db.session.execute(select({model}).order_by({model}.id)).scalars().all()",
+        "    return jsonify([_row(item) for item in items])",
+        "",
+        "",
+        f'@bp.post("{path}")',
+        f"def create_{table.slug}():",
+        f"    data = _payload({create_name})",
+        f"    _check_references(data, {references_name})",
+        f"    item = {model}(**data)",
+        "    db.session.add(item)",
+        "    _commit()",
+        "    return jsonify(_row(item)), 201",
+        "",
+        "",
+        f'@bp.get("{item_path}")',
+        f"def get_{table.slug}(item_id: int):",
+        f"    return jsonify(_row(_get_or_404({model}, item_id, {label})))",
+        "",
+        "",
+        f'@bp.put("{item_path}")',
+        f"def update_{table.slug}(item_id: int):",
+        f"    item = _get_or_404({model}, item_id, {label})",
+        f"    data = _payload({update_name})",
+        f"    _check_references(data, {references_name})",
+        "    for key, value in data.items():",
+        "        setattr(item, key, value)",
+        "    _commit()",
+        "    return jsonify(_row(item))",
+        "",
+        "",
+        f'@bp.delete("{item_path}")',
+        f"def delete_{table.slug}(item_id: int):",
+        f"    item = _get_or_404({model}, item_id, {label})",
+        "    db.session.delete(item)",
+        f"    _commit(restrict_message={_py_str(_restrict_message(table, schema))})",
+        '    return "", 204',
+        "",
+        "",
+    ]
+    return lines
+
+
+_ROUTES_HELPERS_FLASK = '''
+
+class ApiError(Exception):
+    """An error answered as {"detail": ...} with its HTTP status."""
+
+    def __init__(self, status: int, detail) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
+@bp.errorhandler(ApiError)
+def _api_error(exc: ApiError):
+    return jsonify(detail=exc.detail), exc.status
+
+
+def _row(item) -> dict:
+    """A record as JSON: dates and times in ISO 8601, decimals as numbers."""
+    row = {}
+    for column in item.__table__.columns:
+        value = getattr(item, column.key)
+        if isinstance(value, (_datetime.date, _datetime.time)):
+            value = value.isoformat()
+        elif isinstance(value, _decimal.Decimal):
+            value = float(value)
+        row[column.key] = value
+    return row
+
+
+def _payload(schema) -> dict:
+    """The request body, validated: a 422 listing every invalid field."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ApiError(422, "Send the record as a JSON object.")
+    try:
+        return schema.model_validate(body).model_dump(exclude_unset=True)
+    except ValidationError as exc:
+        errors = [{"loc": ["body", *e["loc"]], "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
+        raise ApiError(422, errors) from None
+
+
+def _constraint_error(exc: IntegrityError, restrict_message: Optional[str] = None) -> ApiError:
+    """A readable error for a constraint the database refused."""
+    text = str(exc.orig)
+    for key, status, message in _CONSTRAINTS:
+        if re.search(re.escape(key) + r"(?![\\w.])", text):
+            return ApiError(status, message)
+    if restrict_message and "foreign key" in text.lower():
+        # Deleting a row that an ON DELETE RESTRICT foreign key still points at.
+        return ApiError(409, restrict_message)
+    return ApiError(409, f"The database refused this change: {text}")
+
+
+def _commit(restrict_message: Optional[str] = None) -> None:
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        db.session.rollback()
+        raise _constraint_error(exc, restrict_message) from None
+
+
+def _get_or_404(model, item_id: int, label: str):
+    item = db.session.get(model, item_id)
+    if item is None:
+        raise ApiError(404, f"{label} {item_id} not found.")
+    return item
+
+
+def _check_references(data: dict, references: list) -> None:
+    """A 422 naming the field, instead of a database error, when a foreign
+    key points at a row that doesn't exist."""
+    for field, model, column, label in references:
+        value = data.get(field)
+        if value is None:
+            continue
+        target = getattr(model, column)
+        if db.session.execute(select(target).where(target == value).limit(1)).first() is None:
+            raise ApiError(422, f"{field}: no row in {label} has {column} {value!r}.")
+
+'''
+
+
+def generate_routes_file_flask(schema: db_schema.ResolvedSchema) -> GeneratedFile:
+    tables = list(schema.tables)
+    refs = _model_refs(schema, _FLASK_ROUTES_IMPORTED_NAMES)
+    types = _PyTypes({c.column for t in tables for c in t.columns})
+
+    body: list[str] = []
+    for table in tables:
+        body += _crud_block_flask(table, schema, refs, types)
+
+    constraints = [entry for t in tables for entry in _constraint_entries(t)]
+    # Longest key first, so "orders.status_code" is tried before "orders.status".
+    constraints.sort(key=lambda e: len(e[0]), reverse=True)
+
+    stdlib, aliases = types.import_lines()
+    uses_any = any(
+        db_schema.python_type_code(c.snapshot()) == "Any"
+        for t in tables
+        for c in t.columns
+    )
+    uses_field = any(c.type in ("string", "decimal") for t in tables for c in t.columns)
+    uses_config = any(c.column.startswith("model_") for t in tables for c in t.columns)
+
+    lines = [
+        "# REST CRUD routes for every table — deterministically generated by VengaiCode",
+        "# from the Architecture tab (no AI call). Everything outside the",
+        "# VENGAI:CUSTOM:extra_routes block is rewritten on every regeneration.",
+        "",
+        "import datetime as _datetime",
+        "import decimal as _decimal",
+        "import re",
+    ]
+    lines += stdlib
+    lines.append(f"from typing import {'Any, ' if uses_any else ''}Optional")
+    pydantic_names = (
+        ["BaseModel"]
+        + (["ConfigDict"] if uses_config else [])
+        + (["Field"] if uses_field else [])
+        + ["ValidationError"]
+    )
+    lines += [
+        "",
+        "from flask import Blueprint, jsonify, request",
+        f"from pydantic import {', '.join(pydantic_names)}",
+        "from sqlalchemy import select",
+        "from sqlalchemy.exc import IntegrityError",
+        "",
+        "from app.extensions import db",
+    ]
+    for table in tables:
+        ref = refs[table.sql_name]
+        alias = f" as {ref}" if ref != table.class_name else ""
+        lines.append(f"from app.models.{table.slug} import {table.class_name}{alias}")
+    if aliases:
+        lines += [
+            "",
+            "# A field named like a built-in type would hide it inside its request model.",
+        ]
+        lines += aliases
+    lines += [
+        "",
+        "# Registered under /api by create_app() — the paths the generated screens call.",
+        'bp = Blueprint("api", __name__)',
+        "",
+        "# What each database constraint means, so a violation comes back as a",
+        "# sentence instead of a raw database error: (text to find, status, message).",
+        "_CONSTRAINTS = [",
+    ]
+    lines += [
+        f"    ({_py_str(key)}, {status}, {_py_str(message)}),"
+        for key, status, message in constraints
+    ]
+    lines.append("]")
+    lines += _ROUTES_HELPERS_FLASK.split("\n")
+    lines += body
+    lines += [
+        "# VENGAI:CUSTOM:extra_routes:start",
+        "# Add custom, non-CRUD endpoints here — this block is preserved across regenerations.",
+        '# Example: @bp.get("/reports/summary") ...',
+        "# VENGAI:CUSTOM:extra_routes:end",
+    ]
+    return GeneratedFile(
+        path="backend/app/routes/api.py",
         language="python",
         content="\n".join(lines) + "\n",
         description="Deterministic CRUD routes for every database table",
@@ -1867,6 +2173,14 @@ def _fastapi_backend_files(
     ]
 
 
+def _flask_backend_files(
+    schema: db_schema.ResolvedSchema,
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    return [generate_model_file_flask(t) for t in schema.tables], [
+        generate_routes_file_flask(schema)
+    ]
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema,
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -1879,6 +2193,7 @@ def _express_backend_files(
 
 _BACKEND_GENERATORS = {
     "fastapi": _fastapi_backend_files,
+    "flask": _flask_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -1887,11 +2202,13 @@ _SCREEN_GENERATORS = {
 }
 
 
-def _check_generated_names(schema: db_schema.ResolvedSchema) -> None:
+def _check_generated_names(
+    schema: db_schema.ResolvedSchema, imported: frozenset[str] = _ROUTES_IMPORTED_NAMES
+) -> None:
     """Refuses a schema whose generated class names would collide inside
     one file — e.g. tables "order" and "order update": the first's request
     model OrderUpdate is the second's model class."""
-    refs = _model_refs(schema)
+    refs = _model_refs(schema, imported)
     owners: dict[str, str] = {}
     for t in schema.tables:
         for name in (
@@ -1920,14 +2237,27 @@ def _readme_notes(backend: str) -> list[str]:
         "Database migrations: the schema is owned by versioned migrations in "
         + (
             "backend/migrations/versions/ (Alembic)"
-            if backend == "fastapi"
+            if backend in ("fastapi", "flask")
             else "backend/migrations/ (migrate-mongo)"
         )
         + ", and pending ones run automatically every time the backend starts. Each "
         "regeneration that changes a table adds ONE new migration; existing migration files "
         "are never rewritten, so it is safe to edit them by hand.",
     ]
-    if backend == "fastapi":
+    if backend == "flask":
+        notes += [
+            "Run the API from backend/: `python run.py` (port 5000, or set PORT; "
+            "FLASK_DEBUG=1 adds the auto-reloader and debugger — never in production).",
+            "Run migrations by hand from backend/: `alembic upgrade head` (undo the newest: "
+            "`alembic downgrade -1`; see where the database is: `alembic current`). The database "
+            "is SQLite (backend/app.db) unless DATABASE_URL is set — e.g. "
+            '`postgresql+psycopg://user:pass@host/db` after `pip install "psycopg[binary]"`.',
+            "A database created by an OLDER VengaiCode build (tables made at startup, with no "
+            "`alembic_version` table) must be told it already matches the first migration, once: "
+            "`alembic stamp 0001` from backend/. To start the history over instead, delete "
+            "migrations/versions/ and app.db, then regenerate.",
+        ]
+    elif backend == "fastapi":
         notes += [
             "Run migrations by hand from backend/: `alembic upgrade head` (undo the newest: "
             "`alembic downgrade -1`; see where the database is: `alembic current`). The database "
@@ -1979,10 +2309,16 @@ def build_deterministic_codegen_data(
             "Fix these in Architecture before generating:\n"
             + db_schema.format_issues(e.issues)
         ) from e
-    if backend_key == "fastapi":
-        # Only routes/api.py puts every table's classes in one namespace;
-        # the Express routes name each model <Class>Model and nothing else.
-        _check_generated_names(schema)
+    if backend_key in ("fastapi", "flask"):
+        # Only the Python routes file puts every table's classes in one
+        # namespace; the Express routes name each model <Class>Model and
+        # nothing else.
+        _check_generated_names(
+            schema,
+            _ROUTES_IMPORTED_NAMES
+            if backend_key == "fastapi"
+            else _FLASK_ROUTES_IMPORTED_NAMES,
+        )
 
     model_files, backend_files = _BACKEND_GENERATORS[backend_key](schema)
     routes_file = backend_files[0]
@@ -2110,6 +2446,7 @@ _DISPLAY_LABELS = {
     "react": "React",
     "vue": "Vue",
     "fastapi": "FastAPI",
+    "flask": "Flask",
     "express": "Express",
 }
 

@@ -137,7 +137,12 @@ jobs:
           fi
           if [ -d migrations ]; then
             MIGRATIONS_DATA=$("$VENV_PY" -c "import os; print(os.path.abspath('migrations') + os.pathsep + 'migrations')")
-            EXTRA_ARGS+=(--add-data "$MIGRATIONS_DATA" --collect-submodules alembic)
+            # migrations/env.py is loaded from disk, so PyInstaller never sees
+            # its imports either — logging.config among them. A FastAPI build
+            # got it only because uvicorn imports it; a frozen Flask backend
+            # died at startup with "No module named 'logging.config'"
+            # (reproduced with a local onefile build, 2026-09-26).
+            EXTRA_ARGS+=(--add-data "$MIGRATIONS_DATA" --collect-submodules alembic --hidden-import logging.config)
           fi
           "$VENV_PY" -m PyInstaller --onefile --name backend --distpath dist --workpath pybuild --specpath spec "${EXTRA_ARGS[@]}" _sidecar_run.py
           echo "PyInstaller output:"

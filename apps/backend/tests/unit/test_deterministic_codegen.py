@@ -52,6 +52,17 @@ VUE_FASTAPI_STACK = {
     "codegen_target": "vue__fastapi__rest",
 }
 
+REACT_FLASK_STACK = {
+    **FASTAPI_STACK,
+    "backend_framework": "flask",
+    "codegen_target": "react__flask__rest",
+}
+VUE_FLASK_STACK = {
+    **REACT_FLASK_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__flask__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -59,8 +70,24 @@ SUPPORTED_STACKS = [
     EXPRESS_STACK,
     REACT_EXPRESS_STACK,
     VUE_FASTAPI_STACK,
+    REACT_FLASK_STACK,
+    VUE_FLASK_STACK,
 ]
-STACK_IDS = ["react-fastapi", "vue-express", "react-express", "vue-fastapi"]
+STACK_IDS = [
+    "react-fastapi",
+    "vue-express",
+    "react-express",
+    "vue-fastapi",
+    "react-flask",
+    "vue-flask",
+]
+
+# Where each backend writes a table's model.
+MODEL_PATHS = {
+    "fastapi": "backend/models/book.py",
+    "flask": "backend/app/models/book.py",
+    "express": "backend/models/book.js",
+}
 
 TABLES = [
     {
@@ -122,13 +149,16 @@ def test_unsupported_stack():
 
 
 def test_supported_stacks_label_and_list():
-    assert dc.supported_stacks_label() == "React or Vue with Express or FastAPI (REST)"
+    assert (
+        dc.supported_stacks_label()
+        == "React or Vue with Express, FastAPI or Flask (REST)"
+    )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 4
+    assert len(dc.supported_stacks()) == 6
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -184,16 +214,16 @@ def test_custom_slot_survives_regeneration_while_schema_change_applies(stack_inf
     first = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     files = first["codegen"]["files"]
 
-    is_fastapi = stack_info["backend_framework"] == "fastapi"
-    model_path = "backend/models/book.py" if is_fastapi else "backend/models/book.js"
+    is_python = stack_info["backend_framework"] in ("fastapi", "flask")
+    model_path = MODEL_PATHS[stack_info["backend_framework"]]
     marker = (
         "# This block is preserved across future regenerations.\n"
-        if is_fastapi
+        if is_python
         else "// This block is preserved across future regenerations.\n"
     )
     hand_edit = (
         "    # a real hand-written addition\n"
-        if is_fastapi
+        if is_python
         else "// a real hand-written addition\n"
     )
 
@@ -369,7 +399,9 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
 def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     vite = _by_path(data)["frontend/vite.config.js"]
-    port = 8000 if stack_info["backend_framework"] == "fastapi" else 5000
+    port = (
+        8000 if stack_info["backend_framework"] == "fastapi" else 5000
+    )  # Flask, Express
     assert "'/api': {" in vite
     assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
 
@@ -459,4 +491,96 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 4
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 6
+
+
+# ─── Flask specifics ───
+def _without_create_date(text: str) -> str:
+    return "\n".join(
+        line for line in text.splitlines() if not line.startswith("Create Date")
+    )
+
+
+def test_flask_backend_shares_fastapis_model_columns_and_migrations():
+    """Same columns and the same Alembic revision as FastAPI — only the
+    base class and module paths differ — so a project can switch between
+    the two and keep its database and migration history."""
+    fastapi = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
+    )
+    flask = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), REACT_FLASK_STACK)
+    )
+    fa_model, fl_model = (
+        fastapi["backend/models/book.py"],
+        flask["backend/app/models/book.py"],
+    )
+    assert "from app.extensions import db" in fl_model
+    assert "class Book(db.Model):" in fl_model
+    assert fa_model.replace("from app.core.database import Base", "").replace(
+        "class Book(Base):", ""
+    ) == fl_model.replace("from app.extensions import db", "").replace(
+        "class Book(db.Model):", ""
+    )
+    fa_rev = [p for p in fastapi if p.startswith("backend/migrations/versions/")]
+    fl_rev = [p for p in flask if p.startswith("backend/migrations/versions/")]
+    assert fa_rev == fl_rev == ["backend/migrations/versions/0001_initial.py"]
+    assert _without_create_date(fastapi[fa_rev[0]]) == _without_create_date(
+        flask[fl_rev[0]]
+    )
+    env = flask["backend/migrations/env.py"]
+    assert "from app.extensions import DATABASE_URL, db" in env
+    assert "import app.models.book" in env
+    assert "create_async_engine" not in env
+
+
+def test_switching_fastapi_to_flask_keeps_the_migration_history():
+    first = dc.build_deterministic_codegen_data(FakeProject(), FASTAPI_STACK)
+    changed = [
+        dict(TABLES[0], key_fields=TABLES[0]["key_fields"] + ["genre"]),
+        TABLES[1],
+    ]
+    second = dc.build_deterministic_codegen_data(
+        FakeProject(tables=changed, codegen_data=first), REACT_FLASK_STACK
+    )
+    revisions = [r["filename"] for r in second["migrations"]["revisions"]]
+    assert revisions == [
+        "backend/migrations/versions/0001_initial.py",
+        "backend/migrations/versions/0002_add_books_genre.py",
+    ]
+    assert second["migrations"]["backend"] == "flask"
+
+
+def test_flask_routes_and_app_factory():
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), VUE_FLASK_STACK)
+    )
+    routes = files["backend/app/routes/api.py"]
+    for fragment in (
+        '@bp.get("/books")',
+        '@bp.post("/books")',
+        '@bp.put("/books/<int(signed=True):item_id>")',
+        '@bp.delete("/members/<int(signed=True):item_id>")',
+        "from app.models.book import Book",
+        "class BookCreate(BaseModel):",
+        "VENGAI:CUSTOM:extra_routes:start",
+    ):
+        assert fragment in routes, fragment
+    init = files["backend/app/__init__.py"]
+    assert "run_migrations()" in init and "create_all()" not in init
+    assert 'app.register_blueprint(api_bp, url_prefix="/api")' in init
+    assert "enable_sqlite_foreign_keys" in init
+    assert files["backend/app/migrate.py"].count("os.path.dirname(") == 2
+    requirements = files["backend/requirements.txt"]
+    for pin in ("flask==", "flask-sqlalchemy==", "pydantic==", "alembic=="):
+        assert pin in requirements, pin
+    assert "python run.py" in files["README_SETUP.md"]
+
+
+@pytest.mark.parametrize("field", ["query", "query_class", "model_dump", "sa"])
+def test_flask_refuses_field_names_its_code_already_uses(field):
+    tables = [{"name": "Book", "key_fields": ["title", field]}]
+    with pytest.raises(dc.DeterministicCodegenError, match=field):
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=tables), REACT_FLASK_STACK
+        )

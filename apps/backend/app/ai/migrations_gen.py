@@ -3,9 +3,11 @@
 #  ai/migrations_gen.py — Turns the deterministic (no-AI) generator's
 #  resolved schema into REAL, versioned migrations for the app it
 #  writes:
-#    - React + FastAPI  -> Alembic revisions (SQLite by default,
-#                          Postgres via DATABASE_URL)
-#    - Vue + Express    -> migrate-mongo migrations (MongoDB)
+#    - FastAPI, Flask -> Alembic revisions (SQLite by default,
+#                        Postgres via DATABASE_URL). The revisions are
+#                        the same for both; only env.py and the
+#                        startup hook differ (async vs sync).
+#    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
 #  schema it wrote, one per revision, in codegen_data["migrations"]
@@ -50,7 +52,7 @@ from typing import Any
 from app.ai import db_schema
 from app.ai.codegen_shared import GeneratedFile, js_string_literal
 
-# Added to the generated FastAPI app's requirements.txt. Same version
+# Added to the generated FastAPI/Flask app's requirements.txt. Same version
 # VengaiCode's own backend runs (and that the end-to-end tests of this
 # module ran the generated migrations with).
 MIGRATION_PYTHON_REQUIREMENTS: list[str] = ["alembic==1.13.1"]
@@ -74,7 +76,12 @@ MIGRATION_NPM_SCRIPTS: dict[str, str] = {
     "migrate:down": "migrate-mongo down",
 }
 
-_TOOLS = {"fastapi": "alembic", "express": "migrate-mongo"}
+_TOOLS = {"fastapi": "alembic", "flask": "alembic", "express": "migrate-mongo"}
+
+
+def _is_alembic(backend: str | None) -> bool:
+    return _TOOLS.get(backend) == "alembic"
+
 
 _RUN_HINTS = {
     "alembic": (
@@ -201,7 +208,7 @@ def plan_migrations(
         )
         down_id = revisions[index - 1]["id"] if index else None
         render = (
-            _render_alembic_revision if backend == "fastapi" else _render_mongo_revision
+            _render_alembic_revision if _is_alembic(backend) else _render_mongo_revision
         )
         files.append(
             GeneratedFile(
@@ -248,10 +255,13 @@ def _file_attr(f: Any, key: str) -> Any:
 
 def _usable_revisions(previous_state: dict | None, backend: str) -> list[dict]:
     """The previous state's revisions (deep-copied), or [] when the
-    migration history has to start over: no state yet, a different
-    backend (an Alembic history means nothing to MongoDB), or a state
-    this module didn't write."""
-    if not isinstance(previous_state, dict) or previous_state.get("backend") != backend:
+    migration history has to start over: no state yet, a backend with a
+    different migration tool (an Alembic history means nothing to
+    MongoDB), or a state this module didn't write. FastAPI and Flask
+    share one history: same tables, same revision files, same app.db."""
+    if not isinstance(previous_state, dict) or _TOOLS.get(
+        previous_state.get("backend")
+    ) != _TOOLS.get(backend):
         return []
     revisions = previous_state.get("revisions")
     if not isinstance(revisions, list) or not revisions:
@@ -307,13 +317,13 @@ def _revision_slug(number: int, ops: list[dict]) -> str:
 
 
 def _revision_filename(backend: str, rev_id: str, slug: str) -> str:
-    if backend == "fastapi":
+    if _is_alembic(backend):
         return f"backend/migrations/versions/{rev_id}_{slug}.py"
     return f"backend/migrations/{rev_id}-{slug}.js"
 
 
 def _revision_language(backend: str) -> str:
-    return "python" if backend == "fastapi" else "javascript"
+    return "python" if _is_alembic(backend) else "javascript"
 
 
 def _revision_description(rev: dict) -> str:
@@ -863,18 +873,39 @@ def _render_alembic_revision(
     return "\n".join(body) + "\n"
 
 
-def _alembic_ini() -> str:
-    return """# Alembic configuration for this app, written by VengaiCode.
+# Per Alembic backend: the module holding DATABASE_URL and the model base,
+# the startup hook's path, and what env.py imports the models as.
+_ALEMBIC_LAYOUT = {
+    "fastapi": {
+        "database_module": "app.core.database",
+        "database_path": "app/core/database.py",
+        "migrate_path": "app/core/migrate.py",
+        "entry": "main.py",
+        "models_package": "models",
+    },
+    "flask": {
+        "database_module": "app.extensions",
+        "database_path": "app/extensions.py",
+        "migrate_path": "app/migrate.py",
+        "entry": "create_app() in app/__init__.py",
+        "models_package": "app.models",
+    },
+}
+
+
+def _alembic_ini(backend: str = "fastapi") -> str:
+    layout = _ALEMBIC_LAYOUT[backend]
+    return f"""# Alembic configuration for this app, written by VengaiCode.
 #
 # Migrations run automatically every time the backend starts (see
-# app/core/migrate.py), so this file is only needed to run Alembic by hand,
+# {layout["migrate_path"]}), so this file is only needed to run Alembic by hand,
 # from this backend/ folder:
 #   alembic upgrade head      apply every pending migration
 #   alembic downgrade -1      undo the newest migration
 #   alembic current           show which revision the database is at
 #
 # There is deliberately no sqlalchemy.url here: migrations/env.py uses
-# DATABASE_URL from app/core/database.py (which reads the DATABASE_URL
+# DATABASE_URL from {layout["database_path"]} (which reads the DATABASE_URL
 # environment variable), so the app and its migrations can never point at
 # two different databases.
 
@@ -1021,6 +1052,100 @@ else:
 '''
 
 
+def _alembic_env_py_sync(schema: db_schema.ResolvedSchema, backend: str) -> str:
+    layout = _ALEMBIC_LAYOUT[backend]
+    model_imports = "\n".join(
+        f"import {layout['models_package']}.{t.slug}  # noqa: E402,F401"
+        for t in schema.tables
+    )
+    return f'''"""Alembic environment for this app, written by VengaiCode.
+
+Runs the versioned scripts in migrations/versions/ — at every startup via
+{layout["migrate_path"]}, or by hand with the `alembic` command (see alembic.ini).
+"""
+
+import logging
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import create_engine, event, pool
+from sqlalchemy.engine import Connection
+
+from {layout["database_module"]} import DATABASE_URL, db
+
+# Every model module, so db.metadata describes every table. Only
+# `alembic revision --autogenerate` reads it; upgrading runs the versioned
+# scripts, never the models.
+{model_imports}
+
+config = context.config
+
+# Only when run through alembic.ini; at app startup there is no ini file,
+# and the app's own logging setup is left alone.
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = db.metadata
+logger = logging.getLogger("alembic.env")
+
+
+def run_migrations_offline() -> None:
+    """`alembic upgrade head --sql`: print the SQL instead of running it."""
+    context.configure(
+        url=DATABASE_URL,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={{"paramstyle": "named"}},
+        render_as_batch=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def _warn_about_orphaned_rows(connection: Connection) -> None:
+    # Foreign keys are off while migrating on SQLite (see below), so a
+    # migration that adds a foreign key to rows pointing at nothing
+    # succeeds there — where Postgres would refuse it. Say so instead of
+    # staying silent.
+    for table, rowid, parent, _fk in connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall():
+        logger.warning("%s row %s points at a %s row that doesn't exist", table, rowid, parent)
+
+
+def run_migrations_online() -> None:
+    # Its own short-lived engine (NullPool: nothing is kept open after the
+    # migration), deliberately NOT the app's engine.
+    connectable = create_engine(DATABASE_URL, poolclass=pool.NullPool)
+
+    if connectable.dialect.name == "sqlite":
+        # SQLite can't ALTER most things, so batch mode rebuilds a table:
+        # copy it, DROP the original, rename the copy. With foreign keys
+        # ON, that DROP would fire every ON DELETE CASCADE / SET NULL
+        # pointing at the table and wipe or orphan the child rows. Foreign
+        # keys are off by default on a new SQLite connection (the app's
+        # engine switches them on); this makes the migration connection's
+        # setting explicit rather than accidental.
+        @event.listens_for(connectable, "connect")
+        def _foreign_keys_off(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.close()
+
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+        with context.begin_transaction():
+            context.run_migrations()
+        if connection.dialect.name == "sqlite":
+            _warn_about_orphaned_rows(connection)
+    connectable.dispose()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+'''
+
+
 # Alembic's own standard revision template (identical in its "generic"
 # and "async" templates), so `alembic revision --autogenerate` keeps
 # working for anyone who wants to write their own migrations later.
@@ -1052,7 +1177,7 @@ def downgrade() -> None:
     ${downgrades if downgrades else "pass"}
 '''
 
-_MIGRATE_PY = '''"""Brings the database up to date — main.py calls run_migrations() once at
+_MIGRATE_PY = '''"""Brings the database up to date — __ENTRY__ calls run_migrations() once at
 startup, before the app serves any request. Written by VengaiCode.
 
 The schema is owned by the versioned Alembic scripts in migrations/versions/
@@ -1070,18 +1195,16 @@ from alembic.config import Config
 def _backend_dir() -> str:
     # A PyInstaller one-file build unpacks its bundled files (the
     # migrations/ folder included) into sys._MEIPASS; otherwise this file
-    # is backend/app/core/migrate.py, two folders below backend/.
+    # is backend/__MIGRATE_PATH__, __DEPTH_WORDS__ below backend/.
     bundled = getattr(sys, "_MEIPASS", None)
     if bundled:
         return bundled
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return __BACKEND_DIR_EXPR__
 
 
 def run_migrations() -> None:
     """`alembic upgrade head`, without needing alembic.ini or a particular
-    working directory. Blocking, and migrations/env.py runs its own event
-    loop — so call it from a worker thread (main.py uses asyncio.to_thread),
-    never directly on a running event loop."""
+    working directory.__BLOCKING_NOTE__"""
     backend_dir = _backend_dir()
     if backend_dir not in sys.path:
         sys.path.insert(0, backend_dir)
@@ -1685,22 +1808,53 @@ module.exports = { runMigrations };
 # ───────────────────────────────────────────────
 #  Support files
 # ───────────────────────────────────────────────
+def _migrate_py(backend: str) -> str:
+    layout = _ALEMBIC_LAYOUT[backend]
+    depth = layout["migrate_path"].count("/")
+    backend_dir = "os.path.abspath(__file__)"
+    for _ in range(depth + 1):
+        backend_dir = f"os.path.dirname({backend_dir})"
+    blocking = (
+        " Blocking, and migrations/env.py runs its own event\n"
+        "    loop — so call it from a worker thread (main.py uses asyncio.to_thread),\n"
+        "    never directly on a running event loop."
+        if backend == "fastapi"
+        else " Blocking; create_app() calls it before building the app."
+    )
+    return (
+        _MIGRATE_PY.replace("__ENTRY__", layout["entry"])
+        .replace("__MIGRATE_PATH__", layout["migrate_path"])
+        .replace("__DEPTH_WORDS__", "one folder" if depth == 1 else "two folders")
+        .replace("__BACKEND_DIR_EXPR__", backend_dir)
+        .replace("__BLOCKING_NOTE__", blocking)
+    )
+
+
 def _support_files(
     backend: str, schema: db_schema.ResolvedSchema
 ) -> list[GeneratedFile]:
-    if backend == "fastapi":
+    if _is_alembic(backend):
+        layout = _ALEMBIC_LAYOUT[backend]
         return [
             GeneratedFile(
                 path="backend/alembic.ini",
                 language="ini",
-                content=_alembic_ini(),
+                content=_alembic_ini(backend),
                 description="Alembic configuration (for running migrations by hand)",
             ),
             GeneratedFile(
                 path="backend/migrations/env.py",
                 language="python",
-                content=_alembic_env_py(schema),
-                description="Alembic environment (async, SQLite-safe batch mode)",
+                content=(
+                    _alembic_env_py(schema)
+                    if backend == "fastapi"
+                    else _alembic_env_py_sync(schema, backend)
+                ),
+                description=(
+                    "Alembic environment (async, SQLite-safe batch mode)"
+                    if backend == "fastapi"
+                    else "Alembic environment (SQLite-safe batch mode)"
+                ),
             ),
             GeneratedFile(
                 path="backend/migrations/script.py.mako",
@@ -1709,9 +1863,9 @@ def _support_files(
                 description="Alembic's template for hand-written revisions",
             ),
             GeneratedFile(
-                path="backend/app/core/migrate.py",
+                path=f"backend/{layout['migrate_path']}",
                 language="python",
-                content=_MIGRATE_PY,
+                content=_migrate_py(backend),
                 description="Runs pending database migrations at startup",
             ),
         ]
