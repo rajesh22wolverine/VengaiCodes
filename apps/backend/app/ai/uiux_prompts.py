@@ -9,10 +9,13 @@
 # ═══════════════════════════════════════════════════════════════
 
 import json
+
+from app.ai import knowledge
 from typing import Optional
 
 
 # ─── Prompt builder ───
+@knowledge.adds_phase_rules("uiux")
 def build_uiux_prompt(project_name: str, requirements: dict) -> str:
     features = ", ".join(requirements.get("key_features", []))
     platforms = ", ".join(requirements.get("platforms", []))

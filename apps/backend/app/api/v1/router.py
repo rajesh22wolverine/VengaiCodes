@@ -227,6 +227,15 @@ api_router.include_router(
     tags=["Export"],
 )
 
+# ── Knowledge registry (languages, frameworks, SDLC phases) ──
+from app.api.v1 import knowledge as knowledge_routes
+
+api_router.include_router(
+    knowledge_routes.router,
+    prefix="/knowledge",
+    tags=["Knowledge"],
+)
+
 # ── Share via QR (download link / blueprint / QR sequence) ──
 from app.api.v1 import share
 

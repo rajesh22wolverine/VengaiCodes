@@ -39,7 +39,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from app.ai import check_expr
+from app.ai import check_expr, knowledge
 from app.ai.codegen_shared import _pascal, _slug
 
 FIELD_TYPES: tuple[str, ...] = (
@@ -567,7 +567,11 @@ def _analyze(
                 f'Table name "{name}" is too long (max {MAX_TABLE_SLUG_LENGTH} characters).',
             )
             continue
-        reason = _reserved_reason(slug, backend)
+        # knowledge.table_problem: a model class the chosen stack's language
+        # or framework can't have (a keyword, or a standard type it'd shadow).
+        reason = _reserved_reason(slug, backend) or knowledge.table_problem(
+            slug, backend
+        )
         if reason:
             add(
                 (ti, name),
@@ -661,7 +665,11 @@ def _analyze(
                     f'Field "{fname}" in "{info.name}" is too long (max {MAX_FIELD_SLUG_LENGTH} characters).',
                 )
                 continue
-            reason = _reserved_reason(fslug, backend, field=True)
+            # knowledge.field_problem: the field as the chosen stack's code names
+            # it — a keyword there, a name the framework uses, or (C#) its class's name.
+            reason = _reserved_reason(
+                fslug, backend, field=True
+            ) or knowledge.field_problem(fslug, backend, info.name)
             if reason:
                 add(
                     info,

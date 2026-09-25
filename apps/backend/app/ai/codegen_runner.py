@@ -31,6 +31,7 @@ from app.ai.codegen_shared import (
     apply_package_json_name,
     detect_domain_guidance,
     detect_native_capabilities,
+    generating_for,
     get_ordered_pages,
 )
 from app.ai.stack_matrix import get_project_stack
@@ -220,36 +221,38 @@ async def run_step(ctx: StepCtx) -> None:
     try:
         if kind == "model":
             adapter = BACKEND_ADAPTERS[c["stack_info"]["backend_framework"]]
-            result = await adapter.generate_model(
-                ModelCtx(
-                    project_name=ctx.project.name,
-                    table=c["tables"][index],
-                    requirements_text=c["requirements_text"],
-                    language=c["stack_info"]["backend_language"],
-                    user=ctx.user,
-                    db=ctx.db,
-                    # So the prompt can resolve this table's foreign keys
-                    # (and their types) against the tables they point at.
-                    all_tables=c["tables"],
-                    api_style=c["stack_info"]["api_style"],
+            with generating_for(adapter.key):
+                result = await adapter.generate_model(
+                    ModelCtx(
+                        project_name=ctx.project.name,
+                        table=c["tables"][index],
+                        requirements_text=c["requirements_text"],
+                        language=c["stack_info"]["backend_language"],
+                        user=ctx.user,
+                        db=ctx.db,
+                        # So the prompt can resolve this table's foreign keys
+                        # (and their types) against the tables they point at.
+                        all_tables=c["tables"],
+                        api_style=c["stack_info"]["api_style"],
+                    )
                 )
-            )
             _record(ctx.state, "model", [result])
 
         elif kind == "routes":
             adapter = BACKEND_ADAPTERS[c["stack_info"]["backend_framework"]]
-            results = await adapter.generate_routes(
-                RoutesCtx(
-                    project_name=ctx.project.name,
-                    endpoints=c["endpoints"],
-                    tables=c["tables"],
-                    requirements_text=c["requirements_text"],
-                    api_style=c["stack_info"]["api_style"],
-                    language=c["stack_info"]["backend_language"],
-                    user=ctx.user,
-                    db=ctx.db,
+            with generating_for(adapter.key):
+                results = await adapter.generate_routes(
+                    RoutesCtx(
+                        project_name=ctx.project.name,
+                        endpoints=c["endpoints"],
+                        tables=c["tables"],
+                        requirements_text=c["requirements_text"],
+                        api_style=c["stack_info"]["api_style"],
+                        language=c["stack_info"]["backend_language"],
+                        user=ctx.user,
+                        db=ctx.db,
+                    )
                 )
-            )
             _record(ctx.state, "routes", results)
 
         elif kind == "screen":
@@ -257,33 +260,43 @@ async def run_step(ctx: StepCtx) -> None:
             # and have no native-capability shims; every other frontend
             # takes the stack's language and the detected capabilities.
             if c["is_o3de"]:
-                generate_screen, language = o3de.generate_screen, "lua"
+                generate_screen, language, framework_key = (
+                    o3de.generate_screen,
+                    "lua",
+                    "o3de",
+                )
             elif c["is_godot"]:
-                generate_screen, language = godot.generate_screen, "gdscript"
+                generate_screen, language, framework_key = (
+                    godot.generate_screen,
+                    "gdscript",
+                    "godot",
+                )
             else:
                 adapter = FRONTEND_ADAPTERS[c["stack_info"]["frontend_framework"]]
                 generate_screen = adapter.generate_screen
                 language = c["stack_info"]["frontend_language"]
+                framework_key = adapter.key
 
-            result = await generate_screen(
-                ScreenCtx(
-                    project_name=ctx.project.name,
-                    screen=c["screens"][index],
-                    endpoints=c["endpoints"],
-                    requirements_text=c["requirements_text"],
-                    native_capabilities=c["native_capabilities"],
-                    language=language,
-                    user=ctx.user,
-                    db=ctx.db,
-                    design_style=c["design_style"],
-                    color_palette=c["color_palette"],
-                    typography=c["typography"],
-                    # O3DE/Godot screens have no separate backend (stack_matrix's
-                    # "none" sentinel) — api_style is meaningless for them, and
-                    # c["stack_info"]["api_style"] is "none" in that case anyway.
-                    api_style=c["stack_info"]["api_style"],
+            with generating_for(framework_key):
+                result = await generate_screen(
+                    ScreenCtx(
+                        project_name=ctx.project.name,
+                        screen=c["screens"][index],
+                        endpoints=c["endpoints"],
+                        requirements_text=c["requirements_text"],
+                        native_capabilities=c["native_capabilities"],
+                        language=language,
+                        user=ctx.user,
+                        db=ctx.db,
+                        design_style=c["design_style"],
+                        color_palette=c["color_palette"],
+                        typography=c["typography"],
+                        # O3DE/Godot screens have no separate backend (stack_matrix's
+                        # "none" sentinel) — api_style is meaningless for them, and
+                        # c["stack_info"]["api_style"] is "none" in that case anyway.
+                        api_style=c["stack_info"]["api_style"],
+                    )
                 )
-            )
             _record(ctx.state, "screen", [result])
 
         else:

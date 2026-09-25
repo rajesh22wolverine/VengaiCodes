@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import knowledge
 from app.ai.orchestrator import AIError, generate_text
 from app.api.v1.auth import get_current_active_user
 from app.api.v1.reverse_engineer import build_reverse_engineering_directive
@@ -51,6 +52,7 @@ class ApproveRequirementsRequest(BaseModel):
 
 
 # ─── Prompt builder ───
+@knowledge.adds_phase_rules("requirements")
 def build_frd_prompt(
     project_name: str,
     raw_idea: str,

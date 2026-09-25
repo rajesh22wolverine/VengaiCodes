@@ -12,11 +12,14 @@ import ast
 import json
 import logging
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Callable, Optional
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import knowledge
 from app.ai.orchestrator import generate_text
 from app.core.naming import slugify_app_name
 from app.models.user import User
@@ -282,6 +285,24 @@ def build_project_context(
     )
 
 
+# Which framework's adapter is running right now (set by codegen_runner
+# around each step) — lets generate_text_validated add that framework's
+# rules to the prompt without threading a parameter through every one of
+# the adapters' ~40 calls. A ContextVar, so concurrent runs never mix.
+_CURRENT_FRAMEWORK: ContextVar[str | None] = ContextVar(
+    "vengaicode_codegen_framework", default=None
+)
+
+
+@contextmanager
+def generating_for(framework_key: str | None):
+    token = _CURRENT_FRAMEWORK.set(framework_key)
+    try:
+        yield
+    finally:
+        _CURRENT_FRAMEWORK.reset(token)
+
+
 async def generate_text_validated(
     prompt: str,
     language: str,
@@ -300,7 +321,14 @@ async def generate_text_validated(
     `context` is the project's shared preamble (build_project_context());
     it rides along unchanged on the retry, which is exactly the cache
     hit the retry was always meant to get.
+
+    The language's rules (and the running framework's) from the
+    knowledge registry are appended to the prompt — keywords, naming,
+    toolchain conventions — so every adapter gets them the same way.
     """
+    rules = knowledge.language_rules_for_prompt(language, _CURRENT_FRAMEWORK.get())
+    if rules:
+        prompt = f"{prompt}\n\n{rules}"
     result = await generate_text(
         prompt,
         max_tokens=max_tokens,

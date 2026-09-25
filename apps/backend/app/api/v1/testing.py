@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import knowledge
 from app.ai.codegen_shared import strip_code_fences, validate_generated_content
 from app.ai.orchestrator import AIError, generate_text
 from app.ai.stack_matrix import get_project_stack
@@ -230,6 +231,7 @@ def detect_suitable_test_frameworks(project: Project) -> dict:
 
 
 # ─── Prompt builders ───
+@knowledge.adds_phase_rules("testing")
 def build_testing_prompt(
     project_name: str,
     architecture: dict,

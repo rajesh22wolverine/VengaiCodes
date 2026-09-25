@@ -31,7 +31,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import check_expr, db_schema
+from app.ai import check_expr, db_schema, knowledge
 from app.ai.codegen_shared import _slug, get_ordered_pages
 from app.ai.orchestrator import AIError, generate_text
 from app.ai.stack_matrix import get_project_stack
@@ -209,6 +209,14 @@ def build_stack_directive(selected_stack: dict | None) -> str:
         f"({selected_stack.get('backend_language')})\n"
         f"- API style: {selected_stack.get('api_style')}\n"
     )
+    # Names that would break this backend's generated code (keywords once
+    # converted to its naming, names the framework uses) — the same rules
+    # the editor enforces, told to the AI up front.
+    constraints = knowledge.naming_constraints_for_prompt(
+        selected_stack.get("backend_framework")
+    )
+    if constraints:
+        directive += f"- {constraints}\n"
     if not selected_stack.get("buildable_now", True):
         directive += (
             "Note: this stack is valid but not yet buildable by VengaiCode's code "
@@ -219,6 +227,7 @@ def build_stack_directive(selected_stack: dict | None) -> str:
     return directive
 
 
+@knowledge.adds_phase_rules("architecture")
 def build_architecture_prompt(
     project_name: str,
     requirements: dict,
