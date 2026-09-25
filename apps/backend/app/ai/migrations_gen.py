@@ -7,6 +7,8 @@
 #                        Postgres via DATABASE_URL). The revisions are
 #                        the same for both; only env.py and the
 #                        startup hook differ (async vs sync).
+#    - Django         -> Django migrations (api/migrations/, rendered by
+#                        migrations_django from the same diffs)
 #    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
@@ -76,7 +78,12 @@ MIGRATION_NPM_SCRIPTS: dict[str, str] = {
     "migrate:down": "migrate-mongo down",
 }
 
-_TOOLS = {"fastapi": "alembic", "flask": "alembic", "express": "migrate-mongo"}
+_TOOLS = {
+    "fastapi": "alembic",
+    "flask": "alembic",
+    "django": "django",
+    "express": "migrate-mongo",
+}
 
 
 def _is_alembic(backend: str | None) -> bool:
@@ -88,6 +95,11 @@ _RUN_HINTS = {
         "Migrations run automatically every time the backend starts. To run them by hand: "
         "cd backend, then `alembic upgrade head` (undo the newest one: `alembic downgrade -1`; "
         "see where the database is: `alembic current`)."
+    ),
+    "django": (
+        "Apply them with `python manage.py migrate` from backend/ (the packaged desktop app "
+        "runs it at every start). Walk back to an earlier one: `python manage.py migrate api 0001`; "
+        "see what has run: `python manage.py showmigrations api`."
     ),
     "migrate-mongo": (
         "Migrations run automatically every time the server starts. To run them by hand: "
@@ -207,14 +219,21 @@ def plan_migrations(
             revisions[index - 1]["snapshot"] if index else db_schema.empty_snapshot()
         )
         down_id = revisions[index - 1]["id"] if index else None
-        render = (
-            _render_alembic_revision if _is_alembic(backend) else _render_mongo_revision
-        )
+        if _TOOLS[backend] == "django":
+            from app.ai import migrations_django
+
+            content = migrations_django.render_revision(
+                rev, revisions[index - 1] if index else None, previous_snapshot
+            )
+        elif _is_alembic(backend):
+            content = _render_alembic_revision(rev, down_id, previous_snapshot)
+        else:
+            content = _render_mongo_revision(rev, down_id, previous_snapshot)
         files.append(
             GeneratedFile(
                 path=rev["filename"],
                 language=_revision_language(backend),
-                content=render(rev, down_id, previous_snapshot),
+                content=content,
                 description=_revision_description(rev),
             )
         )
@@ -317,13 +336,15 @@ def _revision_slug(number: int, ops: list[dict]) -> str:
 
 
 def _revision_filename(backend: str, rev_id: str, slug: str) -> str:
+    if _TOOLS.get(backend) == "django":
+        return f"backend/api/migrations/{rev_id}_{slug}.py"
     if _is_alembic(backend):
         return f"backend/migrations/versions/{rev_id}_{slug}.py"
     return f"backend/migrations/{rev_id}-{slug}.js"
 
 
 def _revision_language(backend: str) -> str:
-    return "python" if _is_alembic(backend) else "javascript"
+    return "javascript" if _TOOLS.get(backend) == "migrate-mongo" else "python"
 
 
 def _revision_description(rev: dict) -> str:
@@ -1833,6 +1854,16 @@ def _migrate_py(backend: str) -> str:
 def _support_files(
     backend: str, schema: db_schema.ResolvedSchema
 ) -> list[GeneratedFile]:
+    if _TOOLS[backend] == "django":
+        return [
+            GeneratedFile(
+                path="backend/api/migrations/__init__.py",
+                language="python",
+                # Not empty: generated files are checked, and an empty one reads as a failed write.
+                content="# The api app's database migrations, written by VengaiCode.\n",
+                description="Marks api/migrations/ as the app's migrations package",
+            )
+        ]
     if _is_alembic(backend):
         layout = _ALEMBIC_LAYOUT[backend]
         return [

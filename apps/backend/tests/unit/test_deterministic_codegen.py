@@ -63,6 +63,17 @@ VUE_FLASK_STACK = {
     "codegen_target": "vue__flask__rest",
 }
 
+REACT_DJANGO_STACK = {
+    **FASTAPI_STACK,
+    "backend_framework": "django",
+    "codegen_target": "react__django__rest",
+}
+VUE_DJANGO_STACK = {
+    **REACT_DJANGO_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__django__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -72,6 +83,8 @@ SUPPORTED_STACKS = [
     VUE_FASTAPI_STACK,
     REACT_FLASK_STACK,
     VUE_FLASK_STACK,
+    REACT_DJANGO_STACK,
+    VUE_DJANGO_STACK,
 ]
 STACK_IDS = [
     "react-fastapi",
@@ -80,12 +93,15 @@ STACK_IDS = [
     "vue-fastapi",
     "react-flask",
     "vue-flask",
+    "react-django",
+    "vue-django",
 ]
 
 # Where each backend writes a table's model.
 MODEL_PATHS = {
     "fastapi": "backend/models/book.py",
     "flask": "backend/app/models/book.py",
+    "django": "backend/api/models/book.py",
     "express": "backend/models/book.js",
 }
 
@@ -151,14 +167,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Express, FastAPI or Flask (REST)"
+        == "React or Vue with Django, Express, FastAPI or Flask (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 6
+    assert len(dc.supported_stacks()) == 8
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -214,7 +230,7 @@ def test_custom_slot_survives_regeneration_while_schema_change_applies(stack_inf
     first = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     files = first["codegen"]["files"]
 
-    is_python = stack_info["backend_framework"] in ("fastapi", "flask")
+    is_python = stack_info["backend_framework"] in ("fastapi", "flask", "django")
     model_path = MODEL_PATHS[stack_info["backend_framework"]]
     marker = (
         "# This block is preserved across future regenerations.\n"
@@ -381,7 +397,9 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
     foreign key holds a document id."""
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     for f in data["codegen"]["files"]:
-        if not f["path"].endswith(".md"):  # the README's code fences are the point
+        empty_package_marker = f["path"].endswith("__init__.py") and not f["content"]
+        # The README's code fences are the point; an empty __init__.py is normal.
+        if not f["path"].endswith(".md") and not empty_package_marker:
             assert (
                 validate_generated_content(f["language"], f["content"], f["path"])
                 is None
@@ -399,9 +417,7 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
 def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     vite = _by_path(data)["frontend/vite.config.js"]
-    port = (
-        8000 if stack_info["backend_framework"] == "fastapi" else 5000
-    )  # Flask, Express
+    port = 8000 if stack_info["backend_framework"] in ("fastapi", "django") else 5000
     assert "'/api': {" in vite
     assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
 
@@ -491,7 +507,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 6
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 8
 
 
 # ─── Flask specifics ───
@@ -584,3 +600,102 @@ def test_flask_refuses_field_names_its_code_already_uses(field):
         dc.build_deterministic_codegen_data(
             FakeProject(tables=tables), REACT_FLASK_STACK
         )
+
+
+# ─── Django specifics ───
+def test_django_backend_files():
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), REACT_DJANGO_STACK)
+    )
+    model = files["backend/api/models/book.py"]
+    assert "class Book(models.Model):" in model and 'db_table = "books"' in model
+    assert "VENGAI:CUSTOM:book_model:start" in model
+    assert "router = SimpleRouter(trailing_slash=False)" in files["backend/api/urls.py"]
+    assert (
+        'router.register("books", views.BookViewSet, basename="books")'
+        in files["backend/api/urls.py"]
+    )
+    assert "class BookViewSet(CrudViewSet):" in files["backend/api/views.py"]
+    assert (
+        "class BookSerializer(serializers.ModelSerializer):"
+        in files["backend/api/serializers.py"]
+    )
+    assert "backend/api/migrations/0001_initial.py" in files
+    assert "from api import lookups" in files["backend/api/models/__init__.py"]
+    settings = files["backend/config/settings.py"]
+    assert '"EXCEPTION_HANDLER": "api.errors.exception_handler"' in settings
+    assert (
+        "dj_database_url.parse" in settings
+        and '"COERCE_DECIMAL_TO_STRING": False' in settings
+    )
+    requirements = files["backend/requirements.txt"]
+    for pin in ("django==", "djangorestframework==", "dj-database-url==", "uvicorn=="):
+        assert pin in requirements, pin
+    assert 'path("api/", include("api.urls"))' in files["backend/config/urls.py"]
+    assert "python manage.py migrate" in files["README_SETUP.md"]
+
+
+def test_django_foreign_keys_are_named_the_django_way_but_keep_their_column():
+    tables = [
+        {"name": "authors", "key_fields": ["name"]},
+        {
+            "name": "books",
+            "key_fields": ["title", "author_id"],
+            "foreign_keys": [{"field": "author_id", "references_table": "authors"}],
+        },
+    ]
+    files = _by_path(
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=tables), VUE_DJANGO_STACK
+        )
+    )
+    assert (
+        'author = models.ForeignKey("api.Authors"'
+        in files["backend/api/models/books.py"]
+    )
+    assert 'db_column="author_id"' in files["backend/api/models/books.py"]
+    assert (
+        'author_id = serializers.PrimaryKeyRelatedField(source="author"'
+        in files["backend/api/serializers.py"]
+    )
+
+
+def test_django_refuses_what_it_cant_name():
+    clash = [
+        {"name": "authors", "key_fields": ["name"]},
+        {
+            "name": "books",
+            "key_fields": ["author", "author_id"],
+            "foreign_keys": [{"field": "author_id", "references_table": "authors"}],
+        },
+    ]
+    with pytest.raises(dc.DeterministicCodegenError, match="author"):
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=clash), REACT_DJANGO_STACK
+        )
+    reserved = [{"name": "Crud View Set", "key_fields": ["title"]}]
+    with pytest.raises(dc.DeterministicCodegenError, match="CrudViewSet"):
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=reserved), REACT_DJANGO_STACK
+        )
+    for field in ("models", "objects"):
+        tables = [{"name": "Book", "key_fields": ["title", field]}]
+        with pytest.raises(dc.DeterministicCodegenError, match=field):
+            dc.build_deterministic_codegen_data(
+                FakeProject(tables=tables), REACT_DJANGO_STACK
+            )
+
+
+def test_ai_django_apps_get_uvicorn_for_the_desktop_sidecar():
+    from app.ai.codegen.backend import django as django_adapter
+    from app.ai.codegen.types import WiringCtx
+
+    ctx = WiringCtx("App", [], [], [], [], [])
+    assert "uvicorn==" in django_adapter.manifest_files(ctx)[0].content
+
+
+def test_screens_read_django_rest_framework_errors():
+    crud = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), REACT_DJANGO_STACK)
+    )["frontend/src/lib/crud.js"]
+    assert "Django REST Framework's 400" in crud and "non_field_errors" in crud

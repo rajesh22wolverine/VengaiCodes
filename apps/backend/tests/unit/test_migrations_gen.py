@@ -137,11 +137,15 @@ def test_an_existing_revision_is_carried_over_byte_for_byte():
 def test_history_restarts_on_a_backend_switch_or_an_unusable_state():
     first = plan(TABLES, "fastapi")
     assert plan(TABLES, "express", first).new_revision["id"] == "0001"
+    assert (
+        plan(TABLES, "django", first).new_revision["id"] == "0001"
+    )  # Alembic -> Django
+    assert plan(TABLES, "flask", first).new_revision is None  # same Alembic history
     broken = copy.deepcopy(first)
     broken.state["revisions"][0]["id"] = "7"
     assert plan(with_extra_column(TABLES), previous=broken).new_revision["id"] == "0001"
     with pytest.raises(ValueError, match="No migration support"):
-        plan(TABLES, "django")
+        plan(TABLES, "rails")
 
 
 def test_public_info_hides_the_snapshots():
@@ -159,7 +163,7 @@ def test_public_info_hides_the_snapshots():
 
 
 def test_every_file_passes_the_generated_file_check():
-    for backend in ("fastapi", "express"):
+    for backend in ("fastapi", "flask", "django", "express"):
         first = plan(TABLES, backend)
         for p in (first, plan(with_extra_column(TABLES), backend, first)):
             for f in p.files:

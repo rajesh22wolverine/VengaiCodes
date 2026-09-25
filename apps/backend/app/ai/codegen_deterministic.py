@@ -15,6 +15,8 @@
 #                 Flask (Flask-SQLAlchemy over Postgres/SQLite — the
 #                 same model columns and Alembic migrations as FastAPI,
 #                 sync instead of async),
+#                 Django (Django ORM + DRF over SQLite/Postgres, with
+#                 Django's own migrations — see codegen_django.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -65,7 +67,7 @@ import json
 import re
 from datetime import datetime, timezone
 
-from app.ai import db_schema, knowledge, migrations_gen
+from app.ai import codegen_django, db_schema, knowledge, migrations_gen
 from app.ai.codegen.backend import BACKEND_ADAPTERS
 from app.ai.codegen.frontend import FRONTEND_ADAPTERS
 from app.ai.codegen.readme import build_readme_setup
@@ -82,7 +84,7 @@ from app.models.project import Project
 # Every frontend here works with every backend here: the screens only need
 # to know the record id's key (SQL "id", MongoDB "_id") — see _id_key().
 DETERMINISTIC_FRONTENDS: tuple[str, ...] = ("react", "vue")
-DETERMINISTIC_BACKENDS: tuple[str, ...] = ("fastapi", "flask", "express")
+DETERMINISTIC_BACKENDS: tuple[str, ...] = ("fastapi", "flask", "django", "express")
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
     (fe, be, "rest") for fe in DETERMINISTIC_FRONTENDS for be in DETERMINISTIC_BACKENDS
 }
@@ -1615,6 +1617,14 @@ export async function errorText(res) {
       .join('\n');
   }
   if (detail) return String(detail);
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    // Django REST Framework's 400: { field: ["message", ...], ... }.
+    const lines = Object.entries(body).map(([key, value]) => {
+      const text = [].concat(value).join(' ');
+      return key === 'non_field_errors' ? text : `${key}: ${text}`;
+    });
+    if (lines.length) return lines.join('\n');
+  }
   return `Request failed with status ${res.status}.`;
 }
 
@@ -2181,6 +2191,20 @@ def _flask_backend_files(
     ]
 
 
+def _django_backend_files(
+    schema: db_schema.ResolvedSchema,
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    problems = codegen_django.name_problems(db_schema.snapshot(schema))
+    if problems:
+        raise DeterministicCodegenError(
+            "Fix these in Architecture before generating Django code:\n"
+            + "\n".join(f"• {p}" for p in problems)
+        )
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _docstring_text(_heading(t)) for t in schema.tables}
+    return codegen_django.backend_files(schema, constraints, headings)
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema,
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -2194,6 +2218,7 @@ def _express_backend_files(
 _BACKEND_GENERATORS = {
     "fastapi": _fastapi_backend_files,
     "flask": _flask_backend_files,
+    "django": _django_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2203,19 +2228,32 @@ _SCREEN_GENERATORS = {
 
 
 def _check_generated_names(
-    schema: db_schema.ResolvedSchema, imported: frozenset[str] = _ROUTES_IMPORTED_NAMES
+    schema: db_schema.ResolvedSchema,
+    imported: frozenset[str] = _ROUTES_IMPORTED_NAMES,
+    suffixes: tuple[str, ...] = ("Create", "Update"),
+    alias: bool = True,
 ) -> None:
     """Refuses a schema whose generated class names would collide inside
     one file — e.g. tables "order" and "order update": the first's request
     model OrderUpdate is the second's model class."""
-    refs = _model_refs(schema, imported)
+    # FastAPI/Flask import a model whose name clashes with an import under
+    # an alias (<Class>Model); the Django files use every class as named.
+    refs = (
+        _model_refs(schema, imported)
+        if alias
+        else {t.sql_name: t.class_name for t in schema.tables}
+    )
     owners: dict[str, str] = {}
     for t in schema.tables:
         for name in (
             refs[t.sql_name],
-            f"{t.class_name}Create",
-            f"{t.class_name}Update",
+            *(f"{t.class_name}{suffix}" for suffix in suffixes),
         ):
+            if not alias and name in imported:
+                raise DeterministicCodegenError(
+                    f'The table "{t.name}" would produce a class named {name}, a name the generated '
+                    "code already uses — rename the table in Architecture."
+                )
             if name in owners and owners[name] != t.name:
                 raise DeterministicCodegenError(
                     f'Tables "{owners[name]}" and "{t.name}" would both produce a class named {name} in the '
@@ -2235,16 +2273,34 @@ def _readme_notes(backend: str) -> list[str]:
         "Scope: standard CRUD per table only. For custom, non-CRUD endpoints, use the "
         "VENGAI:CUSTOM:extra_routes section in the routes file.",
         "Database migrations: the schema is owned by versioned migrations in "
+        + {
+            "fastapi": "backend/migrations/versions/ (Alembic)",
+            "flask": "backend/migrations/versions/ (Alembic)",
+            "django": "backend/api/migrations/ (Django migrations)",
+        }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
-            "backend/migrations/versions/ (Alembic)"
-            if backend in ("fastapi", "flask")
-            else "backend/migrations/ (migrate-mongo)"
+            ", applied with `python manage.py migrate`"
+            if backend == "django"
+            else ", and pending ones run automatically every time the backend starts"
         )
-        + ", and pending ones run automatically every time the backend starts. Each "
-        "regeneration that changes a table adds ONE new migration; existing migration files "
-        "are never rewritten, so it is safe to edit them by hand.",
+        + ". Each regeneration that changes a table adds ONE new migration; existing migration "
+        "files are never rewritten, so it is safe to edit them by hand.",
     ]
-    if backend == "flask":
+    if backend == "django":
+        notes += [
+            "Run the API from backend/: `python manage.py migrate` (after every regeneration "
+            "that adds a migration), then `python manage.py runserver` (port 8000). Walk back "
+            "a migration: `python manage.py migrate api 0001`; see what has run: "
+            "`python manage.py showmigrations api`.",
+            "The database is SQLite (backend/db.sqlite3) unless DATABASE_URL is set — e.g. "
+            '`postgres://user:pass@host:5432/db` after `pip install "psycopg[binary]"`. '
+            "Set DJANGO_SECRET_KEY and DJANGO_DEBUG=0 anywhere that isn't your own machine.",
+            "A database created by an OLDER VengaiCode build (tables made without these "
+            "migrations) must be told it already matches the first one, once: "
+            "`python manage.py migrate api 0001 --fake`. To start over instead, delete "
+            "api/migrations/0*.py and db.sqlite3, then regenerate.",
+        ]
+    elif backend == "flask":
         notes += [
             "Run the API from backend/: `python run.py` (port 5000, or set PORT; "
             "FLASK_DEBUG=1 adds the auto-reloader and debugger — never in production).",
@@ -2318,6 +2374,14 @@ def build_deterministic_codegen_data(
             _ROUTES_IMPORTED_NAMES
             if backend_key == "fastapi"
             else _FLASK_ROUTES_IMPORTED_NAMES,
+        )
+    elif backend_key == "django":
+        # views.py imports every model, serializer and viewset class.
+        _check_generated_names(
+            schema,
+            codegen_django.IMPORTED_NAMES,
+            ("Serializer", "ViewSet"),
+            alias=False,
         )
 
     model_files, backend_files = _BACKEND_GENERATORS[backend_key](schema)
@@ -2447,6 +2511,7 @@ _DISPLAY_LABELS = {
     "vue": "Vue",
     "fastapi": "FastAPI",
     "flask": "Flask",
+    "django": "Django",
     "express": "Express",
 }
 
