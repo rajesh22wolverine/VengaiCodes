@@ -200,7 +200,16 @@ _add(
         field_case="key",
         reserved_types=_words(
             "Module Controller Injectable Repository Entity Column Get Post Put Delete Body Param Query"
+            # …and everything else the generated NestJS files import:
+            " Check Index Unique JoinColumn ManyToOne PrimaryGeneratedColumn CreateDateColumn"
+            " UpdateDateColumn DataSource DeepPartial HttpCode ParseIntPipe NotFoundException"
+            " ConflictException UnprocessableEntityException InjectRepository TypeOrmModule Allow"
+            " IsBoolean IsDateString IsInt IsNumber IsOptional IsString Matches MaxLength ValidateIf"
+            " IsDecimalValue Reference"
         ),
+        reserved_fields={
+            "constructor": "every JavaScript class's constructor, which an entity property would replace",
+        },
         orm="TypeORM / Prisma",
         migrations="TypeORM migrations",
         layout={

@@ -74,6 +74,19 @@ VUE_DJANGO_STACK = {
     "codegen_target": "vue__django__rest",
 }
 
+REACT_NESTJS_STACK = {
+    **EXPRESS_STACK,
+    "frontend_framework": "react",
+    "backend_framework": "nestjs",
+    "backend_language": "typescript",
+    "codegen_target": "react__nestjs__rest",
+}
+VUE_NESTJS_STACK = {
+    **REACT_NESTJS_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__nestjs__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -85,6 +98,8 @@ SUPPORTED_STACKS = [
     VUE_FLASK_STACK,
     REACT_DJANGO_STACK,
     VUE_DJANGO_STACK,
+    REACT_NESTJS_STACK,
+    VUE_NESTJS_STACK,
 ]
 STACK_IDS = [
     "react-fastapi",
@@ -95,6 +110,8 @@ STACK_IDS = [
     "vue-flask",
     "react-django",
     "vue-django",
+    "react-nestjs",
+    "vue-nestjs",
 ]
 
 # Where each backend writes a table's model.
@@ -102,6 +119,7 @@ MODEL_PATHS = {
     "fastapi": "backend/models/book.py",
     "flask": "backend/app/models/book.py",
     "django": "backend/api/models/book.py",
+    "nestjs": "backend/src/book/book.entity.ts",
     "express": "backend/models/book.js",
 }
 
@@ -167,14 +185,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Django, Express, FastAPI or Flask (REST)"
+        == "React or Vue with Django, Express, FastAPI, Flask or NestJS (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 8
+    assert len(dc.supported_stacks()) == 10
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -417,7 +435,9 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
 def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     vite = _by_path(data)["frontend/vite.config.js"]
-    port = 8000 if stack_info["backend_framework"] in ("fastapi", "django") else 5000
+    port = {"fastapi": 8000, "django": 8000, "nestjs": 3000}.get(
+        stack_info["backend_framework"], 5000
+    )
     assert "'/api': {" in vite
     assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
 
@@ -507,7 +527,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 8
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 10
 
 
 # ─── Flask specifics ───
@@ -699,3 +719,50 @@ def test_screens_read_django_rest_framework_errors():
         dc.build_deterministic_codegen_data(FakeProject(), REACT_DJANGO_STACK)
     )["frontend/src/lib/crud.js"]
     assert "Django REST Framework's 400" in crud and "non_field_errors" in crud
+
+
+# ─── NestJS specifics ───
+def test_nestjs_feature_modules_and_wiring():
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), REACT_NESTJS_STACK)
+    )
+    for part in ("entity", "dto", "service", "controller", "module"):
+        assert f"backend/src/book/book.{part}.ts" in files, part
+    entity = files["backend/src/book/book.entity.ts"]
+    assert '@Entity({ name: "books" })' in entity and "export class Book {" in entity
+    assert "VENGAI:CUSTOM:book_model:start" in entity
+    assert '@Controller("books")' in files["backend/src/book/book.controller.ts"]
+    assert "@IsInt()" in files["backend/src/member/member.dto.ts"]
+    app_module = files["backend/src/app.module.ts"]
+    assert (
+        "TypeOrmModule.forRoot(databaseOptions)" in app_module
+        and "BookModule," in app_module
+    )
+    main = files["backend/src/main.ts"]
+    assert (
+        "app.setGlobalPrefix('api')" in main
+        and "new ValidationPipe({ whitelist: true" in main
+    )
+    database = files["backend/src/database.ts"]
+    assert "migrationsRun: true" in database and "synchronize: false" in database
+    assert "backend/src/migrations/0001-initial.ts" in files
+    pkg = json.loads(files["backend/package.json"])
+    assert "class-validator" in pkg["dependencies"] and "schema:check" in pkg["scripts"]
+
+
+def test_nestjs_user_text_cant_trip_the_generated_file_check():
+    """A table named or described with "TODO" still produces files that
+    pass the check (escaped in strings, reworded in comments)."""
+    tables = [{"name": "TODO items", "purpose": "TODO (later", "key_fields": ["title"]}]
+    data = dc.build_deterministic_codegen_data(
+        FakeProject(tables=tables), VUE_NESTJS_STACK
+    )
+    assert data["validation_warnings"] == []
+
+
+def test_nestjs_refuses_class_names_its_code_uses():
+    tables = [{"name": "Index", "key_fields": ["title"]}]
+    with pytest.raises(dc.DeterministicCodegenError, match="Index"):
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=tables), REACT_NESTJS_STACK
+        )

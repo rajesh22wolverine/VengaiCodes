@@ -17,6 +17,8 @@
 #                 sync instead of async),
 #                 Django (Django ORM + DRF over SQLite/Postgres, with
 #                 Django's own migrations — see codegen_django.py),
+#                 NestJS (TypeORM over SQLite, TypeORM migrations —
+#                 see codegen_nestjs.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -67,7 +69,7 @@ import json
 import re
 from datetime import datetime, timezone
 
-from app.ai import codegen_django, db_schema, knowledge, migrations_gen
+from app.ai import codegen_django, codegen_nestjs, db_schema, knowledge, migrations_gen
 from app.ai.codegen.backend import BACKEND_ADAPTERS
 from app.ai.codegen.frontend import FRONTEND_ADAPTERS
 from app.ai.codegen.readme import build_readme_setup
@@ -84,7 +86,13 @@ from app.models.project import Project
 # Every frontend here works with every backend here: the screens only need
 # to know the record id's key (SQL "id", MongoDB "_id") — see _id_key().
 DETERMINISTIC_FRONTENDS: tuple[str, ...] = ("react", "vue")
-DETERMINISTIC_BACKENDS: tuple[str, ...] = ("fastapi", "flask", "django", "express")
+DETERMINISTIC_BACKENDS: tuple[str, ...] = (
+    "fastapi",
+    "flask",
+    "django",
+    "nestjs",
+    "express",
+)
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
     (fe, be, "rest") for fe in DETERMINISTIC_FRONTENDS for be in DETERMINISTIC_BACKENDS
 }
@@ -1609,7 +1617,8 @@ export async function errorText(res) {
   } catch {
     body = null;
   }
-  const detail = body ? body.detail ?? body.error ?? body.message : null;
+  // FastAPI/Flask/Django: detail; NestJS: message (a list for validation); Express: error.
+  const detail = body ? body.detail ?? body.message ?? body.error : null;
   if (Array.isArray(detail)) {
     // FastAPI's 422: one entry per invalid field.
     return detail
@@ -2205,6 +2214,20 @@ def _django_backend_files(
     return codegen_django.backend_files(schema, constraints, headings)
 
 
+def _nestjs_backend_files(
+    schema: db_schema.ResolvedSchema,
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    problems = codegen_nestjs.name_problems(schema)
+    if problems:
+        raise DeterministicCodegenError(
+            "Fix these in Architecture before generating NestJS code:\n"
+            + "\n".join(f"• {p}" for p in problems)
+        )
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _one_line(_heading(t)) for t in schema.tables}
+    return codegen_nestjs.backend_files(schema, constraints, headings)
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema,
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -2219,6 +2242,7 @@ _BACKEND_GENERATORS = {
     "fastapi": _fastapi_backend_files,
     "flask": _flask_backend_files,
     "django": _django_backend_files,
+    "nestjs": _nestjs_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2277,6 +2301,7 @@ def _readme_notes(backend: str) -> list[str]:
             "fastapi": "backend/migrations/versions/ (Alembic)",
             "flask": "backend/migrations/versions/ (Alembic)",
             "django": "backend/api/migrations/ (Django migrations)",
+            "nestjs": "backend/src/migrations/ (TypeORM)",
         }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
             ", applied with `python manage.py migrate`"
@@ -2286,7 +2311,19 @@ def _readme_notes(backend: str) -> list[str]:
         + ". Each regeneration that changes a table adds ONE new migration; existing migration "
         "files are never rewritten, so it is safe to edit them by hand.",
     ]
-    if backend == "django":
+    if backend == "nestjs":
+        notes += [
+            "Run the API from backend/: `npm start` (port 3000, or set PORT). Pending migrations "
+            "run as it starts; by hand: `npm run migration:run` (see what has run: "
+            "`npm run migration:show`; undo the newest: `npm run migration:revert`). "
+            "`npm run schema:check` confirms the entities and the migrated database agree.",
+            "The database is SQLite (backend/app.db, or set DATABASE_PATH). The TypeORM "
+            "migrations are written for SQLite; moving to Postgres means regenerating them for it.",
+            "A database created by an OLDER VengaiCode build (tables made by synchronize, with no "
+            "`migrations` table) won't match the first migration — start from an empty app.db, "
+            "or copy your rows over after the new one is created.",
+        ]
+    elif backend == "django":
         notes += [
             "Run the API from backend/: `python manage.py migrate` (after every regeneration "
             "that adds a migration), then `python manage.py runserver` (port 8000). Walk back "
@@ -2512,6 +2549,7 @@ _DISPLAY_LABELS = {
     "fastapi": "FastAPI",
     "flask": "Flask",
     "django": "Django",
+    "nestjs": "NestJS",
     "express": "Express",
 }
 

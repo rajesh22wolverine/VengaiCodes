@@ -824,12 +824,23 @@ def render_sql(ast: dict) -> str:
     return render(ast, top=True)
 
 
-def render_storage_sql(ast: dict, column_types: dict[str, str]) -> str:
-    """render_sql() with date-time literals written the way SQLAlchemy
-    stores date-times on SQLite ('2024-01-31 09:30:00.000000'). SQLite
-    compares dates as text, so '2024-01-31T09:30:00' (T > space) would
-    silently compare wrong there; Postgres reads either form."""
-    return render_sql(_rewrite_temporal_literals(ast, column_types, _storage_literal))
+def render_storage_sql(
+    ast: dict, column_types: dict[str, str], fractional_digits: int = 6
+) -> str:
+    """render_sql() with date-time literals written the way the ORM
+    stores date-times on SQLite: SQLAlchemy writes '2024-01-31
+    09:30:00.000000' (the default), TypeORM '2024-01-31 09:30:00.000'
+    (fractional_digits=3). SQLite compares dates as text, so a literal in
+    any other shape (a 'T', fewer digits) would silently compare wrong
+    there; Postgres reads either form."""
+
+    def render(stamp: datetime, field_type: str) -> str:
+        text = _storage_literal(stamp, field_type)
+        if field_type == "date" or fractional_digits == 6:
+            return text
+        return text[: len(text) - (6 - fractional_digits)]
+
+    return render_sql(_rewrite_temporal_literals(ast, column_types, render))
 
 
 # ───────────────────────────────────────────────

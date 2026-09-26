@@ -9,7 +9,15 @@
 #  freehanded .proto text is worth the extra code here. Only the
 #  service *implementation* body is one AI call, in the same call as
 #  the .proto so method names/types can't drift between the two.
+#
+#  2026-09-26: migrations mode (the deterministic generator only) — one
+#  feature module per table (codegen_nestjs writes them), versioned
+#  TypeORM migrations run at startup instead of synchronize, a global
+#  /api prefix, ValidationPipe and database-error filter, and
+#  src/database.ts shared by the app and the TypeORM CLI.
 # ═══════════════════════════════════════════════════════════════
+
+import json
 
 from app.ai import db_schema
 from app.ai.codegen.manifests.package_json import build_package_json
@@ -296,8 +304,149 @@ _TSCONFIG_JSON = """{
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+_TSCONFIG_JSON_MIGRATIONS = """{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2021",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": false,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
+"""
+
+# One place for the database settings: the app (AppModule) and the TypeORM
+# CLI (src/data-source.ts) both read it, so they can't point at two databases.
+_DATABASE_TS = """import { join } from 'path';
+import { DataSourceOptions } from 'typeorm';
+
+// SQLite, in the folder the server runs from (set DATABASE_PATH to move it).
+export const databaseOptions: DataSourceOptions = {
+  type: 'sqlite',
+  database: process.env.DATABASE_PATH || 'app.db',
+  entities: [join(__dirname, '**', '*.entity.{ts,js}')],
+  // The versioned migrations own the schema (never synchronize): pending
+  // ones run every time the app starts, so an existing database is
+  // upgraded in place, rows kept, whenever the tables change.
+  migrations: [join(__dirname, 'migrations', '*.{ts,js}')],
+  migrationsRun: true,
+  synchronize: false,
+};
+"""
+
+_DATA_SOURCE_TS = """// For the TypeORM CLI (npm run migration:show / migration:run / schema:check).
+import 'reflect-metadata';
+import { DataSource } from 'typeorm';
+import { databaseOptions } from './database';
+
+export default new DataSource(databaseOptions);
+"""
+
+
+def _main_ts_migrations(project_name: str) -> str:
+    message = json.dumps(f"{project_name} API is running")
+    return f"""import 'reflect-metadata';
+import {{ ValidationPipe }} from '@nestjs/common';
+import {{ NestFactory }} from '@nestjs/core';
+import {{ AppModule }} from './app.module';
+import {{ DatabaseErrorFilter }} from './common/database-errors';
+
+async function bootstrap() {{
+  const app = await NestFactory.create(AppModule);
+  app.enableCors();
+  // Every route under /api — the paths the generated screens call.
+  app.setGlobalPrefix('api');
+  // Unknown fields are dropped; a wrong type or a missing required field is a 400.
+  app.useGlobalPipes(new ValidationPipe({{ whitelist: true, transform: true }}));
+  app.useGlobalFilters(new DatabaseErrorFilter());
+  app.getHttpAdapter().get('/', (_request, response) => response.json({{ message: {message} }}));
+  await app.listen(Number(process.env.PORT) || 3000);
+}}
+bootstrap();
+"""
+
+
+def _feature_modules(model_files: list[GeneratedFile]) -> list[tuple[str, str]]:
+    """(module class, import path) per entity file src/<slug>/<slug>.entity.ts."""
+    out = []
+    for f in model_files:
+        stem = f.path.split("/")[-1].removesuffix(".entity.ts")
+        out.append((f"{_pascal(stem)}Module", f"./{stem}/{stem}.module"))
+    return out
+
+
+def _app_module_ts_migrations(model_files: list[GeneratedFile]) -> str:
+    modules = _feature_modules(model_files)
+    imports = "\n".join(f"import {{ {name} }} from '{path}';" for name, path in modules)
+    names = "".join(f"    {name},\n" for name, _ in modules)
+    return f"""import {{ Module }} from '@nestjs/common';
+import {{ TypeOrmModule }} from '@nestjs/typeorm';
+import {{ databaseOptions }} from './database';
+{imports}
+
+@Module({{
+  imports: [
+    TypeOrmModule.forRoot(databaseOptions),
+{names}  ],
+}})
+export class AppModule {{}}
+"""
+
+
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
     from app.core.naming import slugify_app_name
+
+    if migrations:
+        cli = "typeorm-ts-node-commonjs"
+        content = build_package_json(
+            name=slugify_app_name(ctx.project_name),
+            scripts={
+                "start": "ts-node src/main.ts",
+                "build": "tsc",
+                "start:prod": "node dist/main.js",
+                "migration:show": f"{cli} migration:show -d src/data-source.ts",
+                "migration:run": f"{cli} migration:run -d src/data-source.ts",
+                "migration:revert": f"{cli} migration:revert -d src/data-source.ts",
+                "schema:check": f"{cli} schema:log -d src/data-source.ts",
+            },
+            dependencies={
+                "@nestjs/common": "^10.3.0",
+                "@nestjs/core": "^10.3.0",
+                "@nestjs/platform-express": "^10.3.0",
+                "@nestjs/typeorm": "^10.0.1",
+                "typeorm": "^0.3.20",
+                "sqlite3": "^5.1.7",
+                "reflect-metadata": "^0.2.1",
+                "rxjs": "^7.8.1",
+                "class-validator": "^0.14.1",
+                "class-transformer": "^0.5.1",
+            },
+            dev_dependencies={
+                "typescript": "^5.3.3",
+                "ts-node": "^10.9.2",
+                "@types/node": "^20.11.16",
+            },
+        )
+        return [
+            GeneratedFile(
+                path="backend/package.json",
+                language="json",
+                content=content,
+                description="Backend dependency manifest",
+            ),
+            GeneratedFile(
+                path="backend/tsconfig.json",
+                language="json",
+                content=_TSCONFIG_JSON_MIGRATIONS,
+                description="TypeScript config (decorator metadata required by NestJS DI)",
+            ),
+        ]
 
     content = build_package_json(
         name=slugify_app_name(ctx.project_name),
@@ -337,7 +486,34 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        return [
+            GeneratedFile(
+                path="backend/src/main.ts",
+                language="typescript",
+                content=_main_ts_migrations(ctx.project_name),
+                description="NestJS entry point",
+            ),
+            GeneratedFile(
+                path="backend/src/app.module.ts",
+                language="typescript",
+                content=_app_module_ts_migrations(ctx.model_files),
+                description="Root NestJS module — the database and every feature module",
+            ),
+            GeneratedFile(
+                path="backend/src/database.ts",
+                language="typescript",
+                content=_DATABASE_TS,
+                description="Database settings shared by the app and the TypeORM CLI",
+            ),
+            GeneratedFile(
+                path="backend/src/data-source.ts",
+                language="typescript",
+                content=_DATA_SOURCE_TS,
+                description="TypeORM CLI data source",
+            ),
+        ]
     return [
         GeneratedFile(
             path="backend/src/main.ts",
