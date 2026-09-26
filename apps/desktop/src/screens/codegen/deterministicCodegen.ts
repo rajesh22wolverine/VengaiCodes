@@ -5,8 +5,9 @@
 // (deterministicCodegen.test.ts).
 //
 // Every deterministic run that changes the database schema also writes a
-// new, versioned migration for the generated app (Alembic for FastAPI,
-// migrate-mongo for Express). POST /codegen/generate-deterministic can
+// new, versioned migration for the generated app (Alembic for FastAPI and
+// Flask, Django's own, TypeORM for NestJS, Flyway for Spring Boot, SQL files
+// the app applies itself for Actix/Axum, migrate-mongo for Express). POST /codegen/generate-deterministic can
 // therefore answer in three ways, and only one of them is a failure:
 //   - 2xx  the code (and any new migration) was written
 //   - 409  the new migration would lose data (drop a table/column, change
@@ -44,6 +45,11 @@ export interface MigrationsInfo {
 
 const TOOL_LABELS: Record<string, string> = {
   alembic: "Alembic",
+  django: "Django migrations",
+  typeorm: "TypeORM migrations",
+  flyway: "Flyway",
+  // Actix/Axum: plain SQL files, compiled into the app and applied at startup.
+  "sqlite-rs": "SQL migrations (built into the app)",
   "migrate-mongo": "migrate-mongo",
 };
 

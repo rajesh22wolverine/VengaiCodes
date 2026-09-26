@@ -163,7 +163,16 @@ def test_public_info_hides_the_snapshots():
 
 
 def test_every_file_passes_the_generated_file_check():
-    for backend in ("fastapi", "flask", "django", "nestjs", "spring_boot", "express"):
+    for backend in (
+        "fastapi",
+        "flask",
+        "django",
+        "nestjs",
+        "spring_boot",
+        "actix",
+        "axum",
+        "express",
+    ):
         first = plan(TABLES, backend)
         for p in (first, plan(with_extra_column(TABLES), backend, first)):
             for f in p.files:
@@ -223,3 +232,30 @@ def test_shared_mongo_helpers_match_the_migration():
         == 'new Date("2024-01-02")'
     )
     assert migrations_gen.js_value_literal("9.50", "decimal") == "9.5"
+
+
+def test_rust_sqlite_migration_content():
+    """Actix/Axum: one SQL file per revision with up and down sections,
+    compiled into the app by src/migrate.rs. Column types follow the
+    storage class sqlx decodes (decimal REAL, dates TEXT)."""
+    first = plan(TABLES, "axum")
+    paths = [f.path for f in first.files]
+    assert paths == ["backend/src/migrate.rs", "backend/migrations/0001_initial.sql"]
+    text = first.files[-1].content
+    up, down = text.split("-- migrate:up")[1].split("-- migrate:down")
+    assert 'CREATE TABLE "books" (' in up and 'DROP TABLE "books";' in down
+    assert '"price" REAL NOT NULL DEFAULT 0.0' in up
+    assert '"published_on" TEXT DEFAULT (CURRENT_DATE)' in up
+    assert "DEFAULT (strftime('%Y-%m-%d %H:%M:%f000', 'now'))" in up
+    assert (
+        'FOREIGN KEY ("author_id") REFERENCES "authors" ("id") ON DELETE SET NULL' in up
+    )
+    assert 'CREATE UNIQUE INDEX "uq_books_title_author_id"' in up
+
+    second = plan(with_extra_column(TABLES), "axum", first)
+    runner = second.files[0].content
+    assert 'include_str!("../migrations/0001_initial.sql")' in runner
+    assert 'include_str!("../migrations/0002_add_books_pages.sql")' in runner
+    # A column change rebuilds the table, with foreign keys off around it.
+    assert '"_vc_new_books"' in second.files[-1].content
+    assert "PRAGMA foreign_keys = OFF" in runner

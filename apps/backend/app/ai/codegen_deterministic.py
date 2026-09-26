@@ -21,6 +21,8 @@
 #                 see codegen_nestjs.py),
 #                 Spring Boot (JPA over H2, Flyway migrations — see
 #                 codegen_spring.py),
+#                 Actix Web and Axum (sqlx over SQLite, SQL migrations
+#                 the app applies itself — see codegen_rust.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -74,6 +76,7 @@ from datetime import datetime, timezone
 from app.ai import (
     codegen_django,
     codegen_nestjs,
+    codegen_rust,
     codegen_spring,
     db_schema,
     knowledge,
@@ -102,6 +105,8 @@ DETERMINISTIC_BACKENDS: tuple[str, ...] = (
     "django",
     "nestjs",
     "spring_boot",
+    "actix",
+    "axum",
     "express",
 )
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
@@ -2248,6 +2253,33 @@ def _spring_backend_files(
     return codegen_spring.backend_files(schema, package, constraints, headings)
 
 
+def _rust_backend_files(
+    framework: str,
+    schema: db_schema.ResolvedSchema,
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    problems = codegen_rust.name_problems(schema)
+    if problems:
+        raise DeterministicCodegenError(
+            "Fix these in Architecture before generating Rust code:\n"
+            + "\n".join(f"• {p}" for p in problems)
+        )
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _one_line(_heading(t)) for t in schema.tables}
+    return codegen_rust.backend_files(framework, schema, constraints, headings)
+
+
+def _actix_backend_files(
+    schema: db_schema.ResolvedSchema, project_name: str = ""
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    return _rust_backend_files("actix", schema)
+
+
+def _axum_backend_files(
+    schema: db_schema.ResolvedSchema, project_name: str = ""
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    return _rust_backend_files("axum", schema)
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -2264,6 +2296,8 @@ _BACKEND_GENERATORS = {
     "django": _django_backend_files,
     "nestjs": _nestjs_backend_files,
     "spring_boot": _spring_backend_files,
+    "actix": _actix_backend_files,
+    "axum": _axum_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2316,7 +2350,12 @@ def _readme_notes(backend: str) -> list[str]:
         "future regenerations. Everything outside a marked section is regenerated fresh "
         "every time and should not be hand-edited.",
         "Scope: standard CRUD per table only. For custom, non-CRUD endpoints, use the "
-        "VENGAI:CUSTOM:extra_routes section in the routes file.",
+        + (
+            # One routes/controller file per table in these backends.
+            "VENGAI:CUSTOM:<table>_routes section in that table's routes file."
+            if backend in ("nestjs", "spring_boot", "actix", "axum")
+            else "VENGAI:CUSTOM:extra_routes section in the routes file."
+        ),
         "Database migrations: the schema is owned by versioned migrations in "
         + {
             "fastapi": "backend/migrations/versions/ (Alembic)",
@@ -2324,6 +2363,8 @@ def _readme_notes(backend: str) -> list[str]:
             "django": "backend/api/migrations/ (Django migrations)",
             "nestjs": "backend/src/migrations/ (TypeORM)",
             "spring_boot": "backend/src/main/resources/db/migration/ (Flyway)",
+            "actix": "backend/migrations/ (SQL, applied by src/migrate.rs)",
+            "axum": "backend/migrations/ (SQL, applied by src/migrate.rs)",
         }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
             ", applied with `python manage.py migrate`"
@@ -2333,7 +2374,19 @@ def _readme_notes(backend: str) -> list[str]:
         + ". Each regeneration that changes a table adds ONE new migration; existing migration "
         "files are never rewritten, so it is safe to edit them by hand.",
     ]
-    if backend == "spring_boot":
+    if backend in ("actix", "axum"):
+        notes += [
+            "Run the API from backend/: `cargo run` (port 8080, or set PORT; needs Rust — the "
+            "first build downloads and compiles the dependencies, which takes a few minutes). "
+            "Pending migrations are applied as it starts; undo the newest: `cargo run -- revert`.",
+            "The database is SQLite (backend/app.db, or set DATABASE_URL — e.g. "
+            "`sqlite://data/app.db`). The migrations are compiled into the app, so a built binary "
+            "needs no files beside it; they are written for SQLite.",
+            "A database created by an OLDER VengaiCode build (tables made at startup, with no "
+            "`_migrations` table) won't match the first migration — start from an empty app.db, "
+            "or copy your rows over after the new one is created.",
+        ]
+    elif backend == "spring_boot":
         notes += [
             "Run the API from backend/: `mvn spring-boot:run` (port 8080; needs Java 17+ and Maven). "
             "Flyway applies pending migrations as it starts, then Hibernate checks the entities "
@@ -2589,6 +2642,8 @@ _DISPLAY_LABELS = {
     "django": "Django",
     "nestjs": "NestJS",
     "spring_boot": "Spring Boot",
+    "actix": "Actix",
+    "axum": "Axum",
     "express": "Express",
 }
 

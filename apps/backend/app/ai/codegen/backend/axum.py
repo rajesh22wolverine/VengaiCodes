@@ -312,18 +312,73 @@ async fn main() {{
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+# Migrations mode (the deterministic generator only — see
+# rust_common.migrations_main_rs): axum 0.8 (sqlx 0.8's generation), the
+# tables from src/migrate.rs, every table's routes from routes::router, and
+# the screens' cross-origin calls (a packaged app's window isn't the API's
+# origin) allowed.
+_MIGRATIONS_SERVE = """    let app = routes::router()
+        .route("/", get(root))
+        .layer(CorsLayer::permissive())
+        .with_state(pool);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+        .await
+        .unwrap_or_else(|err| panic!("can't listen on port {port}: {err}"));
+    axum::serve(listener, app)
+        .await
+        .unwrap_or_else(|err| panic!("the server stopped: {err}"));"""
+
+_MIGRATIONS_ROOT = """async fn root() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "message": ROOT_MESSAGE }))
+}
+"""
+
+
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    content = (
+        rust_common.migrations_cargo_toml(
+            ctx.project_name,
+            [
+                'axum = "0.8"',
+                'tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }',
+                'tower-http = { version = "0.6", features = ["cors"] }',
+            ],
+        )
+        if migrations
+        else _cargo_toml(ctx.project_name, _is_graphql(ctx))
+    )
     return [
         GeneratedFile(
             path="backend/Cargo.toml",
             language="text",
-            content=_cargo_toml(ctx.project_name, _is_graphql(ctx)),
+            content=content,
             description="Rust dependency manifest",
         )
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        # models/mod.rs and routes/mod.rs come with the models (codegen_rust).
+        return [
+            GeneratedFile(
+                path="backend/src/main.rs",
+                language="rust",
+                content=rust_common.migrations_main_rs(
+                    ctx.project_name,
+                    [
+                        "use axum::routing::get;",
+                        "use axum::Json;",
+                        "use tower_http::cors::CorsLayer;",
+                    ],
+                    "#[tokio::main]",
+                    "",
+                    _MIGRATIONS_SERVE,
+                    _MIGRATIONS_ROOT,
+                ),
+                description="axum entry point — applies pending migrations, then serves every table's routes",
+            )
+        ]
     main_rs = (
         _build_main_rs_graphql(ctx.tables)
         if _is_graphql(ctx)

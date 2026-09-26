@@ -1,8 +1,9 @@
 // ─── Codegen — database migrations info ───
 //
 // The deterministic ("No AI") generator ships real, versioned database
-// migrations with every app it builds: Alembic for React + FastAPI,
-// migrate-mongo for Vue + Express. Each regenerate diffs the schema
+// migrations with every app it builds: Alembic for FastAPI and Flask,
+// Django's own, TypeORM for NestJS, Flyway for Spring Boot, SQL files the
+// app applies itself for Actix/Axum, migrate-mongo for Express. Each regenerate diffs the schema
 // against the last one it built and adds a new revision rather than
 // rewriting history, so a deployed app's database can be upgraded in
 // place. POST /codegen/generate-deterministic and GET /codegen/{id}
@@ -17,7 +18,7 @@
 
 import { detailToText } from "./schemaEditorView";
 
-export type MigrationTool = "alembic" | "migrate-mongo";
+export type MigrationTool = "alembic" | "django" | "typeorm" | "flyway" | "sqlite-rs" | "migrate-mongo";
 
 export interface MigrationRevision {
   id: string;
@@ -62,10 +63,18 @@ export function parseMigrationInfo(raw: unknown): MigrationInfo | null {
   };
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  alembic: "Alembic (SQLAlchemy)",
+  django: "Django migrations",
+  typeorm: "TypeORM (SQLite)",
+  flyway: "Flyway (H2)",
+  // Actix/Axum: plain SQL files, compiled into the app and applied at startup.
+  "sqlite-rs": "SQL migrations (SQLite, built into the app)",
+  "migrate-mongo": "migrate-mongo (MongoDB)",
+};
+
 export function migrationToolLabel(tool: string): string {
-  if (tool === "alembic") return "Alembic (SQLAlchemy)";
-  if (tool === "migrate-mongo") return "migrate-mongo (MongoDB)";
-  return tool || "Migrations";
+  return TOOL_LABELS[tool] ?? (tool || "Migrations");
 }
 
 /** Newest first. Revision files are numbered with a zero-padded prefix

@@ -314,3 +314,97 @@ def schema_sql_for_prompt(tables: list[dict], only: dict | None = None) -> str:
 def view_name(method: str, path: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", path.strip("/")).strip("_").lower() or "root"
     return f"{method.lower()}_{slug}"
+
+
+# ───────────────────────────────────────────────
+#  Migrations mode (the deterministic generator only — codegen_rust.py):
+#  sqlx 0.8 over bundled SQLite, the schema owned by the SQL migrations
+#  that src/migrate.rs applies at startup, the port and database from
+#  PORT / DATABASE_URL. Both frameworks share everything but the web
+#  crates and main.rs's server half.
+# ───────────────────────────────────────────────
+def migrations_cargo_toml(project_name: str, web_dependencies: list[str]) -> str:
+    from app.core.naming import slugify_app_name
+
+    dependencies = sorted(
+        [
+            *web_dependencies,
+            'chrono = { version = "0.4", default-features = false, features = ["std"] }',
+            'serde = { version = "1", features = ["derive"] }',
+            'serde_json = "1"',
+            'serde_path_to_error = "0.1"',
+            'sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }',
+        ]
+    )
+    return f"""[package]
+name = "{slugify_app_name(project_name).replace("-", "_")}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+{chr(10).join(dependencies)}
+"""
+
+
+def migrations_main_rs(
+    project_name: str,
+    imports: list[str],
+    main_attr: str,
+    main_sig: str,
+    serve: str,
+    root: str,
+) -> str:
+    """src/main.rs: open the database, apply pending migrations (or undo
+    the newest with `cargo run -- revert`), then serve."""
+    from app.ai.codegen_rust import rust_str
+
+    message = rust_str(f"{project_name} API is running")
+    return f"""//! {" ".join(project_name.split()).replace("TODO", "to-do")} API — written by VengaiCode.
+//!
+//! `cargo run` applies any pending database migrations, then serves the API on
+//! 127.0.0.1:8080 (set PORT to change it). `cargo run -- revert` undoes the
+//! newest migration. The database is SQLite: app.db beside where it runs, or
+//! DATABASE_URL (e.g. sqlite://data/app.db).
+
+{chr(10).join(imports)}
+use sqlx::sqlite::{{SqliteConnectOptions, SqlitePool, SqlitePoolOptions}};
+use std::str::FromStr;
+
+mod error;
+mod fields;
+mod migrate;
+mod models;
+mod routes;
+
+const ROOT_MESSAGE: &str = {message};
+
+async fn open_database() -> SqlitePool {{
+    let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://app.db".to_string());
+    // sqlx switches SQLite's foreign keys on for every connection.
+    let options = SqliteConnectOptions::from_str(&url)
+        .expect("DATABASE_URL is not a SQLite URL")
+        .create_if_missing(true);
+    SqlitePoolOptions::new()
+        .connect_with(options)
+        .await
+        .unwrap_or_else(|err| panic!("can't open the database {{url}}: {{err}}"))
+}}
+
+fn port() -> u16 {{
+    std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080)
+}}
+
+{main_attr}
+async fn main(){main_sig} {{
+    let pool = open_database().await;
+    if std::env::args().nth(1).as_deref() == Some("revert") {{
+        migrate::revert(&pool).await.unwrap_or_else(|err| panic!("revert failed: {{err}}"));
+        std::process::exit(0);
+    }}
+    migrate::run(&pool).await.unwrap_or_else(|err| panic!("a migration failed: {{err}}"));
+    let port = port();
+    println!("API listening on http://127.0.0.1:{{port}}");
+{serve}
+}}
+
+{root}"""

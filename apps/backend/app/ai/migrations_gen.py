@@ -13,6 +13,9 @@
 #                        migrations_typeorm; SQLite)
 #    - Spring Boot    -> Flyway SQL migrations (db/migration/, rendered by
 #                        migrations_flyway; H2; forward only)
+#    - Actix, Axum    -> SQL migrations with up/down sections, applied by
+#                        the app's own runner (src/migrate.rs) —
+#                        migrations_sqlite; SQLite
 #    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
@@ -88,6 +91,8 @@ _TOOLS = {
     "django": "django",
     "nestjs": "typeorm",
     "spring_boot": "flyway",
+    "actix": "sqlite-rs",
+    "axum": "sqlite-rs",
     "express": "migrate-mongo",
 }
 
@@ -115,6 +120,10 @@ _RUN_HINTS = {
     "flyway": (
         "Flyway applies every pending migration when the app starts (mvn spring-boot:run); "
         "it has no undo — a later change arrives as a new migration."
+    ),
+    "sqlite-rs": (
+        "Migrations are compiled into the app and applied every time it starts (cargo run); "
+        "undo the newest one: `cargo run -- revert`."
     ),
     "migrate-mongo": (
         "Migrations run automatically every time the server starts. To run them by hand: "
@@ -209,7 +218,7 @@ def plan_migrations(
             )
             revisions.append(new_revision)
 
-    files = _support_files(backend, schema)
+    files = _support_files(backend, schema, revisions)
     previous_by_path = {_file_attr(f, "path"): f for f in (previous_files or [])}
     inherited_ids = {r["id"] for r in inherited}
     for index, rev in enumerate(revisions):
@@ -246,6 +255,10 @@ def plan_migrations(
             content = migrations_typeorm.render_revision(
                 rev, down_id, previous_snapshot
             )
+        elif _TOOLS[backend] == "sqlite-rs":
+            from app.ai import migrations_sqlite
+
+            content = migrations_sqlite.render_revision(rev, down_id, previous_snapshot)
         elif _TOOLS[backend] == "flyway":
             from app.ai import migrations_flyway
 
@@ -367,6 +380,8 @@ def _revision_filename(backend: str, rev_id: str, slug: str) -> str:
         return f"backend/src/migrations/{rev_id}-{slug}.ts"
     if _TOOLS.get(backend) == "flyway":
         return f"backend/src/main/resources/db/migration/V{int(rev_id)}__{slug}.sql"
+    if _TOOLS.get(backend) == "sqlite-rs":
+        return f"backend/migrations/{rev_id}_{slug}.sql"
     if _is_alembic(backend):
         return f"backend/migrations/versions/{rev_id}_{slug}.py"
     return f"backend/migrations/{rev_id}-{slug}.js"
@@ -377,6 +392,7 @@ def _revision_language(backend: str) -> str:
         "migrate-mongo": "javascript",
         "typeorm": "typescript",
         "flyway": "sql",
+        "sqlite-rs": "sql",
     }.get(_TOOLS.get(backend), "python")
 
 
@@ -1885,8 +1901,19 @@ def _migrate_py(backend: str) -> str:
 
 
 def _support_files(
-    backend: str, schema: db_schema.ResolvedSchema
+    backend: str, schema: db_schema.ResolvedSchema, revisions: list[dict] | None = None
 ) -> list[GeneratedFile]:
+    if _TOOLS[backend] == "sqlite-rs":
+        from app.ai import migrations_sqlite
+
+        return [
+            GeneratedFile(
+                path="backend/src/migrate.rs",
+                language="rust",
+                content=migrations_sqlite.runner_rs(revisions or []),
+                description="Applies the database migrations (compiled into the app) at startup",
+            )
+        ]
     if _TOOLS[backend] in ("typeorm", "flyway"):
         # Found by location: TypeORM's src/migrations/*.ts pattern, Flyway's
         # classpath:db/migration.

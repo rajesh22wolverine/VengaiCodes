@@ -7,6 +7,7 @@ import {
   findRevisionFile,
   interpretDeterministicResponse,
   isDestructiveLine,
+  migrationToolLabel,
   MigrationsInfo,
   newRevisions,
   parseMigrations,
@@ -81,6 +82,15 @@ describe("parseMigrations", () => {
       { id: "3", filename: "0003-add-sku.js", summary: ["ok"], destructive: [], created_at: null },
     ]);
     expect(parsed.run_hint).toBe("");
+  });
+});
+
+describe("migrationToolLabel", () => {
+  it("names every backend's migration tool, and passes an unknown one through", () => {
+    expect(migrationToolLabel("alembic")).toBe("Alembic");
+    expect(migrationToolLabel("typeorm")).toBe("TypeORM migrations");
+    expect(migrationToolLabel("sqlite-rs")).toBe("SQL migrations (built into the app)");
+    expect(migrationToolLabel("something-new")).toBe("something-new");
   });
 });
 

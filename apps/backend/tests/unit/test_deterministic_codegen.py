@@ -99,6 +99,28 @@ VUE_SPRING_STACK = {
     "codegen_target": "vue__spring_boot__rest",
 }
 
+REACT_ACTIX_STACK = {
+    **FASTAPI_STACK,
+    "backend_framework": "actix",
+    "backend_language": "rust",
+    "codegen_target": "react__actix__rest",
+}
+VUE_ACTIX_STACK = {
+    **REACT_ACTIX_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__actix__rest",
+}
+REACT_AXUM_STACK = {
+    **REACT_ACTIX_STACK,
+    "backend_framework": "axum",
+    "codegen_target": "react__axum__rest",
+}
+VUE_AXUM_STACK = {
+    **REACT_AXUM_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__axum__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -114,6 +136,10 @@ SUPPORTED_STACKS = [
     VUE_NESTJS_STACK,
     REACT_SPRING_STACK,
     VUE_SPRING_STACK,
+    REACT_ACTIX_STACK,
+    VUE_ACTIX_STACK,
+    REACT_AXUM_STACK,
+    VUE_AXUM_STACK,
 ]
 STACK_IDS = [
     "react-fastapi",
@@ -128,6 +154,10 @@ STACK_IDS = [
     "vue-nestjs",
     "react-spring",
     "vue-spring",
+    "react-actix",
+    "vue-actix",
+    "react-axum",
+    "vue-axum",
 ]
 
 # Where each backend writes a table's model.
@@ -137,6 +167,8 @@ MODEL_PATHS = {
     "django": "backend/api/models/book.py",
     "nestjs": "backend/src/book/book.entity.ts",
     "spring_boot": "backend/src/main/java/com/vengaicode/generated/librarymanager/model/Book.java",
+    "actix": "backend/src/models/book.rs",
+    "axum": "backend/src/models/book.rs",
     "express": "backend/models/book.js",
 }
 
@@ -202,14 +234,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Django, Express, FastAPI, Flask, NestJS or Spring Boot (REST)"
+        == "React or Vue with Actix, Axum, Django, Express, FastAPI, Flask, NestJS or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 12
+    assert len(dc.supported_stacks()) == 16
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -452,9 +484,14 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
 def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     vite = _by_path(data)["frontend/vite.config.js"]
-    port = {"fastapi": 8000, "django": 8000, "nestjs": 3000, "spring_boot": 8080}.get(
-        stack_info["backend_framework"], 5000
-    )
+    port = {
+        "fastapi": 8000,
+        "django": 8000,
+        "nestjs": 3000,
+        "spring_boot": 8080,
+        "actix": 8080,
+        "axum": 8080,
+    }.get(stack_info["backend_framework"], 5000)
     assert "'/api': {" in vite
     assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
 
@@ -544,7 +581,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 12
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 16
 
 
 # ─── Flask specifics ───
@@ -834,3 +871,103 @@ def test_spring_ai_path_no_longer_points_at_a_missing_maven_wrapper():
     from app.ai.codegen.backend import spring_boot
 
     assert spring_boot.setup_commands("App") == ["cd backend", "mvn spring-boot:run"]
+
+
+# ─── Actix / Axum specifics ───
+@pytest.mark.parametrize(
+    "stack_info", [REACT_ACTIX_STACK, VUE_AXUM_STACK], ids=["actix", "axum"]
+)
+def test_rust_layout_and_wiring(stack_info):
+    framework = stack_info["backend_framework"]
+    files = _by_path(dc.build_deterministic_codegen_data(FakeProject(), stack_info))
+    for path in (
+        "backend/src/main.rs",
+        "backend/src/migrate.rs",
+        "backend/src/error.rs",
+        "backend/src/fields.rs",
+        "backend/src/models/mod.rs",
+        "backend/src/models/book.rs",
+        "backend/src/routes/mod.rs",
+        "backend/src/routes/book.rs",
+        "backend/migrations/0001_initial.sql",
+    ):
+        assert path in files, path
+    model = files["backend/src/models/book.rs"]
+    assert "#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]" in model
+    assert "pub struct Book {" in model and "pub struct BookInput {" in model
+    # Undeclared fields keep the by-name inference.
+    assert "pub price: Option<f64>," in model
+    assert "pub is_available: Option<bool>," in model
+    assert "pub published_at: Option<fields::Timestamp>," in model
+    assert "pub title: fields::Patch<String>," in model
+    assert 'fields::max_chars(&self.title, 255, "title", &mut errors);' in model
+    assert "VENGAI:CUSTOM:book_model:start" in model
+    routes = files["backend/src/routes/book.rs"]
+    main = files["backend/src/main.rs"]
+    cargo = files["backend/Cargo.toml"]
+    assert "migrate::run(&pool)" in main and '== Some("revert")' in main
+    assert 'sqlx = { version = "0.8"' in cargo and "serde_path_to_error" in cargo
+    if framework == "actix":
+        assert 'web::resource("/api/books/{id}")' in routes
+        assert "impl ResponseError for ApiError" in files["backend/src/error.rs"]
+        assert "Cors::permissive()" in main and 'actix-web = "4"' in cargo
+    else:
+        assert (
+            '.route("/api/books/{id}", get(read).put(update).delete(remove))' in routes
+        )
+        assert "impl IntoResponse for ApiError" in files["backend/src/error.rs"]
+        assert "CorsLayer::permissive()" in main and 'axum = "0.8"' in cargo
+    assert "cargo run -- revert" in files["README_SETUP.md"]
+
+
+def test_rust_keyword_table_names_become_raw_identifiers():
+    tables = [
+        {"name": "type", "key_fields": ["title"]},
+        {
+            "name": "match",
+            "key_fields": ["type_id"],
+            "foreign_keys": [{"field": "type_id", "references_table": "type"}],
+        },
+    ]
+    data = dc.build_deterministic_codegen_data(
+        FakeProject(tables=tables), REACT_AXUM_STACK
+    )
+    files = _by_path(data)
+    assert data["validation_warnings"] == []
+    assert "pub mod r#type;" in files["backend/src/models/mod.rs"]
+    assert ".merge(r#match::router())" in files["backend/src/routes/mod.rs"]
+    assert "use crate::models::r#type as model;" in files["backend/src/routes/type.rs"]
+
+
+def test_rust_user_text_is_escaped_and_cant_trip_the_generated_file_check():
+    tables = [
+        {
+            "name": 'TODO {items} "x"',
+            "purpose": "TODO (later",
+            "key_fields": ["title", "parent_id"],
+            "foreign_keys": [
+                {"field": "parent_id", "references_table": 'TODO {items} "x"'}
+            ],
+        }
+    ]
+    data = dc.build_deterministic_codegen_data(
+        FakeProject(tables=tables), VUE_ACTIX_STACK
+    )
+    assert data["validation_warnings"] == []
+    model = next(
+        f["content"]
+        for f in data["codegen"]["files"]
+        if f["path"].startswith("backend/src/models/todo")
+    )
+    assert 'const LABEL: &str = "TOD\\u{4f} {items} \\"x\\"";' in model
+    # In a format! string the braces are doubled.
+    assert 'no row in TOD\\u{4f} {{items}} \\"x\\" has id {}.' in model
+
+
+@pytest.mark.parametrize("name", ["api error", "super"])
+def test_rust_refuses_names_its_code_cant_hold(name):
+    with pytest.raises(dc.DeterministicCodegenError, match="Rust|ApiError"):
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=[{"name": name, "key_fields": ["title"]}]),
+            REACT_ACTIX_STACK,
+        )

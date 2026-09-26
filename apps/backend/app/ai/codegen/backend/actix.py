@@ -282,18 +282,66 @@ async fn main() -> std::io::Result<()> {{
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+# Migrations mode (the deterministic generator only — see
+# rust_common.migrations_main_rs): the tables come from src/migrate.rs,
+# every table's routes from routes::configure, and the screens' cross-origin
+# calls (a packaged app's window isn't the API's origin) are allowed.
+_MIGRATIONS_SERVE = """    HttpServer::new(move || {
+        App::new()
+            .wrap(Cors::permissive())
+            .app_data(web::Data::new(pool.clone()))
+            .route("/", web::get().to(root))
+            .configure(routes::configure)
+    })
+    .bind(("127.0.0.1", port))?
+    .run()
+    .await"""
+
+_MIGRATIONS_ROOT = """async fn root() -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!({ "message": ROOT_MESSAGE }))
+}
+"""
+
+
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    content = (
+        rust_common.migrations_cargo_toml(
+            ctx.project_name, ['actix-cors = "0.7"', 'actix-web = "4"']
+        )
+        if migrations
+        else _cargo_toml(ctx.project_name, _is_graphql(ctx))
+    )
     return [
         GeneratedFile(
             path="backend/Cargo.toml",
             language="text",
-            content=_cargo_toml(ctx.project_name, _is_graphql(ctx)),
+            content=content,
             description="Rust dependency manifest",
         )
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        # models/mod.rs and routes/mod.rs come with the models (codegen_rust).
+        return [
+            GeneratedFile(
+                path="backend/src/main.rs",
+                language="rust",
+                content=rust_common.migrations_main_rs(
+                    ctx.project_name,
+                    [
+                        "use actix_cors::Cors;",
+                        "use actix_web::{web, App, HttpResponse, HttpServer};",
+                    ],
+                    "#[actix_web::main]",
+                    " -> std::io::Result<()>",
+                    _MIGRATIONS_SERVE,
+                    _MIGRATIONS_ROOT,
+                ),
+                description="actix-web entry point — applies pending migrations, then serves every table's routes",
+            )
+        ]
     main_rs = (
         _build_main_rs_graphql(ctx.tables)
         if _is_graphql(ctx)
