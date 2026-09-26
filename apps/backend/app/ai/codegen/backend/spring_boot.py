@@ -8,6 +8,13 @@
 #  zero business logic), so they're generated deterministically in
 #  entry_point_files rather than costing a 3rd AI call per table.
 #
+#  2026-09-26: migrations mode (the deterministic generator only) —
+#  Flyway owns the schema (ddl-auto=validate), every identifier quoted,
+#  JVM and JDBC in UTC, bean validation, entities/DTOs/services/
+#  controllers/repositories in their own packages (codegen_spring writes
+#  them). Also: setup_commands said `./mvnw spring-boot:run`, but no
+#  Maven wrapper was ever generated — both modes now say `mvn`.
+#
 #  2026-09-21: added real "graphql" and "grpc" api_styles.
 #
 #  GraphQL uses Spring for GraphQL (spring-boot-starter-graphql — the
@@ -45,6 +52,7 @@
 #  to, so the two can't disagree. The .proto is untouched.
 # ═══════════════════════════════════════════════════════════════
 
+import json
 import re
 
 from app.ai import db_schema
@@ -589,6 +597,45 @@ public interface {_repository_name(entity_class)} extends JpaRepository<{entity_
 """
 
 
+def _build_application_java_migrations(package_name: str, project_name: str) -> str:
+    app_class = (
+        "".join(ch for ch in project_name.title() if ch.isalnum()) or "Generated"
+    )
+    return f"""package {package_name};
+
+import java.util.TimeZone;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class {app_class}Application {{
+    public static void main(String[] args) {{
+        // UTC everywhere: CURRENT_TIMESTAMP defaults, date-times in JSON (…Z).
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+        SpringApplication.run({app_class}Application.class, args);
+    }}
+}}
+"""
+
+
+def _root_controller_java(package_name: str, project_name: str) -> str:
+    message = json.dumps(f"{project_name} API is running").replace("TODO", "TOD\\u004f")
+    return f"""package {package_name}.controller;
+
+import java.util.Map;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class RootController {{
+    @GetMapping("/")
+    public Map<String, String> root() {{
+        return Map.of("message", {message});
+    }}
+}}
+"""
+
+
 def _build_application_java(package_name: str, project_name: str) -> str:
     app_class = (
         "".join(ch for ch in project_name.title() if ch.isalnum()) or "Generated"
@@ -608,7 +655,11 @@ public class {app_class}Application {{
 
 
 def _pom_xml(
-    package_name: str, artifact_id: str, project_name: str, api_style: str
+    package_name: str,
+    artifact_id: str,
+    project_name: str,
+    api_style: str,
+    migrations: bool = False,
 ) -> str:
     graphql_dep = (
         """
@@ -647,6 +698,22 @@ def _pom_xml(
       <scope>provided</scope>
     </dependency>"""
         if api_style == "grpc"
+        else ""
+    )
+    # Migrations mode: request validation, and Flyway to own the schema
+    # (Spring Boot runs pending migrations at startup, before Hibernate
+    # validates the entities against them).
+    migration_deps = (
+        """
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>"""
+        if migrations
         else ""
     )
     grpc_properties = (
@@ -735,7 +802,7 @@ def _pom_xml(
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-jpa</artifactId>
-    </dependency>{graphql_dep}{grpc_deps}
+    </dependency>{graphql_dep}{grpc_deps}{migration_deps}
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
@@ -745,7 +812,10 @@ def _pom_xml(
 {grpc_build_extensions}"""
 
 
-_APPLICATION_PROPERTIES = """spring.datasource.url=jdbc:h2:file:./data/app;AUTO_SERVER=TRUE
+# WRITE_DELAY=0: H2 otherwise writes a commit to the file up to 500 ms
+# later, so a crash (or a killed process) loses recently saved rows —
+# reproduced with a generated app, 2026-09-26.
+_APPLICATION_PROPERTIES = """spring.datasource.url=jdbc:h2:file:./data/app;AUTO_SERVER=TRUE;WRITE_DELAY=0
 spring.datasource.driver-class-name=org.h2.Driver
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=false
@@ -753,7 +823,26 @@ server.port=8080
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+# Migrations mode (deterministic generator only).
+_APPLICATION_PROPERTIES_MIGRATIONS = """# H2 in a file (./data/app, beside where the app runs) — zero setup.
+# WRITE_DELAY=0: every commit reaches the file at once (H2's default waits up
+# to 500 ms, and a crash in that window loses saved rows).
+spring.datasource.url=jdbc:h2:file:./data/app;WRITE_DELAY=0
+spring.datasource.driver-class-name=org.h2.Driver
+# The Flyway migrations in src/main/resources/db/migration own the schema;
+# Hibernate only checks that the entities match it.
+spring.jpa.hibernate.ddl-auto=validate
+# Every table/column name quoted as written (the migrations quote them too):
+# H2 upper-cases unquoted names and reserves many common ones.
+spring.jpa.properties.hibernate.globally_quoted_identifiers=true
+spring.jpa.properties.hibernate.jdbc.time_zone=UTC
+spring.jpa.open-in-view=false
+spring.jpa.show-sql=false
+server.port=8080
+"""
+
+
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
     package_name = _package_name(ctx.project_name)
     artifact_id = package_name.split(".")[-1]
     api_style = "graphql" if _is_graphql(ctx) else "grpc" if _is_grpc(ctx) else "rest"
@@ -761,20 +850,46 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         GeneratedFile(
             path="backend/pom.xml",
             language="xml",
-            content=_pom_xml(package_name, artifact_id, ctx.project_name, api_style),
+            content=_pom_xml(
+                package_name, artifact_id, ctx.project_name, api_style, migrations
+            ),
             description="Maven project manifest",
         ),
         GeneratedFile(
             path="backend/src/main/resources/application.properties",
             language="text",
-            content=_APPLICATION_PROPERTIES,
+            content=(
+                _APPLICATION_PROPERTIES_MIGRATIONS
+                if migrations
+                else _APPLICATION_PROPERTIES
+            ),
             description="Spring Boot config (H2 file-based DB, zero external setup)",
         ),
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
     package_name = _package_name(ctx.project_name)
+    if migrations:
+        # The deterministic generator writes the repositories itself (in
+        # their own package); only the application class is wiring.
+        return [
+            GeneratedFile(
+                path=f"backend/src/main/java/{_package_path(package_name)}/"
+                f"{''.join(ch for ch in ctx.project_name.title() if ch.isalnum()) or 'Generated'}Application.java",
+                language="java",
+                content=_build_application_java_migrations(
+                    package_name, ctx.project_name
+                ),
+                description="Spring Boot entry point",
+            ),
+            GeneratedFile(
+                path=f"backend/src/main/java/{_package_path(package_name)}/controller/RootController.java",
+                language="java",
+                content=_root_controller_java(package_name, ctx.project_name),
+                description="GET / — says the API is up",
+            ),
+        ]
     files = [
         GeneratedFile(
             path=f"backend/src/main/java/{_package_path(package_name)}/"
@@ -798,7 +913,8 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
 
 
 def setup_commands(project_name: str) -> list[str]:
-    return ["cd backend", "./mvnw spring-boot:run"]
+    # Needs Maven installed (no wrapper is generated).
+    return ["cd backend", "mvn spring-boot:run"]
 
 
 ADAPTER = BackendAdapter(

@@ -19,6 +19,8 @@
 #                 Django's own migrations — see codegen_django.py),
 #                 NestJS (TypeORM over SQLite, TypeORM migrations —
 #                 see codegen_nestjs.py),
+#                 Spring Boot (JPA over H2, Flyway migrations — see
+#                 codegen_spring.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -69,7 +71,15 @@ import json
 import re
 from datetime import datetime, timezone
 
-from app.ai import codegen_django, codegen_nestjs, db_schema, knowledge, migrations_gen
+from app.ai import (
+    codegen_django,
+    codegen_nestjs,
+    codegen_spring,
+    db_schema,
+    knowledge,
+    migrations_gen,
+)
+from app.ai.codegen.backend import spring_boot as spring_boot_adapter
 from app.ai.codegen.backend import BACKEND_ADAPTERS
 from app.ai.codegen.frontend import FRONTEND_ADAPTERS
 from app.ai.codegen.readme import build_readme_setup
@@ -91,6 +101,7 @@ DETERMINISTIC_BACKENDS: tuple[str, ...] = (
     "flask",
     "django",
     "nestjs",
+    "spring_boot",
     "express",
 )
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
@@ -2185,7 +2196,7 @@ def generate_screen_file_vue(
 #  Dispatch — which generator functions a pairing uses
 # ───────────────────────────────────────────────
 def _fastapi_backend_files(
-    schema: db_schema.ResolvedSchema,
+    schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
     return [generate_model_file_fastapi(t) for t in schema.tables], [
         generate_routes_file_fastapi(schema)
@@ -2193,7 +2204,7 @@ def _fastapi_backend_files(
 
 
 def _flask_backend_files(
-    schema: db_schema.ResolvedSchema,
+    schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
     return [generate_model_file_flask(t) for t in schema.tables], [
         generate_routes_file_flask(schema)
@@ -2201,7 +2212,7 @@ def _flask_backend_files(
 
 
 def _django_backend_files(
-    schema: db_schema.ResolvedSchema,
+    schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
     problems = codegen_django.name_problems(db_schema.snapshot(schema))
     if problems:
@@ -2215,7 +2226,7 @@ def _django_backend_files(
 
 
 def _nestjs_backend_files(
-    schema: db_schema.ResolvedSchema,
+    schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
     problems = codegen_nestjs.name_problems(schema)
     if problems:
@@ -2228,8 +2239,17 @@ def _nestjs_backend_files(
     return codegen_nestjs.backend_files(schema, constraints, headings)
 
 
+def _spring_backend_files(
+    schema: db_schema.ResolvedSchema, project_name: str = ""
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _one_line(_heading(t)) for t in schema.tables}
+    package = spring_boot_adapter._package_name(project_name)
+    return codegen_spring.backend_files(schema, package, constraints, headings)
+
+
 def _express_backend_files(
-    schema: db_schema.ResolvedSchema,
+    schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
     models = [generate_model_file_express(t, schema) for t in schema.tables]
     return models, [
@@ -2243,6 +2263,7 @@ _BACKEND_GENERATORS = {
     "flask": _flask_backend_files,
     "django": _django_backend_files,
     "nestjs": _nestjs_backend_files,
+    "spring_boot": _spring_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2302,6 +2323,7 @@ def _readme_notes(backend: str) -> list[str]:
             "flask": "backend/migrations/versions/ (Alembic)",
             "django": "backend/api/migrations/ (Django migrations)",
             "nestjs": "backend/src/migrations/ (TypeORM)",
+            "spring_boot": "backend/src/main/resources/db/migration/ (Flyway)",
         }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
             ", applied with `python manage.py migrate`"
@@ -2311,7 +2333,19 @@ def _readme_notes(backend: str) -> list[str]:
         + ". Each regeneration that changes a table adds ONE new migration; existing migration "
         "files are never rewritten, so it is safe to edit them by hand.",
     ]
-    if backend == "nestjs":
+    if backend == "spring_boot":
+        notes += [
+            "Run the API from backend/: `mvn spring-boot:run` (port 8080; needs Java 17+ and Maven). "
+            "Flyway applies pending migrations as it starts, then Hibernate checks the entities "
+            "against the database (ddl-auto=validate) — a mismatch stops the app with the reason.",
+            "The database is H2 in backend/data/ (a file; no server to install). Flyway has no "
+            "undo: a later Architecture change arrives as a NEW migration, and Flyway refuses a "
+            "migration file edited after it ran.",
+            "A database created by an OLDER VengaiCode build (tables made by Hibernate, with no "
+            "`flyway_schema_history` table) won't match the first migration — delete backend/data/ "
+            "to start over.",
+        ]
+    elif backend == "nestjs":
         notes += [
             "Run the API from backend/: `npm start` (port 3000, or set PORT). Pending migrations "
             "run as it starts; by hand: `npm run migration:run` (see what has run: "
@@ -2420,8 +2454,12 @@ def build_deterministic_codegen_data(
             ("Serializer", "ViewSet"),
             alias=False,
         )
+    elif backend_key == "spring_boot":
+        _check_generated_names(
+            schema, codegen_spring.IMPORTED_NAMES, codegen_spring.SUFFIXES, alias=False
+        )
 
-    model_files, backend_files = _BACKEND_GENERATORS[backend_key](schema)
+    model_files, backend_files = _BACKEND_GENERATORS[backend_key](schema, project.name)
     routes_file = backend_files[0]
     screen_files = [
         _SCREEN_GENERATORS[frontend_key](t, schema, backend_key) for t in schema.tables
@@ -2550,6 +2588,7 @@ _DISPLAY_LABELS = {
     "flask": "Flask",
     "django": "Django",
     "nestjs": "NestJS",
+    "spring_boot": "Spring Boot",
     "express": "Express",
 }
 

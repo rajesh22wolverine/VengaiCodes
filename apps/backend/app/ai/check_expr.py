@@ -767,16 +767,23 @@ def sql_literal(value: Any) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _sql_operand(operand: dict) -> str:
+def quoted_identifier(name: str) -> str:
+    """Always quoted — for an ORM that quotes every identifier (Hibernate
+    with globally_quoted_identifiers), where an unquoted name would be
+    upper-cased by the database and no longer match."""
+    return f'"{name}"'
+
+
+def _sql_operand(operand: dict, ident=sql_identifier) -> str:
     if "field" in operand:
-        return sql_identifier(operand["field"])
+        return ident(operand["field"])
     if "length" in operand:
-        return f"LENGTH({_sql_operand(operand['length'])})"
+        return f"LENGTH({_sql_operand(operand['length'], ident)})"
     return sql_literal(operand["value"])
 
 
-def _sql_like(node: dict, neg: str) -> str:
-    target = _sql_operand(node["like"])
+def _sql_like(node: dict, neg: str, ident=sql_identifier) -> str:
+    target = _sql_operand(node["like"], ident)
     pattern = node["pattern"]
     escape = ""
     if "\\" in pattern:
@@ -793,7 +800,7 @@ def _sql_like(node: dict, neg: str) -> str:
     return f"{target} {neg}LIKE {literal}{escape}"
 
 
-def render_sql(ast: dict) -> str:
+def render_sql(ast: dict, ident=sql_identifier) -> str:
     """Portable SQL for SQLite and Postgres (the two databases the
     deterministic FastAPI target supports via DATABASE_URL)."""
 
@@ -805,42 +812,53 @@ def render_sql(ast: dict) -> str:
         if "not" in node:
             return f"NOT {render(node['not'])}"
         if "cmp" in node:
-            return f"{_sql_operand(node['left'])} {node['cmp']} {_sql_operand(node['right'])}"
+            return f"{_sql_operand(node['left'], ident)} {node['cmp']} {_sql_operand(node['right'], ident)}"
         if "is_null" in node:
-            return f"{_sql_operand(node['is_null'])} IS {'NOT ' if node['negated'] else ''}NULL"
+            return f"{_sql_operand(node['is_null'], ident)} IS {'NOT ' if node['negated'] else ''}NULL"
         neg = "NOT " if node.get("negated") else ""
         if "in" in node:
             values = ", ".join(sql_literal(v) for v in node["values"])
-            return f"{_sql_operand(node['in'])} {neg}IN ({values})"
+            return f"{_sql_operand(node['in'], ident)} {neg}IN ({values})"
         if "between" in node:
             return (
-                f"{_sql_operand(node['between'])} {neg}BETWEEN "
-                f"{_sql_operand(node['low'])} AND {_sql_operand(node['high'])}"
+                f"{_sql_operand(node['between'], ident)} {neg}BETWEEN "
+                f"{_sql_operand(node['low'], ident)} AND {_sql_operand(node['high'], ident)}"
             )
         if "like" in node:
-            return _sql_like(node, neg)
+            return _sql_like(node, neg, ident)
         raise ValueError(f"Unknown check node: {node!r}")
 
     return render(ast, top=True)
 
 
 def render_storage_sql(
-    ast: dict, column_types: dict[str, str], fractional_digits: int = 6
+    ast: dict,
+    column_types: dict[str, str],
+    fractional_digits: int = 6,
+    utc_offset: bool = False,
+    quote_all: bool = False,
 ) -> str:
     """render_sql() with date-time literals written the way the ORM
     stores date-times on SQLite: SQLAlchemy writes '2024-01-31
     09:30:00.000000' (the default), TypeORM '2024-01-31 09:30:00.000'
     (fractional_digits=3). SQLite compares dates as text, so a literal in
     any other shape (a 'T', fewer digits) would silently compare wrong
-    there; Postgres reads either form."""
+    there; Postgres reads either form. utc_offset adds "+00:00" for a
+    TIMESTAMP WITH TIME ZONE column (so the database never reads the
+    literal in its own zone); quote_all quotes every identifier."""
 
     def render(stamp: datetime, field_type: str) -> str:
         text = _storage_literal(stamp, field_type)
-        if field_type == "date" or fractional_digits == 6:
+        if field_type == "date":
             return text
-        return text[: len(text) - (6 - fractional_digits)]
+        if fractional_digits != 6:
+            text = text[: len(text) - (6 - fractional_digits)]
+        return text + "+00:00" if utc_offset else text
 
-    return render_sql(_rewrite_temporal_literals(ast, column_types, render))
+    return render_sql(
+        _rewrite_temporal_literals(ast, column_types, render),
+        quoted_identifier if quote_all else sql_identifier,
+    )
 
 
 # ───────────────────────────────────────────────

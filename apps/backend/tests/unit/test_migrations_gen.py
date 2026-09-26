@@ -163,7 +163,7 @@ def test_public_info_hides_the_snapshots():
 
 
 def test_every_file_passes_the_generated_file_check():
-    for backend in ("fastapi", "flask", "django", "nestjs", "express"):
+    for backend in ("fastapi", "flask", "django", "nestjs", "spring_boot", "express"):
         first = plan(TABLES, backend)
         for p in (first, plan(with_extra_column(TABLES), backend, first)):
             for f in p.files:

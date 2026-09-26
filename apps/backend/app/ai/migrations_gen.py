@@ -11,6 +11,8 @@
 #                        migrations_django from the same diffs)
 #    - NestJS         -> TypeORM migrations (src/migrations/, rendered by
 #                        migrations_typeorm; SQLite)
+#    - Spring Boot    -> Flyway SQL migrations (db/migration/, rendered by
+#                        migrations_flyway; H2; forward only)
 #    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
@@ -85,6 +87,7 @@ _TOOLS = {
     "flask": "alembic",
     "django": "django",
     "nestjs": "typeorm",
+    "spring_boot": "flyway",
     "express": "migrate-mongo",
 }
 
@@ -108,6 +111,10 @@ _RUN_HINTS = {
         "Migrations run automatically every time the server starts. To run them by hand: "
         "cd backend, then `npm run migration:run` (see what has run: `npm run migration:show`; "
         "undo the newest one: `npm run migration:revert`)."
+    ),
+    "flyway": (
+        "Flyway applies every pending migration when the app starts (mvn spring-boot:run); "
+        "it has no undo — a later change arrives as a new migration."
     ),
     "migrate-mongo": (
         "Migrations run automatically every time the server starts. To run them by hand: "
@@ -239,6 +246,10 @@ def plan_migrations(
             content = migrations_typeorm.render_revision(
                 rev, down_id, previous_snapshot
             )
+        elif _TOOLS[backend] == "flyway":
+            from app.ai import migrations_flyway
+
+            content = migrations_flyway.render_revision(rev, down_id, previous_snapshot)
         elif _is_alembic(backend):
             content = _render_alembic_revision(rev, down_id, previous_snapshot)
         else:
@@ -354,15 +365,19 @@ def _revision_filename(backend: str, rev_id: str, slug: str) -> str:
         return f"backend/api/migrations/{rev_id}_{slug}.py"
     if _TOOLS.get(backend) == "typeorm":
         return f"backend/src/migrations/{rev_id}-{slug}.ts"
+    if _TOOLS.get(backend) == "flyway":
+        return f"backend/src/main/resources/db/migration/V{int(rev_id)}__{slug}.sql"
     if _is_alembic(backend):
         return f"backend/migrations/versions/{rev_id}_{slug}.py"
     return f"backend/migrations/{rev_id}-{slug}.js"
 
 
 def _revision_language(backend: str) -> str:
-    return {"migrate-mongo": "javascript", "typeorm": "typescript"}.get(
-        _TOOLS.get(backend), "python"
-    )
+    return {
+        "migrate-mongo": "javascript",
+        "typeorm": "typescript",
+        "flyway": "sql",
+    }.get(_TOOLS.get(backend), "python")
 
 
 def _revision_description(rev: dict) -> str:
@@ -1872,8 +1887,10 @@ def _migrate_py(backend: str) -> str:
 def _support_files(
     backend: str, schema: db_schema.ResolvedSchema
 ) -> list[GeneratedFile]:
-    if _TOOLS[backend] == "typeorm":
-        return []  # the DataSource loads src/migrations/*.ts by pattern
+    if _TOOLS[backend] in ("typeorm", "flyway"):
+        # Found by location: TypeORM's src/migrations/*.ts pattern, Flyway's
+        # classpath:db/migration.
+        return []
     if _TOOLS[backend] == "django":
         return [
             GeneratedFile(

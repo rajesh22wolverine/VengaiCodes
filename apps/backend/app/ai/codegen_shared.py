@@ -235,9 +235,45 @@ _BRACE_HEURISTIC_LANGUAGES = {
     "lua",
 }
 
+
+def _validate_sql(content: str) -> str | None:
+    """SQL has no grammar check here (every database has its own dialect),
+    so this is the bracket heuristic done properly: brackets are counted
+    OUTSIDE 'string literals' and "quoted names" — a seed value like
+    'Notes :)' isn't a truncated file — and so are leftover markers,
+    which comments are still searched for."""
+    code: list[str] = []
+    i, n = 0, len(content)
+    while i < n:
+        ch = content[i]
+        if ch in "'\"":
+            j = i + 1
+            while j < n:
+                if content[j] == ch:
+                    if j + 1 < n and content[j + 1] == ch:  # '' or "" inside
+                        j += 2
+                        continue
+                    break
+                j += 1
+            else:
+                return "unterminated string or quoted name (likely truncated)"
+            i = j + 1
+            continue
+        if content.startswith("--", i):
+            end = content.find("\n", i)
+            end = n if end < 0 else end
+            code.append(content[i + 2 : end].replace("(", "").replace(")", "") + "\n")
+            i = end
+            continue
+        code.append(ch)
+        i += 1
+    return _validate_brace_heuristic("".join(code))
+
+
 VALIDATORS: dict[str, Callable[[str], str | None]] = {
     "python": _validate_python,
     **{lang: _validate_brace_heuristic for lang in _BRACE_HEURISTIC_LANGUAGES},
+    "sql": _validate_sql,
 }
 
 

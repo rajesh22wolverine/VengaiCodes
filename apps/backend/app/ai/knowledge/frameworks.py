@@ -243,20 +243,26 @@ _add(
         reserved_types=_words(
             "String Object Integer Long Short Byte Double Float Boolean Character Number Class System Thread "
             "Exception Record Override List Map Set Optional Entity Table Column Id Service Repository Component"
+            # …and what the generated Spring files import or define:
+            " ApiErrors ApiException JsonText References BigDecimal Instant LocalDate ZoneOffset ArrayList"
+            " Sort EntityManager HttpStatus ProblemDetail Valid Size Digits"
         ),
         orm="Spring Data JPA (Hibernate)",
         migrations="Flyway",
         layout={
             "entry": "backend/src/main/java/<pkg>/Application.java",
             "entities": "backend/src/main/java/<pkg>/model/<Entity>.java",
+            "dtos": "backend/src/main/java/<pkg>/dto/<Entity>Request.java, <Entity>Response.java",
+            "services": "backend/src/main/java/<pkg>/service/<Entity>Service.java",
             "repositories": "backend/src/main/java/<pkg>/repository/<Entity>Repository.java",
             "controllers": "backend/src/main/java/<pkg>/controller/<Entity>Controller.java",
             "migrations": "backend/src/main/resources/db/migration/V<n>__<name>.sql",
         },
         commands={
-            "run": "./mvnw spring-boot:run",
-            "build": "./mvnw package",
-            "test": "./mvnw test",
+            # VengaiCode generates no Maven wrapper, so plain mvn.
+            "run": "mvn spring-boot:run",
+            "build": "mvn package",
+            "test": "mvn test",
         },
         default_port=8080,
         docs="https://spring.io/projects/spring-boot",

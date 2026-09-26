@@ -87,6 +87,18 @@ VUE_NESTJS_STACK = {
     "codegen_target": "vue__nestjs__rest",
 }
 
+REACT_SPRING_STACK = {
+    **FASTAPI_STACK,
+    "backend_framework": "spring_boot",
+    "backend_language": "java",
+    "codegen_target": "react__spring_boot__rest",
+}
+VUE_SPRING_STACK = {
+    **REACT_SPRING_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__spring_boot__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -100,6 +112,8 @@ SUPPORTED_STACKS = [
     VUE_DJANGO_STACK,
     REACT_NESTJS_STACK,
     VUE_NESTJS_STACK,
+    REACT_SPRING_STACK,
+    VUE_SPRING_STACK,
 ]
 STACK_IDS = [
     "react-fastapi",
@@ -112,6 +126,8 @@ STACK_IDS = [
     "vue-django",
     "react-nestjs",
     "vue-nestjs",
+    "react-spring",
+    "vue-spring",
 ]
 
 # Where each backend writes a table's model.
@@ -120,6 +136,7 @@ MODEL_PATHS = {
     "flask": "backend/app/models/book.py",
     "django": "backend/api/models/book.py",
     "nestjs": "backend/src/book/book.entity.ts",
+    "spring_boot": "backend/src/main/java/com/vengaicode/generated/librarymanager/model/Book.java",
     "express": "backend/models/book.js",
 }
 
@@ -185,14 +202,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Django, Express, FastAPI, Flask or NestJS (REST)"
+        == "React or Vue with Django, Express, FastAPI, Flask, NestJS or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 10
+    assert len(dc.supported_stacks()) == 12
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -435,7 +452,7 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
 def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     vite = _by_path(data)["frontend/vite.config.js"]
-    port = {"fastapi": 8000, "django": 8000, "nestjs": 3000}.get(
+    port = {"fastapi": 8000, "django": 8000, "nestjs": 3000, "spring_boot": 8080}.get(
         stack_info["backend_framework"], 5000
     )
     assert "'/api': {" in vite
@@ -527,7 +544,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 10
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 12
 
 
 # ─── Flask specifics ───
@@ -766,3 +783,54 @@ def test_nestjs_refuses_class_names_its_code_uses():
         dc.build_deterministic_codegen_data(
             FakeProject(tables=tables), REACT_NESTJS_STACK
         )
+
+
+# ─── Spring Boot specifics ───
+SPRING_PKG = "backend/src/main/java/com/vengaicode/generated/librarymanager"
+
+
+def test_spring_layout_and_config():
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), REACT_SPRING_STACK)
+    )
+    for sub, name in (
+        ("model", "Book"),
+        ("dto", "BookRequest"),
+        ("dto", "BookResponse"),
+        ("service", "BookService"),
+        ("controller", "BookController"),
+        ("repository", "BookRepository"),
+        ("support", "ApiErrors"),
+        ("controller", "RootController"),
+    ):
+        assert f"{SPRING_PKG}/{sub}/{name}.java" in files, name
+    entity = files[f"{SPRING_PKG}/model/Book.java"]
+    assert (
+        '@Table(name = "books")' in entity
+        and "VENGAI:CUSTOM:book_model:start" in entity
+    )
+    assert (
+        '@RequestMapping("/api/books")'
+        in files[f"{SPRING_PKG}/controller/BookController.java"]
+    )
+    assert (
+        "public Optional<@Size(max = 255) String> title;"
+        in files[f"{SPRING_PKG}/dto/BookRequest.java"]
+    )
+    assert (
+        '@JsonProperty("is_available") Boolean isAvailable'
+        in files[f"{SPRING_PKG}/dto/BookResponse.java"]
+    )
+    props = files["backend/src/main/resources/application.properties"]
+    assert "ddl-auto=validate" in props and "globally_quoted_identifiers=true" in props
+    assert "WRITE_DELAY=0" in props  # a crash must not lose committed rows
+    pom = files["backend/pom.xml"]
+    assert "flyway-core" in pom and "spring-boot-starter-validation" in pom
+    assert "backend/src/main/resources/db/migration/V1__initial.sql" in files
+    assert "mvn spring-boot:run" in files["README_SETUP.md"]
+
+
+def test_spring_ai_path_no_longer_points_at_a_missing_maven_wrapper():
+    from app.ai.codegen.backend import spring_boot
+
+    assert spring_boot.setup_commands("App") == ["cd backend", "mvn spring-boot:run"]
