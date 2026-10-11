@@ -3,7 +3,7 @@
 // The deterministic ("No AI") generator ships real, versioned database
 // migrations with every app it builds: Alembic for FastAPI and Flask,
 // Django's own, TypeORM for NestJS, Flyway for Spring Boot, SQL files the
-// app applies itself for Actix/Axum/Gin, migrate-mongo for Express. Each regenerate diffs the schema
+// app applies itself for Actix/Axum/Gin/ASP.NET Core, migrate-mongo for Express. Each regenerate diffs the schema
 // against the last one it built and adds a new revision rather than
 // rewriting history, so a deployed app's database can be upgraded in
 // place. POST /codegen/generate-deterministic and GET /codegen/{id}
@@ -25,6 +25,7 @@ export type MigrationTool =
   | "flyway"
   | "sqlite-rs"
   | "sqlite-go"
+  | "sqlite-cs"
   | "migrate-mongo";
 
 export interface MigrationRevision {
@@ -75,10 +76,12 @@ const TOOL_LABELS: Record<string, string> = {
   django: "Django migrations",
   typeorm: "TypeORM (SQLite)",
   flyway: "Flyway (H2)",
-  // Actix/Axum, and Gin: plain SQL files, compiled into the app and applied
-  // at startup. The same files either way; only the runner's language differs.
+  // Actix/Axum, Gin and ASP.NET Core: plain SQL files, compiled into the app
+  // and applied at startup. The same files in each; only the runner's language
+  // differs.
   "sqlite-rs": "SQL migrations (SQLite, built into the app)",
   "sqlite-go": "SQL migrations (SQLite, built into the app)",
+  "sqlite-cs": "SQL migrations (SQLite, built into the app)",
   "migrate-mongo": "migrate-mongo (MongoDB)",
 };
 

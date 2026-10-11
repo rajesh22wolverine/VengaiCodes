@@ -25,6 +25,8 @@
 #                 the app applies itself — see codegen_rust.py),
 #                 Gin (database/sql over SQLite, the same SQL migrations
 #                 — see codegen_gin.py),
+#                 ASP.NET Core (EF Core over SQLite, the same SQL
+#                 migrations — see codegen_aspnet.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -76,6 +78,7 @@ import re
 from datetime import datetime, timezone
 
 from app.ai import (
+    codegen_aspnet,
     codegen_django,
     codegen_gin,
     codegen_nestjs,
@@ -111,6 +114,7 @@ DETERMINISTIC_BACKENDS: tuple[str, ...] = (
     "actix",
     "axum",
     "gin",
+    "aspnet_core",
     "express",
 )
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
@@ -2298,6 +2302,20 @@ def _gin_backend_files(
     return codegen_gin.backend_files(schema, project_name, constraints, headings)
 
 
+def _aspnet_backend_files(
+    schema: db_schema.ResolvedSchema, project_name: str = ""
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    problems = codegen_aspnet.name_problems(schema)
+    if problems:
+        raise DeterministicCodegenError(
+            "Fix these in Architecture before generating C# code:\n"
+            + "\n".join(f"• {p}" for p in problems)
+        )
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _one_line(_heading(t)) for t in schema.tables}
+    return codegen_aspnet.backend_files(schema, constraints, headings)
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -2317,6 +2335,7 @@ _BACKEND_GENERATORS = {
     "actix": _actix_backend_files,
     "axum": _axum_backend_files,
     "gin": _gin_backend_files,
+    "aspnet_core": _aspnet_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2372,7 +2391,8 @@ def _readme_notes(backend: str) -> list[str]:
         + (
             # One routes/controller file per table in these backends.
             "VENGAI:CUSTOM:<table>_routes section in that table's routes file."
-            if backend in ("nestjs", "spring_boot", "actix", "axum", "gin")
+            if backend
+            in ("nestjs", "spring_boot", "actix", "axum", "gin", "aspnet_core")
             else "VENGAI:CUSTOM:extra_routes section in the routes file."
         ),
         "Database migrations: the schema is owned by versioned migrations in "
@@ -2385,6 +2405,7 @@ def _readme_notes(backend: str) -> list[str]:
             "actix": "backend/migrations/ (SQL, applied by src/migrate.rs)",
             "axum": "backend/migrations/ (SQL, applied by src/migrate.rs)",
             "gin": "backend/migrations/ (SQL, applied by migrations/migrate.go)",
+            "aspnet_core": "backend/migrations/ (SQL, applied by Data/Migrator.cs)",
         }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
             ", applied with `python manage.py migrate`"
@@ -2418,6 +2439,21 @@ def _readme_notes(backend: str) -> list[str]:
             "app, so a built binary needs no files beside it; they are written for SQLite.",
             "A database created by an OLDER VengaiCode build (tables made by GORM's AutoMigrate, "
             "with no `_migrations` table) won't match the first migration — start from an empty "
+            "app.db, or copy your rows over after the new one is created.",
+        ]
+    elif backend == "aspnet_core":
+        notes += [
+            "Run the API from backend/: `dotnet run` (port "
+            f"{codegen_aspnet.DEFAULT_PORT}, or set PORT; needs the .NET SDK for "
+            f"{codegen_aspnet.TARGET_FRAMEWORK}). Pending migrations are applied as it starts; "
+            "undo the newest: `dotnet run -- revert`.",
+            "The database is SQLite (backend/app.db, or set DATABASE_PATH). The migrations are "
+            "compiled into the app, so a published build needs no files beside it; they are "
+            "written for SQLite. EF Core reads and writes the tables but doesn't create them, "
+            "so there are no EF Core migrations to add — a new column belongs in the "
+            "Architecture tab.",
+            "A database created by an OLDER VengaiCode build (tables made by EnsureCreated, with "
+            "no `_migrations` table) won't match the first migration — start from an empty "
             "app.db, or copy your rows over after the new one is created.",
         ]
     elif backend == "spring_boot":
@@ -2684,6 +2720,7 @@ _DISPLAY_LABELS = {
     "actix": "Actix",
     "axum": "Axum",
     "gin": "Gin",
+    "aspnet_core": "ASP.NET Core",
     "express": "Express",
 }
 

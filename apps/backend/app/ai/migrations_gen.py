@@ -19,6 +19,9 @@
 #    - Gin            -> the same SQL migrations, applied by the app's own
 #                        Go runner (migrations/migrate.go). One history
 #                        with Actix/Axum: same files, same database.
+#    - ASP.NET Core   -> the same SQL migrations again, applied by the
+#                        app's own C# runner (Data/Migrator.cs) — not EF
+#                        Core migrations, which only `dotnet ef` can write.
 #    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
@@ -97,15 +100,16 @@ _TOOLS = {
     "actix": "sqlite-rs",
     "axum": "sqlite-rs",
     "gin": "sqlite-go",
+    "aspnet_core": "sqlite-cs",
     "express": "migrate-mongo",
 }
 
 # Tools that write the same revision files for the same database: a
 # project that moves between their backends keeps its migration history
-# (and its data). Rust and Go differ only in the runner that applies the
-# SQL files — both keep the same `_migrations` table.
-_HISTORY = {"sqlite-rs": "sqlite-sql", "sqlite-go": "sqlite-sql"}
-_SQLITE_RUNNERS = {"sqlite-rs": "rust", "sqlite-go": "go"}
+# (and its data). Rust, Go and C# differ only in the runner that applies
+# the SQL files — all three keep the same `_migrations` table.
+_SQLITE_RUNNERS = {"sqlite-rs": "rust", "sqlite-go": "go", "sqlite-cs": "csharp"}
+_HISTORY = {tool: "sqlite-sql" for tool in _SQLITE_RUNNERS}
 
 
 def _history(backend: str | None) -> str | None:
@@ -144,6 +148,10 @@ _RUN_HINTS = {
     "sqlite-go": (
         "Migrations are compiled into the app and applied every time it starts (go run .); "
         "undo the newest one: `go run . revert`."
+    ),
+    "sqlite-cs": (
+        "Migrations are compiled into the app and applied every time it starts (dotnet run); "
+        "undo the newest one: `dotnet run -- revert`."
     ),
     "migrate-mongo": (
         "Migrations run automatically every time the server starts. To run them by hand: "
@@ -338,7 +346,7 @@ def _usable_revisions(previous_state: dict | None, backend: str) -> list[dict]:
     different migration tool (an Alembic history means nothing to
     MongoDB), or a state this module didn't write. FastAPI and Flask
     share one history: same tables, same revision files, same app.db —
-    and so do Actix, Axum and Gin (see _HISTORY)."""
+    and so do Actix, Axum, Gin and ASP.NET Core (see _HISTORY)."""
     if not isinstance(previous_state, dict) or _history(
         previous_state.get("backend")
     ) != _history(backend):
@@ -417,6 +425,7 @@ def _revision_language(backend: str) -> str:
         "flyway": "sql",
         "sqlite-rs": "sql",
         "sqlite-go": "sql",
+        "sqlite-cs": "sql",
     }.get(_TOOLS.get(backend), "python")
 
 
@@ -1946,6 +1955,17 @@ def _support_files(
                 path="backend/migrations/migrate.go",
                 language="go",
                 content=codegen_gin.migrate_go(),
+                description="Applies the database migrations (compiled into the app) at startup",
+            )
+        ]
+    if _TOOLS[backend] == "sqlite-cs":
+        from app.ai import codegen_aspnet
+
+        return [
+            GeneratedFile(
+                path="backend/Data/Migrator.cs",
+                language="csharp",
+                content=codegen_aspnet.migrator_cs(),
                 description="Applies the database migrations (compiled into the app) at startup",
             )
         ]

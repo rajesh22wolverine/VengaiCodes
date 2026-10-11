@@ -91,6 +91,7 @@ describe("migrationToolLabel", () => {
     expect(migrationToolLabel("typeorm")).toBe("TypeORM migrations");
     expect(migrationToolLabel("sqlite-rs")).toBe("SQL migrations (built into the app)");
     expect(migrationToolLabel("sqlite-go")).toBe("SQL migrations (built into the app)");
+    expect(migrationToolLabel("sqlite-cs")).toBe("SQL migrations (built into the app)");
     expect(migrationToolLabel("something-new")).toBe("something-new");
   });
 });

@@ -350,7 +350,30 @@ def _csproj(project_name: str, grpc: bool) -> str:
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+# Migrations mode (the deterministic generator only — codegen_aspnet.py):
+# the schema is owned by the SQL migrations that Data/Migrator.cs applies
+# at startup (they are embedded in the assembly), EF Core is the data
+# access layer over those tables, the port and database file come from
+# PORT / DATABASE_PATH, and the DbContext is written with the entities
+# (it names every table and column) rather than here.
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_aspnet
+
+        return [
+            GeneratedFile(
+                path=f"backend/{_NAMESPACE}.csproj",
+                language="xml",
+                content=codegen_aspnet.csproj(),
+                description=".NET project manifest",
+            ),
+            GeneratedFile(
+                path="backend/appsettings.json",
+                language="json",
+                content=codegen_aspnet.appsettings_json(),
+                description="Logging levels",
+            ),
+        ]
     return [
         GeneratedFile(
             path=f"backend/{_NAMESPACE}.csproj",
@@ -361,7 +384,18 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_aspnet
+
+        return [
+            GeneratedFile(
+                path="backend/Program.cs",
+                language="csharp",
+                content=codegen_aspnet.program_cs(ctx.project_name),
+                description="ASP.NET Core entry point — applies pending migrations, then serves every table's routes",
+            )
+        ]
     return [
         GeneratedFile(
             path="backend/Program.cs",

@@ -133,6 +133,18 @@ VUE_GIN_STACK = {
     "codegen_target": "vue__gin__rest",
 }
 
+REACT_ASPNET_STACK = {
+    **FASTAPI_STACK,
+    "backend_framework": "aspnet_core",
+    "backend_language": "csharp",
+    "codegen_target": "react__aspnet_core__rest",
+}
+VUE_ASPNET_STACK = {
+    **REACT_ASPNET_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__aspnet_core__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -154,6 +166,8 @@ SUPPORTED_STACKS = [
     VUE_AXUM_STACK,
     REACT_GIN_STACK,
     VUE_GIN_STACK,
+    REACT_ASPNET_STACK,
+    VUE_ASPNET_STACK,
 ]
 STACK_IDS = [
     "react-fastapi",
@@ -174,6 +188,8 @@ STACK_IDS = [
     "vue-axum",
     "react-gin",
     "vue-gin",
+    "react-aspnet",
+    "vue-aspnet",
 ]
 
 # Where each backend writes a table's model.
@@ -186,6 +202,7 @@ MODEL_PATHS = {
     "actix": "backend/src/models/book.rs",
     "axum": "backend/src/models/book.rs",
     "gin": "backend/models/book_model.go",
+    "aspnet_core": "backend/Models/Book.cs",
     "express": "backend/models/book.js",
 }
 
@@ -251,14 +268,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Actix, Axum, Django, Express, FastAPI, Flask, Gin, NestJS or Spring Boot (REST)"
+        == "React or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, NestJS or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 18
+    assert len(dc.supported_stacks()) == 20
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -599,7 +616,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 18
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 20
 
 
 # ─── Flask specifics ───

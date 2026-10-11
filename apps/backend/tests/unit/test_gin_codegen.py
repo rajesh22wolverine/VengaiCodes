@@ -343,7 +343,7 @@ def test_gin_user_text_is_escaped_and_cant_trip_the_generated_file_check():
     tables = [
         {
             "name": name,
-            "purpose": "TODO (later﻿",
+            "purpose": "TODO (later" + chr(0xFEFF),
             "key_fields": ["title", "parent_id"],
             "foreign_keys": [{"field": "parent_id", "references_table": name}],
         }
@@ -363,7 +363,10 @@ def test_gin_user_text_is_escaped_and_cant_trip_the_generated_file_check():
 
 def test_go_string_literals():
     assert codegen_gin.go_str('a"b\\c\n\t') == '"a\\"b\\\\c\\n\\t"'
-    assert codegen_gin.go_str("\x00﻿\U0001f600é") == '"\\u0000\\ufeff😀é"'
+    assert (
+        codegen_gin.go_str("\x00" + chr(0xFEFF) + "\U0001f600é")
+        == '"\\u0000\\ufeff😀é"'
+    )
     assert codegen_gin.go_str("\ud800") == '"\\ufffd"'
     assert codegen_gin.go_sql('SELECT "a"') == '`SELECT "a"`'
     assert codegen_gin.go_sql("a`b") == '"a`b"'
@@ -425,3 +428,19 @@ def test_gin_shares_its_migration_history_with_the_rust_backends():
     ):
         assert statement in migrations_sqlite.runner_rs([])
         assert statement in codegen_gin.migrate_go()
+
+
+def test_gin_survives_tables_and_fields_named_like_its_own_code():
+    """Locally: every file parses and has only the imports it uses. That
+    the result compiles is test_gin_e2e.py's job, with the real toolchain."""
+    import generated_backend_e2e as e2e
+
+    tables = e2e.awkward_tables("gin")
+    assert [t["name"] for t in tables] == [t["name"] for t in e2e.AWKWARD_TABLES]
+    data = dc.build_deterministic_codegen_data(
+        FakeProject(tables=tables), REACT_GIN_STACK
+    )
+    assert data["validation_warnings"] == []
+    files = _go_files(data)
+    assert "backend/models/type_model.go" in files
+    assert [p for path, src in files.items() for p in _go_problems(path, src)] == []

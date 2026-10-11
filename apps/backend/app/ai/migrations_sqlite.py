@@ -5,8 +5,9 @@
 #  and safety rules are migrations_gen's) as migrations/NNNN_slug.sql
 #  with a `-- migrate:up` and a `-- migrate:down` section, which the
 #  generated app's own runner (src/migrate.rs for Actix/Axum, written
-#  here; migrations/migrate.go for Gin, in codegen_gin) embeds and
-#  applies at startup. Both runners read the same files and keep the same
+#  here; migrations/migrate.go for Gin, in codegen_gin; Data/Migrator.cs
+#  for ASP.NET Core, in codegen_aspnet) embeds and applies at startup.
+#  Every runner reads the same files and keeps the same
 #  `_migrations` table, so the history — and a database — carries over
 #  when a project moves between those backends.
 #
@@ -327,6 +328,12 @@ _RUNNER_NOTES = {
     "go": [
         "Written by VengaiCode from this project's Architecture tables. migrate.go, beside",
         "this file, applies it when the app starts (`go run . revert` undoes the newest).",
+        "VengaiCode never rewrites a migration once generated, so it is safe to edit this",
+        "file by hand.",
+    ],
+    "csharp": [
+        "Written by VengaiCode from this project's Architecture tables. Data/Migrator.cs",
+        "applies it when the app starts (`dotnet run -- revert` undoes the newest).",
         "VengaiCode never rewrites a migration once generated, so it is safe to edit this",
         "file by hand.",
     ],
