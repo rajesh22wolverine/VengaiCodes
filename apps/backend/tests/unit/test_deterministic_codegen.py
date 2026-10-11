@@ -121,6 +121,18 @@ VUE_AXUM_STACK = {
     "codegen_target": "vue__axum__rest",
 }
 
+REACT_GIN_STACK = {
+    **FASTAPI_STACK,
+    "backend_framework": "gin",
+    "backend_language": "go",
+    "codegen_target": "react__gin__rest",
+}
+VUE_GIN_STACK = {
+    **REACT_GIN_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__gin__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -140,6 +152,8 @@ SUPPORTED_STACKS = [
     VUE_ACTIX_STACK,
     REACT_AXUM_STACK,
     VUE_AXUM_STACK,
+    REACT_GIN_STACK,
+    VUE_GIN_STACK,
 ]
 STACK_IDS = [
     "react-fastapi",
@@ -158,6 +172,8 @@ STACK_IDS = [
     "vue-actix",
     "react-axum",
     "vue-axum",
+    "react-gin",
+    "vue-gin",
 ]
 
 # Where each backend writes a table's model.
@@ -169,6 +185,7 @@ MODEL_PATHS = {
     "spring_boot": "backend/src/main/java/com/vengaicode/generated/librarymanager/model/Book.java",
     "actix": "backend/src/models/book.rs",
     "axum": "backend/src/models/book.rs",
+    "gin": "backend/models/book_model.go",
     "express": "backend/models/book.js",
 }
 
@@ -234,14 +251,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Actix, Axum, Django, Express, FastAPI, Flask, NestJS or Spring Boot (REST)"
+        == "React or Vue with Actix, Axum, Django, Express, FastAPI, Flask, Gin, NestJS or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 16
+    assert len(dc.supported_stacks()) == 18
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -491,6 +508,7 @@ def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
         "spring_boot": 8080,
         "actix": 8080,
         "axum": 8080,
+        "gin": 8080,
     }.get(stack_info["backend_framework"], 5000)
     assert "'/api': {" in vite
     assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
@@ -581,7 +599,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 16
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 18
 
 
 # ─── Flask specifics ───

@@ -16,6 +16,9 @@
 #    - Actix, Axum    -> SQL migrations with up/down sections, applied by
 #                        the app's own runner (src/migrate.rs) —
 #                        migrations_sqlite; SQLite
+#    - Gin            -> the same SQL migrations, applied by the app's own
+#                        Go runner (migrations/migrate.go). One history
+#                        with Actix/Axum: same files, same database.
 #    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
@@ -93,8 +96,21 @@ _TOOLS = {
     "spring_boot": "flyway",
     "actix": "sqlite-rs",
     "axum": "sqlite-rs",
+    "gin": "sqlite-go",
     "express": "migrate-mongo",
 }
+
+# Tools that write the same revision files for the same database: a
+# project that moves between their backends keeps its migration history
+# (and its data). Rust and Go differ only in the runner that applies the
+# SQL files — both keep the same `_migrations` table.
+_HISTORY = {"sqlite-rs": "sqlite-sql", "sqlite-go": "sqlite-sql"}
+_SQLITE_RUNNERS = {"sqlite-rs": "rust", "sqlite-go": "go"}
+
+
+def _history(backend: str | None) -> str | None:
+    tool = _TOOLS.get(backend)
+    return _HISTORY.get(tool, tool)
 
 
 def _is_alembic(backend: str | None) -> bool:
@@ -124,6 +140,10 @@ _RUN_HINTS = {
     "sqlite-rs": (
         "Migrations are compiled into the app and applied every time it starts (cargo run); "
         "undo the newest one: `cargo run -- revert`."
+    ),
+    "sqlite-go": (
+        "Migrations are compiled into the app and applied every time it starts (go run .); "
+        "undo the newest one: `go run . revert`."
     ),
     "migrate-mongo": (
         "Migrations run automatically every time the server starts. To run them by hand: "
@@ -255,10 +275,12 @@ def plan_migrations(
             content = migrations_typeorm.render_revision(
                 rev, down_id, previous_snapshot
             )
-        elif _TOOLS[backend] == "sqlite-rs":
+        elif _TOOLS[backend] in _SQLITE_RUNNERS:
             from app.ai import migrations_sqlite
 
-            content = migrations_sqlite.render_revision(rev, down_id, previous_snapshot)
+            content = migrations_sqlite.render_revision(
+                rev, down_id, previous_snapshot, _SQLITE_RUNNERS[_TOOLS[backend]]
+            )
         elif _TOOLS[backend] == "flyway":
             from app.ai import migrations_flyway
 
@@ -315,10 +337,11 @@ def _usable_revisions(previous_state: dict | None, backend: str) -> list[dict]:
     migration history has to start over: no state yet, a backend with a
     different migration tool (an Alembic history means nothing to
     MongoDB), or a state this module didn't write. FastAPI and Flask
-    share one history: same tables, same revision files, same app.db."""
-    if not isinstance(previous_state, dict) or _TOOLS.get(
+    share one history: same tables, same revision files, same app.db —
+    and so do Actix, Axum and Gin (see _HISTORY)."""
+    if not isinstance(previous_state, dict) or _history(
         previous_state.get("backend")
-    ) != _TOOLS.get(backend):
+    ) != _history(backend):
         return []
     revisions = previous_state.get("revisions")
     if not isinstance(revisions, list) or not revisions:
@@ -380,7 +403,7 @@ def _revision_filename(backend: str, rev_id: str, slug: str) -> str:
         return f"backend/src/migrations/{rev_id}-{slug}.ts"
     if _TOOLS.get(backend) == "flyway":
         return f"backend/src/main/resources/db/migration/V{int(rev_id)}__{slug}.sql"
-    if _TOOLS.get(backend) == "sqlite-rs":
+    if _TOOLS.get(backend) in _SQLITE_RUNNERS:
         return f"backend/migrations/{rev_id}_{slug}.sql"
     if _is_alembic(backend):
         return f"backend/migrations/versions/{rev_id}_{slug}.py"
@@ -393,6 +416,7 @@ def _revision_language(backend: str) -> str:
         "typeorm": "typescript",
         "flyway": "sql",
         "sqlite-rs": "sql",
+        "sqlite-go": "sql",
     }.get(_TOOLS.get(backend), "python")
 
 
@@ -1911,6 +1935,17 @@ def _support_files(
                 path="backend/src/migrate.rs",
                 language="rust",
                 content=migrations_sqlite.runner_rs(revisions or []),
+                description="Applies the database migrations (compiled into the app) at startup",
+            )
+        ]
+    if _TOOLS[backend] == "sqlite-go":
+        from app.ai import codegen_gin
+
+        return [
+            GeneratedFile(
+                path="backend/migrations/migrate.go",
+                language="go",
+                content=codegen_gin.migrate_go(),
                 description="Applies the database migrations (compiled into the app) at startup",
             )
         ]

@@ -23,6 +23,8 @@
 #                 codegen_spring.py),
 #                 Actix Web and Axum (sqlx over SQLite, SQL migrations
 #                 the app applies itself — see codegen_rust.py),
+#                 Gin (database/sql over SQLite, the same SQL migrations
+#                 — see codegen_gin.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -75,6 +77,7 @@ from datetime import datetime, timezone
 
 from app.ai import (
     codegen_django,
+    codegen_gin,
     codegen_nestjs,
     codegen_rust,
     codegen_spring,
@@ -107,6 +110,7 @@ DETERMINISTIC_BACKENDS: tuple[str, ...] = (
     "spring_boot",
     "actix",
     "axum",
+    "gin",
     "express",
 )
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
@@ -2280,6 +2284,20 @@ def _axum_backend_files(
     return _rust_backend_files("axum", schema)
 
 
+def _gin_backend_files(
+    schema: db_schema.ResolvedSchema, project_name: str = ""
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    problems = codegen_gin.name_problems(schema)
+    if problems:
+        raise DeterministicCodegenError(
+            "Fix these in Architecture before generating Go code:\n"
+            + "\n".join(f"• {p}" for p in problems)
+        )
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _one_line(_heading(t)) for t in schema.tables}
+    return codegen_gin.backend_files(schema, project_name, constraints, headings)
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -2298,6 +2316,7 @@ _BACKEND_GENERATORS = {
     "spring_boot": _spring_backend_files,
     "actix": _actix_backend_files,
     "axum": _axum_backend_files,
+    "gin": _gin_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2353,7 +2372,7 @@ def _readme_notes(backend: str) -> list[str]:
         + (
             # One routes/controller file per table in these backends.
             "VENGAI:CUSTOM:<table>_routes section in that table's routes file."
-            if backend in ("nestjs", "spring_boot", "actix", "axum")
+            if backend in ("nestjs", "spring_boot", "actix", "axum", "gin")
             else "VENGAI:CUSTOM:extra_routes section in the routes file."
         ),
         "Database migrations: the schema is owned by versioned migrations in "
@@ -2365,6 +2384,7 @@ def _readme_notes(backend: str) -> list[str]:
             "spring_boot": "backend/src/main/resources/db/migration/ (Flyway)",
             "actix": "backend/migrations/ (SQL, applied by src/migrate.rs)",
             "axum": "backend/migrations/ (SQL, applied by src/migrate.rs)",
+            "gin": "backend/migrations/ (SQL, applied by migrations/migrate.go)",
         }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
             ", applied with `python manage.py migrate`"
@@ -2385,6 +2405,20 @@ def _readme_notes(backend: str) -> list[str]:
             "A database created by an OLDER VengaiCode build (tables made at startup, with no "
             "`_migrations` table) won't match the first migration — start from an empty app.db, "
             "or copy your rows over after the new one is created.",
+        ]
+    elif backend == "gin":
+        notes += [
+            "Run the API from backend/: `go mod tidy` (after generating or regenerating — it "
+            "completes go.mod and writes go.sum), then `go run .` (port 8080, or set PORT; needs Go "
+            f"{codegen_gin.GO_VERSION} or newer — the first build compiles SQLite, which takes "
+            "a minute or two). Pending migrations are applied as it starts; undo the newest: "
+            "`go run . revert`.",
+            "The database is SQLite (backend/app.db, or set DATABASE_PATH), through a driver "
+            "written in Go, so no C compiler is needed. The migrations are compiled into the "
+            "app, so a built binary needs no files beside it; they are written for SQLite.",
+            "A database created by an OLDER VengaiCode build (tables made by GORM's AutoMigrate, "
+            "with no `_migrations` table) won't match the first migration — start from an empty "
+            "app.db, or copy your rows over after the new one is created.",
         ]
     elif backend == "spring_boot":
         notes += [
@@ -2510,6 +2544,11 @@ def build_deterministic_codegen_data(
     elif backend_key == "spring_boot":
         _check_generated_names(
             schema, codegen_spring.IMPORTED_NAMES, codegen_spring.SUFFIXES, alias=False
+        )
+    elif backend_key == "gin":
+        # Every table's Book, BookInput and BookStore share package models.
+        _check_generated_names(
+            schema, codegen_gin.IMPORTED_NAMES, codegen_gin.SUFFIXES, alias=False
         )
 
     model_files, backend_files = _BACKEND_GENERATORS[backend_key](schema, project.name)
@@ -2644,6 +2683,7 @@ _DISPLAY_LABELS = {
     "spring_boot": "Spring Boot",
     "actix": "Actix",
     "axum": "Axum",
+    "gin": "Gin",
     "express": "Express",
 }
 

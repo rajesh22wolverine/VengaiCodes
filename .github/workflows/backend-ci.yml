@@ -15,6 +15,15 @@
 #      same one .pre-commit-config.yaml runs at commit time — this is
 #      the backstop for anyone who commits with --no-verify).
 #    - pytest: the actual unit test suite.
+#
+#  The suite also BUILDS AND RUNS what the no-AI generator writes for
+#  backends in languages other than Python, with that language's real
+#  toolchain (tests/unit/test_gin_e2e.py: go mod tidy, gofmt, go vet,
+#  go build, then the compiled server against a real SQLite file). Those
+#  tests skip on a machine without the toolchain; VENGAI_REQUIRE_TOOLCHAINS
+#  below turns a missing one into a failure here, so "skipped" can never
+#  pass for "verified". Go is pinned to the version the installer
+#  workflows build the desktop sidecar with (and go.mod declares).
 # ═══════════════════════════════════════════════════════════════
 
 name: Backend CI
@@ -35,7 +44,9 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    env:
+      VENGAI_REQUIRE_TOOLCHAINS: go
 
     steps:
       - name: Checkout repository
@@ -51,6 +62,24 @@ jobs:
       - name: Install dependencies
         working-directory: apps/backend
         run: pip install -r requirements-dev.txt
+
+      - name: Set up Go (builds the generated Gin backend)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+          cache: false
+
+      # The generated project's modules and their compiled packages (SQLite
+      # alone takes a minute or two to compile). Keyed on the file that
+      # pins the versions.
+      - name: Cache Go modules and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: generated-go-${{ runner.os }}-${{ hashFiles('apps/backend/app/ai/codegen_gin.py') }}
+          restore-keys: generated-go-${{ runner.os }}-
 
       - name: Lint (ruff)
         run: ruff check apps/backend/app

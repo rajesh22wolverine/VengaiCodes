@@ -1,10 +1,14 @@
 # ═══════════════════════════════════════════════════════════════
-#  VengaiCode — SQLite migrations for the deterministic Rust backends
+#  VengaiCode — SQLite migrations for the deterministic Rust and Go
+#  backends
 #  ai/migrations_sqlite.py — Renders one revision (bookkeeping, history
 #  and safety rules are migrations_gen's) as migrations/NNNN_slug.sql
 #  with a `-- migrate:up` and a `-- migrate:down` section, which the
-#  generated app's own runner (src/migrate.rs, also written here) embeds
-#  and applies at startup.
+#  generated app's own runner (src/migrate.rs for Actix/Axum, written
+#  here; migrations/migrate.go for Gin, in codegen_gin) embeds and
+#  applies at startup. Both runners read the same files and keep the same
+#  `_migrations` table, so the history — and a database — carries over
+#  when a project moves between those backends.
 #
 #  Why the app carries its own runner instead of sqlx::migrate!: SQLite
 #  can change a column only by rebuilding its table (create the new
@@ -15,7 +19,9 @@
 #  "-- no-transaction" directive is not honored for SQLite — checked
 #  against sqlx-sqlite 0.8.6). The runner switches foreign keys off,
 #  applies each migration in its own transaction, runs
-#  PRAGMA foreign_key_check, and switches them back on.
+#  PRAGMA foreign_key_check, and switches them back on. The Go runner
+#  does the same on one database/sql connection (a pool would hand the
+#  PRAGMA and the transaction to different connections).
 #
 #  Rendering: a table whose definition changed is rebuilt to its new
 #  shape in one step (rows copied; a column that becomes required gets
@@ -311,7 +317,25 @@ def filename(rev_id: str, slug: str) -> str:
     return f"backend/migrations/{rev_id}_{slug}.sql"
 
 
-def render_revision(rev: dict, down_id: str | None, previous_snapshot: dict) -> str:
+# What a migration file's header says applies it, per runner.
+_RUNNER_NOTES = {
+    "rust": [
+        "Written by VengaiCode from this project's Architecture tables. src/migrate.rs",
+        "applies it when the app starts (`cargo run -- revert` undoes the newest). VengaiCode",
+        "never rewrites a migration once generated, so it is safe to edit this file by hand.",
+    ],
+    "go": [
+        "Written by VengaiCode from this project's Architecture tables. migrate.go, beside",
+        "this file, applies it when the app starts (`go run . revert` undoes the newest).",
+        "VengaiCode never rewrites a migration once generated, so it is safe to edit this",
+        "file by hand.",
+    ],
+}
+
+
+def render_revision(
+    rev: dict, down_id: str | None, previous_snapshot: dict, runner: str = "rust"
+) -> str:
     snap = rev["snapshot"]
     title = (
         "Initial schema"
@@ -333,9 +357,7 @@ def render_revision(rev: dict, down_id: str | None, previous_snapshot: dict) -> 
         f"Migration {rev['id']}"
         + (f" (after {down_id})" if down_id else "")
         + f", created {_comment(rev.get('created_at') or '')}.",
-        "Written by VengaiCode from this project's Architecture tables. src/migrate.rs",
-        "applies it when the app starts (`cargo run -- revert` undoes the newest). VengaiCode",
-        "never rewrites a migration once generated, so it is safe to edit this file by hand.",
+        *_RUNNER_NOTES[runner],
     ]
     lines = [f"-- {line}".rstrip() for line in header] + ["", "-- migrate:up"]
     lines += steps(previous_snapshot, snap) or ["-- (no schema changes)"]

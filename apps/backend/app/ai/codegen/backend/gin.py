@@ -365,18 +365,41 @@ func main() {{
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+# Migrations mode (the deterministic generator only — codegen_gin.py):
+# database/sql over a pure-Go SQLite driver instead of GORM, the schema
+# owned by the SQL migrations that migrations/migrate.go applies at
+# startup, the port and database file from PORT / DATABASE_PATH, and the
+# screens' cross-origin calls allowed (a packaged app's window isn't the
+# API's origin).
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_gin
+
+        content = codegen_gin.go_mod(ctx.project_name)
+    else:
+        content = _go_mod(_module_name(ctx.project_name), _is_graphql(ctx))
     return [
         GeneratedFile(
             path="backend/go.mod",
             language="text",
-            content=_go_mod(_module_name(ctx.project_name), _is_graphql(ctx)),
+            content=content,
             description="Go module manifest",
         )
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_gin
+
+        return [
+            GeneratedFile(
+                path="backend/main.go",
+                language="go",
+                content=codegen_gin.main_go(ctx.project_name),
+                description="Gin entry point — applies pending migrations, then serves every table's routes",
+            )
+        ]
     module_name = _module_name(ctx.project_name)
     main_go = (
         _build_main_go_graphql(module_name, ctx.model_files)

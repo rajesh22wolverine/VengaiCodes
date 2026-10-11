@@ -7,7 +7,7 @@
 // Every deterministic run that changes the database schema also writes a
 // new, versioned migration for the generated app (Alembic for FastAPI and
 // Flask, Django's own, TypeORM for NestJS, Flyway for Spring Boot, SQL files
-// the app applies itself for Actix/Axum, migrate-mongo for Express). POST /codegen/generate-deterministic can
+// the app applies itself for Actix/Axum/Gin, migrate-mongo for Express). POST /codegen/generate-deterministic can
 // therefore answer in three ways, and only one of them is a failure:
 //   - 2xx  the code (and any new migration) was written
 //   - 409  the new migration would lose data (drop a table/column, change
@@ -48,8 +48,10 @@ const TOOL_LABELS: Record<string, string> = {
   django: "Django migrations",
   typeorm: "TypeORM migrations",
   flyway: "Flyway",
-  // Actix/Axum: plain SQL files, compiled into the app and applied at startup.
+  // Actix/Axum, and Gin: plain SQL files, compiled into the app and applied
+  // at startup. The same files either way; only the runner's language differs.
   "sqlite-rs": "SQL migrations (built into the app)",
+  "sqlite-go": "SQL migrations (built into the app)",
   "migrate-mongo": "migrate-mongo",
 };
 
