@@ -790,7 +790,20 @@ def _has_foreign_keys(tables: list[dict]) -> bool:
     return schema is not None and any(c.fk for t in schema.tables for c in t.columns)
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+# Migrations mode (the deterministic generator only — codegen_laravel.py):
+# a complete Laravel app (the AI path's skeleton has no storage/ or
+# bootstrap/cache folders, which Laravel won't create and can't start
+# without), whose schema is owned by the Laravel migrations migrations_gen
+# writes, with the database file from DATABASE_PATH.
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_laravel
+
+        return codegen_laravel.manifest_files()
+    return _manifest_files(ctx)
+
+
+def _manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     return [
         GeneratedFile(
             path="backend/composer.json",
@@ -813,7 +826,15 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     ]
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_laravel
+
+        return codegen_laravel.entry_point_files(ctx.project_name)
+    return _entry_point_files(ctx)
+
+
+def _entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     files = [
         GeneratedFile(
             path="backend/bootstrap/app.php",

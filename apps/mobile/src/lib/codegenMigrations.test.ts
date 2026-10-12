@@ -75,6 +75,7 @@ describe("revision display", () => {
     expect(migrationToolLabel("sqlite-cs")).toBe("SQL migrations (SQLite, built into the app)");
     expect(migrationToolLabel("flyway")).toBe("Flyway (H2)");
     expect(migrationToolLabel("rails")).toBe("Active Record migrations (SQLite)");
+    expect(migrationToolLabel("laravel")).toBe("Laravel migrations (SQLite)");
     expect(migrationToolLabel("")).toBe("Migrations");
     expect(formatRevisionTime("2026-09-24T21:30:12.123456+00:00")).toBe("2026-09-24 21:30");
     expect(formatRevisionTime(null)).toBe("");

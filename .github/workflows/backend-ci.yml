@@ -21,12 +21,14 @@
 #  toolchain (tests/unit/test_gin_e2e.py: go mod tidy, gofmt, go vet,
 #  go build; test_aspnet_e2e.py: dotnet build with warnings as errors;
 #  test_rails_e2e.py: bundle install, rails db:migrate, rails server;
-#  then each server against a real SQLite file). Those tests
+#  test_laravel_e2e.py: composer install, php -l, artisan migrate,
+#  artisan serve; then each server against a real SQLite file). Those tests
 #  skip on a machine without the toolchain; VENGAI_REQUIRE_TOOLCHAINS
 #  below turns a missing one into a failure here, so "skipped" can never
 #  pass for "verified". Go is pinned to the version the installer
 #  workflows build the desktop sidecar with (and go.mod declares); .NET
-#  to the release the generated project file targets.
+#  to the release the generated project file targets; PHP to the oldest
+#  release the generated composer.json accepts.
 # ═══════════════════════════════════════════════════════════════
 
 name: Backend CI
@@ -49,10 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      VENGAI_REQUIRE_TOOLCHAINS: go,dotnet,ruby
+      VENGAI_REQUIRE_TOOLCHAINS: go,dotnet,ruby,php
       # Where the generated Rails app's gems go: one cached install, shared
       # by every project the tests generate.
       BUNDLE_PATH: /home/runner/.bundle-generated
+      # And the generated Laravel app's Composer downloads.
+      COMPOSER_CACHE_DIR: /home/runner/.composer-generated
       DOTNET_NOLOGO: "1"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
 
@@ -112,6 +116,21 @@ jobs:
           path: /home/runner/.bundle-generated
           key: generated-gems-${{ runner.os }}-${{ hashFiles('apps/backend/app/ai/codegen_rails.py') }}
           restore-keys: generated-gems-${{ runner.os }}-
+
+      - name: Set up PHP and Composer (runs the generated Laravel backend)
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_sqlite, sqlite3, mbstring, pcntl
+          tools: composer
+          coverage: none
+
+      - name: Cache the generated Laravel app's packages
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.composer-generated
+          key: generated-composer-${{ runner.os }}-${{ hashFiles('apps/backend/app/ai/codegen_laravel.py') }}
+          restore-keys: generated-composer-${{ runner.os }}-
 
       - name: Lint (ruff)
         run: ruff check apps/backend/app

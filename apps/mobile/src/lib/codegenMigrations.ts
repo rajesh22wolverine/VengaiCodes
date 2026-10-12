@@ -27,6 +27,7 @@ export type MigrationTool =
   | "sqlite-go"
   | "sqlite-cs"
   | "rails"
+  | "laravel"
   | "migrate-mongo";
 
 export interface MigrationRevision {
@@ -78,6 +79,7 @@ const TOOL_LABELS: Record<string, string> = {
   typeorm: "TypeORM (SQLite)",
   flyway: "Flyway (H2)",
   rails: "Active Record migrations (SQLite)",
+  laravel: "Laravel migrations (SQLite)",
   // Actix/Axum, Gin and ASP.NET Core: plain SQL files, compiled into the app
   // and applied at startup. The same files in each; only the runner's language
   // differs.

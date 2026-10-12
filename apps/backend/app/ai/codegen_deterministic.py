@@ -29,6 +29,8 @@
 #                 migrations — see codegen_aspnet.py),
 #                 Rails (Active Record over SQLite, Active Record
 #                 migrations — see codegen_rails.py),
+#                 Laravel (Eloquent over SQLite, Laravel migrations —
+#                 see codegen_laravel.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -83,6 +85,7 @@ from app.ai import (
     codegen_aspnet,
     codegen_django,
     codegen_gin,
+    codegen_laravel,
     codegen_nestjs,
     codegen_rails,
     codegen_rust,
@@ -119,6 +122,7 @@ DETERMINISTIC_BACKENDS: tuple[str, ...] = (
     "gin",
     "aspnet_core",
     "rails",
+    "laravel",
     "express",
 )
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
@@ -2334,6 +2338,20 @@ def _rails_backend_files(
     return codegen_rails.backend_files(schema, project_name, constraints, headings)
 
 
+def _laravel_backend_files(
+    schema: db_schema.ResolvedSchema, project_name: str = ""
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    problems = codegen_laravel.name_problems(schema)
+    if problems:
+        raise DeterministicCodegenError(
+            "Fix these in Architecture before generating Laravel code:\n"
+            + "\n".join(f"• {p}" for p in problems)
+        )
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _one_line(_heading(t)) for t in schema.tables}
+    return codegen_laravel.backend_files(schema, constraints, headings)
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -2355,6 +2373,7 @@ _BACKEND_GENERATORS = {
     "gin": _gin_backend_files,
     "aspnet_core": _aspnet_backend_files,
     "rails": _rails_backend_files,
+    "laravel": _laravel_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2419,6 +2438,7 @@ def _readme_notes(backend: str) -> list[str]:
                 "gin",
                 "aspnet_core",
                 "rails",
+                "laravel",
             )
             else "VENGAI:CUSTOM:extra_routes section in the routes file."
         ),
@@ -2434,12 +2454,15 @@ def _readme_notes(backend: str) -> list[str]:
             "gin": "backend/migrations/ (SQL, applied by migrations/migrate.go)",
             "aspnet_core": "backend/migrations/ (SQL, applied by Data/Migrator.cs)",
             "rails": "backend/db/migrate/ (Active Record migrations)",
+            "laravel": "backend/database/migrations/ (Laravel migrations)",
         }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
             ", applied with `python manage.py migrate`"
             if backend == "django"
             else ", applied with `bin/rails db:migrate`"
             if backend == "rails"
+            else ", applied with `php artisan migrate`"
+            if backend == "laravel"
             else ", and pending ones run automatically every time the backend starts"
         )
         + ". Each regeneration that changes a table adds ONE new migration; existing migration "
@@ -2481,6 +2504,23 @@ def _readme_notes(backend: str) -> list[str]:
             "`bundle exec rails db:migrate:status`. (`bin/rails` is the same command where "
             "scripts can be run directly.)",
             "The database is SQLite (backend/storage/development.sqlite3, or set DATABASE_PATH). "
+            "The migrations are written for SQLite: they switch foreign keys off while a table "
+            "is rebuilt, which is how SQLite changes a column. Date-times are stored as UTC text "
+            "with six fractional digits, so they compare correctly as text.",
+            "A database created by an OLDER VengaiCode build (one migration per table, numbered "
+            "by table) won't match the first migration — start from an empty database, or copy "
+            "your rows over after the new one is created.",
+        ]
+    elif backend == "laravel":
+        notes += [
+            "Run the API from backend/: `composer install`, then `php artisan migrate` (after "
+            "every regeneration that adds a migration; the first time it offers to create the "
+            "database file), then `php artisan serve` (port "
+            f"{codegen_laravel.DEFAULT_PORT}, or `--port`; needs PHP "
+            f"{codegen_laravel.PHP_VERSION} or newer with the pdo_sqlite extension). Undo the "
+            "newest migration: `php artisan migrate:rollback --step=1`; see what has run: "
+            "`php artisan migrate:status`.",
+            "The database is SQLite (backend/database/database.sqlite, or set DATABASE_PATH). "
             "The migrations are written for SQLite: they switch foreign keys off while a table "
             "is rebuilt, which is how SQLite changes a column. Date-times are stored as UTC text "
             "with six fractional digits, so they compare correctly as text.",
@@ -2769,6 +2809,7 @@ _DISPLAY_LABELS = {
     "gin": "Gin",
     "aspnet_core": "ASP.NET Core",
     "rails": "Rails",
+    "laravel": "Laravel",
     "express": "Express",
 }
 

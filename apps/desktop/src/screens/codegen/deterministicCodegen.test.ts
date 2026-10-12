@@ -90,6 +90,7 @@ describe("migrationToolLabel", () => {
     expect(migrationToolLabel("alembic")).toBe("Alembic");
     expect(migrationToolLabel("typeorm")).toBe("TypeORM migrations");
     expect(migrationToolLabel("rails")).toBe("Active Record migrations");
+    expect(migrationToolLabel("laravel")).toBe("Laravel migrations");
     expect(migrationToolLabel("sqlite-rs")).toBe("SQL migrations (built into the app)");
     expect(migrationToolLabel("sqlite-go")).toBe("SQL migrations (built into the app)");
     expect(migrationToolLabel("sqlite-cs")).toBe("SQL migrations (built into the app)");

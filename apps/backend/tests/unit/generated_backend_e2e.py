@@ -18,7 +18,8 @@ applied again from an empty database.
 What differs between backends is described by a Backend: how it is built
 and started, where its migrations live and how they are applied and undone
 (the backends that run the shared SQL files do it themselves at startup;
-Rails has `db:migrate` and `db:rollback`).
+Rails has `db:migrate` and `db:rollback`, Laravel `migrate` and
+`migrate:rollback`).
 
 Toolchains: a test asks for its toolchain with toolchain(). Without it the
 test is skipped — unless VENGAI_REQUIRE_TOOLCHAINS lists it, which the
@@ -31,6 +32,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -111,7 +113,9 @@ def write_backend(data: dict, root, sources: tuple[str, ...]) -> str:
 
 
 class Server:
-    """The generated app, serving on a free port."""
+    """The generated app, serving on a free port: PORT in its environment,
+    and "{port}" in its command replaced by it (`php artisan serve` takes
+    the port as an option)."""
 
     def __init__(self, command: list[str], database: str, log_path: str, cwd: str):
         with socket.socket() as probe:
@@ -120,11 +124,14 @@ class Server:
         self.log_path = log_path
         self.log = open(log_path, "ab")
         self.proc = subprocess.Popen(
-            command,
+            [arg.replace("{port}", str(self.port)) for arg in command],
             cwd=cwd,
             env=app_env(database, PORT=str(self.port)),
             stdout=self.log,
             stderr=subprocess.STDOUT,
+            # Its own process group, so a server that runs in a child process
+            # (`php artisan serve` starts `php -S`) is stopped with it.
+            start_new_session=os.name != "nt",
         )
 
     def output(self) -> str:
@@ -152,6 +159,11 @@ class Server:
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait(timeout=20)
+        if os.name != "nt":
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # the whole group is already gone
         self.log.close()
         if error is not None:
             # What the server said, next to the assertion that failed.
@@ -671,12 +683,12 @@ _REFUSED_TABLE = re.compile(r'The table "(.+?)" ')
 _REFUSED_FIELD = re.compile(r'The fields? "(.+?)"(?: and "(.+?)")? in "(.+?)" ')
 
 
-def awkward_tables(backend_key: str) -> list[dict]:
-    """AWKWARD_TABLES without what this backend refuses — first the schema
-    check every backend shares (a C# class can't be called Type), then the
-    generator's own name rules (a Ruby class can't be called Data). What's
-    left has to build and run."""
-    tables = copy.deepcopy(AWKWARD_TABLES)
+def awkward_tables(backend_key: str, extra: list[dict] = ()) -> list[dict]:
+    """AWKWARD_TABLES (and a backend's own `extra` ones) without what this
+    backend refuses — first the schema check every backend shares (a C#
+    class can't be called Type), then the generator's own name rules (a
+    Ruby class can't be called Data). What's left has to build and run."""
+    tables = copy.deepcopy([*AWKWARD_TABLES, *extra])
     for _ in range(80):
         issues = db_schema.validate_tables(tables, backend_key)
         if issues:
@@ -705,12 +717,12 @@ def awkward_tables(backend_key: str) -> list[dict]:
     raise AssertionError("the awkward tables never became valid")
 
 
-def build_awkward_names(backend: Backend, tmp_path) -> str:
+def build_awkward_names(backend: Backend, tmp_path, extra: list[dict] = ()) -> str:
     """The generated project still builds, and still round-trips every
     field, when its tables and fields are named like the things its own
     code is made of. Returns the project's folder."""
-    tables = awkward_tables(backend.key)
-    assert len(tables) >= 8, [t["name"] for t in tables]
+    tables = awkward_tables(backend.key, extra)
+    assert len(tables) >= 8 + len(extra), [t["name"] for t in tables]
     data = dc.build_deterministic_codegen_data(FakeProject(tables), stack(backend.key))
     assert data["validation_warnings"] == []
     folder = write_backend(data, tmp_path, backend.sources)

@@ -49,6 +49,7 @@ const TOOL_LABELS: Record<string, string> = {
   typeorm: "TypeORM migrations",
   flyway: "Flyway",
   rails: "Active Record migrations",
+  laravel: "Laravel migrations",
   // Actix/Axum, Gin and ASP.NET Core: plain SQL files, compiled into the app
   // and applied at startup. The same files in each; only the runner's language
   // differs.

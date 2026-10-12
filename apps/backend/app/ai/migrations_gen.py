@@ -24,6 +24,9 @@
 #                        Core migrations, which only `dotnet ef` can write.
 #    - Rails          -> Active Record migrations in the migration DSL
 #                        (db/migrate/, rendered by migrations_rails; SQLite)
+#    - Laravel        -> Laravel migrations whose body is the same SQL
+#                        (database/migrations/, rendered by
+#                        migrations_laravel; SQLite)
 #    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
@@ -104,6 +107,7 @@ _TOOLS = {
     "gin": "sqlite-go",
     "aspnet_core": "sqlite-cs",
     "rails": "rails",
+    "laravel": "laravel",
     "express": "migrate-mongo",
 }
 
@@ -159,6 +163,10 @@ _RUN_HINTS = {
     "rails": (
         "Apply them with `bin/rails db:migrate` from backend/ (see what has run: "
         "`bin/rails db:migrate:status`; undo the newest one: `bin/rails db:rollback`)."
+    ),
+    "laravel": (
+        "Apply them with `php artisan migrate` from backend/ (see what has run: "
+        "`php artisan migrate:status`; undo the newest one: `php artisan migrate:rollback --step=1`)."
     ),
     "migrate-mongo": (
         "Migrations run automatically every time the server starts. To run them by hand: "
@@ -304,6 +312,12 @@ def plan_migrations(
             from app.ai import migrations_rails
 
             content = migrations_rails.render_revision(rev, down_id, previous_snapshot)
+        elif _TOOLS[backend] == "laravel":
+            from app.ai import migrations_laravel
+
+            content = migrations_laravel.render_revision(
+                rev, down_id, previous_snapshot
+            )
         elif _is_alembic(backend):
             content = _render_alembic_revision(rev, down_id, previous_snapshot)
         else:
@@ -428,6 +442,10 @@ def _revision_filename(backend: str, rev_id: str, slug: str) -> str:
         from app.ai import migrations_rails
 
         return migrations_rails.filename(rev_id, slug)
+    if _TOOLS.get(backend) == "laravel":
+        from app.ai import migrations_laravel
+
+        return migrations_laravel.filename(rev_id, slug)
     if _is_alembic(backend):
         return f"backend/migrations/versions/{rev_id}_{slug}.py"
     return f"backend/migrations/{rev_id}-{slug}.js"
@@ -442,6 +460,7 @@ def _revision_language(backend: str) -> str:
         "sqlite-go": "sql",
         "sqlite-cs": "sql",
         "rails": "ruby",
+        "laravel": "php",
     }.get(_TOOLS.get(backend), "python")
 
 
@@ -1985,9 +2004,10 @@ def _support_files(
                 description="Applies the database migrations (compiled into the app) at startup",
             )
         ]
-    if _TOOLS[backend] in ("typeorm", "flyway", "rails"):
+    if _TOOLS[backend] in ("typeorm", "flyway", "rails", "laravel"):
         # Found by location: TypeORM's src/migrations/*.ts pattern, Flyway's
-        # classpath:db/migration, Rails' db/migrate/.
+        # classpath:db/migration, Rails' db/migrate/, Laravel's
+        # database/migrations/.
         return []
     if _TOOLS[backend] == "django":
         return [
