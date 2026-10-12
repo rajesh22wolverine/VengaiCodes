@@ -6,6 +6,15 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
+      // React's types are this app's own @types/react (19), for every import —
+      // including the ones inside libraries' type files. lucide-react-native,
+      // react-native-svg, the expo packages and others don't declare
+      // @types/react, so pnpm links them none and TypeScript would take
+      // whichever copy pnpm hoisted: the workspace also has 18 (apps/desktop).
+      // The targets are .d.ts files because Expo's bundler applies tsconfig
+      // paths too and skips exactly those, so only TypeScript follows these.
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/*": ["./node_modules/@types/react/*.d.ts"],
       "@/*": ["src/*"]
     }
   },

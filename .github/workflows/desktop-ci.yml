@@ -28,10 +28,18 @@ on:
     paths:
       - "apps/desktop/**"
       - ".github/workflows/desktop-ci.yml"
+      # A dependency change anywhere in the workspace changes what's
+      # installed (and hoisted) for this app too.
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
   pull_request:
     paths:
       - "apps/desktop/**"
       - ".github/workflows/desktop-ci.yml"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
 
 jobs:
   typecheck-and-test:
@@ -60,6 +68,19 @@ jobs:
       - name: Typecheck (tsc)
         working-directory: apps/desktop
         run: npx tsc --noEmit
+
+      # tsconfig.json pins React's types to this app's own @types/react (18).
+      # The workspace also has 19 (apps/mobile), and which copy pnpm hoists
+      # isn't fixed — so a second copy in the program would make the
+      # typecheck above pass or fail at random.
+      - name: One copy of React's types
+        working-directory: apps/desktop
+        run: |
+          own="@types+react@$(node -p "require('./node_modules/@types/react/package.json').version")"
+          found=$(npx tsc --listFilesOnly | grep -oE '@types\+react@[0-9.]+' | sort -u)
+          echo "this app's: $own"
+          echo "in the program: $found"
+          test "$found" = "$own"
 
       - name: Run unit tests (vitest)
         working-directory: apps/desktop

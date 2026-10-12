@@ -11,6 +11,19 @@
     /* Module Resolution */
     "baseUrl": ".",
     "paths": {
+      /* React's types are this app's own @types/react (18), for every import —
+         including the ones inside libraries' type files. lucide-react,
+         framer-motion, react-router and others don't declare @types/react, so
+         pnpm links them none and TypeScript would take whichever copy pnpm
+         hoisted: the workspace also has 19 (apps/mobile), and which one is
+         hoisted isn't fixed, so the typecheck failed at random. The targets
+         are .d.ts files, so only TypeScript follows these (Vite ignores
+         tsconfig paths anyway; the .d.ts form matches apps/mobile, where
+         Expo's bundler reads paths but skips .d.ts targets). */
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/*": ["./node_modules/@types/react/*.d.ts"],
+      "react-dom": ["./node_modules/@types/react-dom/index.d.ts"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*.d.ts"],
       "@/*": ["./src/*"],
       "@components/*": ["./src/components/*"],
       "@screens/*": ["./src/screens/*"],
