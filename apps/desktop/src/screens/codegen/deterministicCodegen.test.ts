@@ -89,6 +89,7 @@ describe("migrationToolLabel", () => {
   it("names every backend's migration tool, and passes an unknown one through", () => {
     expect(migrationToolLabel("alembic")).toBe("Alembic");
     expect(migrationToolLabel("typeorm")).toBe("TypeORM migrations");
+    expect(migrationToolLabel("rails")).toBe("Active Record migrations");
     expect(migrationToolLabel("sqlite-rs")).toBe("SQL migrations (built into the app)");
     expect(migrationToolLabel("sqlite-go")).toBe("SQL migrations (built into the app)");
     expect(migrationToolLabel("sqlite-cs")).toBe("SQL migrations (built into the app)");

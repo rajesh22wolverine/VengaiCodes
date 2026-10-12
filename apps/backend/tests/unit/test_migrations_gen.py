@@ -145,7 +145,7 @@ def test_history_restarts_on_a_backend_switch_or_an_unusable_state():
     broken.state["revisions"][0]["id"] = "7"
     assert plan(with_extra_column(TABLES), previous=broken).new_revision["id"] == "0001"
     with pytest.raises(ValueError, match="No migration support"):
-        plan(TABLES, "rails")
+        plan(TABLES, "no_such_backend")
 
 
 def test_public_info_hides_the_snapshots():

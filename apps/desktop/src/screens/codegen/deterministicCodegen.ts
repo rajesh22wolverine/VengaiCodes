@@ -48,6 +48,7 @@ const TOOL_LABELS: Record<string, string> = {
   django: "Django migrations",
   typeorm: "TypeORM migrations",
   flyway: "Flyway",
+  rails: "Active Record migrations",
   // Actix/Axum, Gin and ASP.NET Core: plain SQL files, compiled into the app
   // and applied at startup. The same files in each; only the runner's language
   // differs.

@@ -26,6 +26,7 @@ export type MigrationTool =
   | "sqlite-rs"
   | "sqlite-go"
   | "sqlite-cs"
+  | "rails"
   | "migrate-mongo";
 
 export interface MigrationRevision {
@@ -76,6 +77,7 @@ const TOOL_LABELS: Record<string, string> = {
   django: "Django migrations",
   typeorm: "TypeORM (SQLite)",
   flyway: "Flyway (H2)",
+  rails: "Active Record migrations (SQLite)",
   // Actix/Axum, Gin and ASP.NET Core: plain SQL files, compiled into the app
   // and applied at startup. The same files in each; only the runner's language
   // differs.

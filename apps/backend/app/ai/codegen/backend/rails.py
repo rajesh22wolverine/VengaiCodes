@@ -810,7 +810,20 @@ end
 """
 
 
-def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
+# Migrations mode (the deterministic generator only — codegen_rails.py):
+# a complete API-only Rails app (the AI path's skeleton has no bin/rails,
+# Rakefile or config.ru, so its own setup commands can't run), whose schema
+# is owned by the Active Record migrations migrations_gen writes, with the
+# port and database file from PORT / DATABASE_PATH.
+def manifest_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_rails
+
+        return codegen_rails.manifest_files()
+    return _manifest_files(ctx)
+
+
+def _manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
     graphql = _is_graphql(ctx)
     return [
         GeneratedFile(
@@ -835,7 +848,15 @@ def _schema_name(project_name: str) -> str:
     return f"{module_name}Schema"
 
 
-def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
+def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[GeneratedFile]:
+    if migrations:
+        from app.ai import codegen_rails
+
+        return codegen_rails.entry_point_files(ctx.project_name)
+    return _entry_point_files(ctx)
+
+
+def _entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     graphql = _is_graphql(ctx)
     files = [
         GeneratedFile(

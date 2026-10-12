@@ -203,6 +203,12 @@ def _delete(t: str, table: dict, row: dict) -> str:
     return f"DELETE FROM {q(t)} WHERE {' AND '.join(conditions)};"
 
 
+# The seed statements, for renderers that write the rest of a migration
+# in their framework's own terms (migrations_rails).
+insert_sql = _insert
+delete_sql = _delete
+
+
 def _row_key(row: dict) -> str:
     return json.dumps(row, sort_keys=True)
 

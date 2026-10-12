@@ -27,6 +27,8 @@
 #                 — see codegen_gin.py),
 #                 ASP.NET Core (EF Core over SQLite, the same SQL
 #                 migrations — see codegen_aspnet.py),
+#                 Rails (Active Record over SQLite, Active Record
+#                 migrations — see codegen_rails.py),
 #                 Express (Mongoose over MongoDB)
 #  Every screen calls the same relative /api/<table> URLs and learns
 #  only one thing from the backend — the record id's key ("id" for SQL,
@@ -82,6 +84,7 @@ from app.ai import (
     codegen_django,
     codegen_gin,
     codegen_nestjs,
+    codegen_rails,
     codegen_rust,
     codegen_spring,
     db_schema,
@@ -115,6 +118,7 @@ DETERMINISTIC_BACKENDS: tuple[str, ...] = (
     "axum",
     "gin",
     "aspnet_core",
+    "rails",
     "express",
 )
 SUPPORTED_STACKS: set[tuple[str, str, str]] = {
@@ -2316,6 +2320,20 @@ def _aspnet_backend_files(
     return codegen_aspnet.backend_files(schema, constraints, headings)
 
 
+def _rails_backend_files(
+    schema: db_schema.ResolvedSchema, project_name: str = ""
+) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
+    problems = codegen_rails.name_problems(schema)
+    if problems:
+        raise DeterministicCodegenError(
+            "Fix these in Architecture before generating Rails code:\n"
+            + "\n".join(f"• {p}" for p in problems)
+        )
+    constraints = [entry for t in schema.tables for entry in _constraint_entries(t)]
+    headings = {t.sql_name: _one_line(_heading(t)) for t in schema.tables}
+    return codegen_rails.backend_files(schema, project_name, constraints, headings)
+
+
 def _express_backend_files(
     schema: db_schema.ResolvedSchema, project_name: str = ""
 ) -> tuple[list[GeneratedFile], list[GeneratedFile]]:
@@ -2336,6 +2354,7 @@ _BACKEND_GENERATORS = {
     "axum": _axum_backend_files,
     "gin": _gin_backend_files,
     "aspnet_core": _aspnet_backend_files,
+    "rails": _rails_backend_files,
     "express": _express_backend_files,
 }
 _SCREEN_GENERATORS = {
@@ -2392,7 +2411,15 @@ def _readme_notes(backend: str) -> list[str]:
             # One routes/controller file per table in these backends.
             "VENGAI:CUSTOM:<table>_routes section in that table's routes file."
             if backend
-            in ("nestjs", "spring_boot", "actix", "axum", "gin", "aspnet_core")
+            in (
+                "nestjs",
+                "spring_boot",
+                "actix",
+                "axum",
+                "gin",
+                "aspnet_core",
+                "rails",
+            )
             else "VENGAI:CUSTOM:extra_routes section in the routes file."
         ),
         "Database migrations: the schema is owned by versioned migrations in "
@@ -2406,10 +2433,13 @@ def _readme_notes(backend: str) -> list[str]:
             "axum": "backend/migrations/ (SQL, applied by src/migrate.rs)",
             "gin": "backend/migrations/ (SQL, applied by migrations/migrate.go)",
             "aspnet_core": "backend/migrations/ (SQL, applied by Data/Migrator.cs)",
+            "rails": "backend/db/migrate/ (Active Record migrations)",
         }.get(backend, "backend/migrations/ (migrate-mongo)")
         + (
             ", applied with `python manage.py migrate`"
             if backend == "django"
+            else ", applied with `bin/rails db:migrate`"
+            if backend == "rails"
             else ", and pending ones run automatically every time the backend starts"
         )
         + ". Each regeneration that changes a table adds ONE new migration; existing migration "
@@ -2440,6 +2470,23 @@ def _readme_notes(backend: str) -> list[str]:
             "A database created by an OLDER VengaiCode build (tables made by GORM's AutoMigrate, "
             "with no `_migrations` table) won't match the first migration — start from an empty "
             "app.db, or copy your rows over after the new one is created.",
+        ]
+    elif backend == "rails":
+        notes += [
+            "Run the API from backend/: `bundle install`, then `bundle exec rails db:migrate` "
+            "(after every regeneration that adds a migration), then `bundle exec rails server` "
+            f"(port {codegen_rails.DEFAULT_PORT}, or set PORT; needs Ruby "
+            f"{codegen_rails.RUBY_REQUIREMENT.removeprefix('>= ')} or newer). Undo the newest "
+            "migration: `bundle exec rails db:rollback`; see what has run: "
+            "`bundle exec rails db:migrate:status`. (`bin/rails` is the same command where "
+            "scripts can be run directly.)",
+            "The database is SQLite (backend/storage/development.sqlite3, or set DATABASE_PATH). "
+            "The migrations are written for SQLite: they switch foreign keys off while a table "
+            "is rebuilt, which is how SQLite changes a column. Date-times are stored as UTC text "
+            "with six fractional digits, so they compare correctly as text.",
+            "A database created by an OLDER VengaiCode build (one migration per table, numbered "
+            "by table) won't match the first migration — start from an empty database, or copy "
+            "your rows over after the new one is created.",
         ]
     elif backend == "aspnet_core":
         notes += [
@@ -2721,6 +2768,7 @@ _DISPLAY_LABELS = {
     "axum": "Axum",
     "gin": "Gin",
     "aspnet_core": "ASP.NET Core",
+    "rails": "Rails",
     "express": "Express",
 }
 
