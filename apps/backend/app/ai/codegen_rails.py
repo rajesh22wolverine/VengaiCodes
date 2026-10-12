@@ -82,15 +82,24 @@ _OWN_CONSTANTS = frozenset(
 RESERVED_CONSTANTS = frozenset(
     """
     AbstractController ActionController ActionDispatch ActionPack ActionView ActiveModel ActiveRecord
-    ActiveSupport ArgumentError Arel Array BasicObject Benchmark BigDecimal Binding Bundler Class Comparable
-    Complex Concurrent Data Date DateTime Delegator Digest Dir Encoding EncodingError Enumerable Enumerator
-    Errno Exception FalseClass Fiber File FileTest FileUtils Float Forwardable Gem GC Hash I18n IO IOError
-    IndexError Integer Interrupt JSON Kernel KeyError LoadError Logger Marshal MatchData Math Method Mime
-    Module Monitor Mutex NameError NilClass NoMethodError Nokogiri Numeric Object ObjectSpace OpenSSL
-    Pathname Proc Process Psych Puma Queue Rack Rails Random Range Rational Regexp RubyVM RuntimeError
-    Securerandom SecureRandom Set Signal Singleton Socket SQLite3 StandardError String StringIO Struct
-    Symbol SystemExit Thread ThreadGroup Time Timeout TrueClass TypeError URI UnboundMethod Warning YAML
-    Zeitwerk Zlib
+    ActiveSupport Addrinfo Arel ARGF ArgumentError ARGV Array Base64 BasicObject BasicSocket Benchmark
+    BigDecimal BigMath Binding Bundler CGI Class ClosedQueueError Comparable Complex Concurrent
+    ConditionVariable Crass Data Date DateAndTime DateTime Delegator DidYouMean Digest Dir Encoding
+    EncodingError Enumerable Enumerator ENV EOFError ERB Errno ErrorHighlight Erubi Etc Exception
+    FalseClass Fiber FiberError File FileTest FileUtils Float FloatDomainError Forwardable FrozenError
+    GC Gem Hash HashWithIndifferentAccess I18n IndexError Integer Interrupt IO IOError IPAddr IPSocket
+    JSON Kernel KeyError LCSDiff LoadError LocalJumpError Logger Loofah Marshal MatchData Math Method
+    Mime Module Monitor MonitorMixin Mutex NameError NilClass Nokogiri NoMatchingPatternError
+    NoMatchingPatternKeyError NoMemoryError NoMethodError NotImplementedError Numeric Object ObjectSpace
+    Open3 OpenSSL ParseError Pathname Prism Proc Process Psych Puma Queue Racc Rack Ractor
+    RactorLocalSingleton Rails Random Range RangeError Rational RbConfig Refinement Regexp RegexpError
+    RubyVM RuntimeError ScanError ScriptError SecureRandom SecurityError Set Shellwords Signal
+    SignalException SimpleDelegator SingleForwardable Singleton SizedQueue Socket SocketError SortedSet
+    SQLite3 StandardError STDERR STDIN STDOUT StopIteration String StringIO StringScanner Struct Symbol
+    SyntaxError SyntaxSuggest SystemCallError SystemExit SystemStackError TCPServer TCPSocket Tempfile
+    Thor Thread ThreadError ThreadGroup Time Timeout TracePoint TrueClass TSort TypeError TZInfo
+    UDPSocket UnboundMethod UncaughtThrowError UnicodeNormalize UNIXServer UNIXSocket URI Warning
+    WeakRef YAML Zeitwerk ZeroDivisionError Zlib
     """.split()
 )
 

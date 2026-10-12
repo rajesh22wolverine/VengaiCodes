@@ -118,10 +118,9 @@ def test_rails_reserved_names_match_what_a_booted_app_defines(tmp_path):
         if "_" not in name and name not in own and not name.endswith("Controller")
     }
     reserved = codegen_rails.RESERVED_CONSTANTS | codegen_rails._OWN_CONSTANTS
-    missing = sorted(constants - reserved)
-    assert not missing, "add to codegen_rails.RESERVED_CONSTANTS:\n" + " ".join(missing)
+    missing_constants = sorted(constants - reserved)
 
-    # A column name is a lower-case identifier.
+    # A column name is a lower-case identifier ("id" is every table's own).
     attributes = {
         name
         for name in found["attributes"]
@@ -130,7 +129,10 @@ def test_rails_reserved_names_match_what_a_booted_app_defines(tmp_path):
         and name.replace("_", "").isalnum()
         and name[0].isalpha()
     }
-    missing = sorted(attributes - codegen_rails.RESERVED_ATTRIBUTES - {"id"})
-    assert not missing, "add to codegen_rails.RESERVED_ATTRIBUTES:\n" + " ".join(
-        missing
+    missing_attributes = sorted(attributes - codegen_rails.RESERVED_ATTRIBUTES - {"id"})
+    assert not (missing_constants or missing_attributes), (
+        "\nadd to codegen_rails.RESERVED_CONSTANTS: "
+        + " ".join(missing_constants)
+        + "\nadd to codegen_rails.RESERVED_ATTRIBUTES: "
+        + " ".join(missing_attributes)
     )
