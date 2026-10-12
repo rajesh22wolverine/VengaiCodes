@@ -283,7 +283,7 @@ def test_rails_model_fields_cover_every_kind_of_column():
         ),
         (
             [{"name": "thing", "key_fields": ["changed"]}],
-            'The field "changed" in "thing" has a name Active Record already uses',
+            'The field "changed" in "thing" would replace a method every Rails record',
         ),
         (
             [

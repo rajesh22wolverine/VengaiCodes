@@ -77,13 +77,17 @@ def test_generated_rails_app_runs_with_awkward_names(tmp_path):
     e2e.build_awkward_names(_backend(), tmp_path)
 
 
-# What Active Record generates for a column "x" besides x itself: a column
-# may not be named so that any of these already exists on a record.
+# Every method a record already has — Ruby's own (raise, send, nil?, respond_to?)
+# as much as Active Record's (save, changed?) — and, from those, every column
+# name that would redefine one: a column "x" gets x, x=, x?, x_was,
+# x_changed?, restore_x!, … so no such method may exist already. Active Record
+# itself only refuses the names it defines; a column called "raise" or "nil" is
+# accepted and then breaks every record of that table.
 _PROBE = """
 constants = Object.constants.map(&:to_s)
-dangerous = ActiveRecord::AttributeMethods.dangerous_attribute_methods.to_a
+existing = (ActiveRecord::Base.instance_methods + ActiveRecord::Base.private_instance_methods).map(&:to_s)
 patterns = ActiveRecord::Base.attribute_method_patterns.map { |p| [p.prefix, p.suffix] }
-taken = dangerous.flat_map do |name|
+taken = existing.flat_map do |name|
   patterns.filter_map do |prefix, suffix|
     next unless name.start_with?(prefix) && name.end_with?(suffix)
     next if name.length < prefix.length + suffix.length
@@ -140,4 +144,6 @@ def test_rails_reserved_names_match_what_a_booted_app_defines(tmp_path):
         + " ".join(missing_attributes)
         + "\nremove from codegen_rails.RESERVED_ATTRIBUTES: "
         + " ".join(extra_attributes)
+        + "\nthe whole of RESERVED_ATTRIBUTES would be: "
+        + " ".join(sorted(attributes - {"id"}))
     )

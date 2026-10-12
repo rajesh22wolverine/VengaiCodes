@@ -40,9 +40,9 @@
 #    - A model can't be called anything that is already a constant
 #      (File, Data, Set, Rails, …): RESERVED_CONSTANTS, which the
 #      toolchain test compares with a booted app's real constants.
-#    - A column can't be called anything Active Record already defines
-#      on a record (save, errors, changed, …) or would define for
-#      another column: RESERVED_ATTRIBUTES, checked the same way.
+#    - A column can't be called anything a record already has a method
+#      for — Active Record's (save, errors, changed, …) or Ruby's own
+#      (raise, send, nil?, …): RESERVED_ATTRIBUTES, checked the same way.
 #    - Nothing here calls a method named after a column: values are read
 #      and written through record[...] and record.attributes, and
 #      controllers refer to models as ::Book.
@@ -103,10 +103,13 @@ RESERVED_CONSTANTS = frozenset(
     """.split()
 )
 
-# Names Active Record defines on every record, or would define for a column
-# of that name (an attribute "x" also gets x_was, x_changed?, restore_x!, …
-# so a column can't be named so that one of those already exists). Kept
-# complete by tests/unit/test_rails_e2e.py the same way.
+# Column names that would redefine a method every record already has. A
+# column "x" becomes the methods x, x=, x?, x_was, x_changed?, restore_x!, …
+# and none of those may exist already — whether it is Active Record's (save,
+# changed?) or Ruby's own (raise, send, nil?, respond_to?). Active Record only
+# refuses the first kind; a column called "raise" or "nil" is accepted and then
+# breaks every record of that table. Kept exact, in both directions, by
+# tests/unit/test_rails_e2e.py, which derives the list from a booted app.
 RESERVED_ATTRIBUTES = frozenset(
     """
     accessed_fields add_to_transaction aggregate_reflections all_attributes_for_inspect
@@ -242,8 +245,8 @@ def name_problems(schema: db_schema.ResolvedSchema) -> list[str]:
         for c in t.columns:
             if c.column in RESERVED_ATTRIBUTES:
                 problems.append(
-                    f'The field "{c.name}" in "{t.name}" has a name Active Record already uses on every '
-                    f"record ({c.column}) — rename it in Architecture."
+                    f'The field "{c.name}" in "{t.name}" would replace a method every Rails record '
+                    f"already has ({c.column}) — rename it in Architecture."
                 )
         for chk in t.checks:
             why = migrations_rails.check_problem(chk.sql)
