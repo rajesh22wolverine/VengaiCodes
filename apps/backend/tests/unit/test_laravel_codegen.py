@@ -249,10 +249,15 @@ def test_laravel_model_fields_cover_every_kind_of_column():
             [{"name": "model", "key_fields": ["title"]}],
             "Model",
         ),
+        (
+            [{"name": "Migration", "key_fields": ["title"]}],
+            'The table "Migration" would be stored as migrations, the table Laravel '
+            "keeps its migration history in",
+        ),
     ],
-    ids=["self", "parent", "case", "framework-type"],
+    ids=["self", "parent", "case", "framework-type", "migrations-table"],
 )
-def test_laravel_refuses_class_names_php_would_not_accept(tables, message):
+def test_laravel_refuses_names_php_or_laravel_would_not_accept(tables, message):
     with pytest.raises(
         (dc.DeterministicCodegenError, ValueError), match=re.escape(message)
     ):
@@ -340,7 +345,9 @@ def test_laravel_survives_tables_and_fields_named_like_its_own_code():
     job, with real PHP."""
     tables = e2e.awkward_tables("laravel", LARAVEL_AWKWARD_TABLES)
     names = [t["name"] for t in tables]
-    assert len(names) == len(e2e.AWKWARD_TABLES) + len(LARAVEL_AWKWARD_TABLES), names
+    # Every one but Migration, whose table would be Laravel's own `migrations`.
+    assert "Migration" not in names, names
+    assert len(names) == len(e2e.AWKWARD_TABLES) + len(LARAVEL_AWKWARD_TABLES) - 1
     data = dc.build_deterministic_codegen_data(
         FakeProject(tables=tables), REACT_LARAVEL_STACK
     )
