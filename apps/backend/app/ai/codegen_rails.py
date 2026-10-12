@@ -109,10 +109,78 @@ RESERVED_CONSTANTS = frozenset(
 # complete by tests/unit/test_rails_e2e.py the same way.
 RESERVED_ATTRIBUTES = frozenset(
     """
-    association attribute attributes becomes changed changes class clone connection decrement delete
-    destroy destroyed display dup errors freeze frozen hash id increment inspect invalid lock method
-    methods persisted readonly reload save send slice toggle touch transaction type update valid
-    validate
+    accessed_fields add_to_transaction aggregate_reflections all_attributes_for_inspect
+    all_timestamp_attributes_in_model allow_destroy apply_scoping around_save_collection_association
+    assign_attributes assign_multiparameter_attributes
+    assign_nested_attributes_for_collection_association
+    assign_nested_attributes_for_one_to_one_association assign_nested_parameter_attributes
+    assign_to_or_mark_for_destruction associated_records_to_validate_or_save association
+    association_cached association_foreign_key association_foreign_key_changed association_instance_get
+    association_instance_set association_valid attribute attribute_aliases attribute_before_last_save
+    attribute_before_type_cast attribute_came_from_user attribute_change attribute_change_to_be_saved
+    attribute_changed attribute_changed_in_place attribute_for_database attribute_for_inspect
+    attribute_in_database attribute_method attribute_method_patterns attribute_missing attribute_names
+    attribute_names_for_partial_inserts attribute_names_for_partial_updates
+    attribute_names_for_serialization attribute_present attribute_previous attribute_previous_change
+    attribute_previously attribute_previously_changed attribute_previously_was attribute_was
+    attribute_writer_missing attributes attributes_before_type_cast attributes_for_create
+    attributes_for_database attributes_for_inspect attributes_for_update attributes_in_database
+    attributes_with_values automatic_scope_inversing automatically_invert_plural_associations
+    autosaving_belongs_to_for becomes build_decrypt_attribute_assignments
+    build_encrypt_attribute_assignments cache_key cache_key_with_version cache_timestamp_format
+    cache_version cache_versioning call_reject_if can_use_fast_cache_version
+    cant_modify_encrypted_attributes_when_frozen changed changed_attribute_names_to_save
+    changed_attributes changed_for_autosave changes changes_applied changes_to_save ciphertext_for class
+    clear_attribute clear_attribute_change clear_attribute_changes clear_changes_information
+    clear_timestamp_attributes clear_transaction_record_state clone collection_cache_versioning
+    column_for_attribute compute_primary_key connection connection_handler context_for_validation
+    counter_cached_association_names create_or_update current_time_from_proper_timezone
+    custom_inspect_method_defined custom_validation_context decrement decrypt decrypt_attributes
+    default_connection_handler default_role default_scope_override default_scopes default_shard
+    default_validation_context defined_enums delete deprecated_associations_api_guard destroy
+    destroy_association_async_batch_size destroy_association_async_job destroy_associations destroy_row
+    destroyed destroyed_by_association display dup encode_with encrypt encrypt_attributes
+    encrypted_attribute encrypted_attributes ensure_proper_type errors
+    execute_callstack_for_multiparameter_attributes extract_callstack_for_multiparameter_attributes
+    find_parameter_position find_record_by_id forget_attribute_assignments format_for_inspect freeze
+    from_json frozen full_inspect generate_token_for halted_callback_hook has_attribute
+    has_changes_to_save has_defer_touch_attrs has_destroy_flag has_encrypted_attributes
+    has_transactional_callbacks hash id id_before_type_cast id_for_database id_in_database id_was
+    include_root_in_json increment init_attributes init_internals init_with init_with_attributes
+    initialize_internals_callback inspect inspect_with_attributes inspection_filter invalid
+    inverse_polymorphic_association inverse_polymorphic_association_changed lock lock_optimistically
+    locking_enabled logger mark_for_destruction marked_for_destruction marshal_dump marshal_load
+    matched_attribute_method max_updated_column_timestamp method methods missing_attribute model_name
+    mutations mutations_before_last_save mutations_from_database nested_attributes_options
+    nested_records_changed_for_autosave new_record no_touching normalize_attribute
+    normalize_changed_in_place_attributes normalized_attribute_changed_in_place normalized_attributes
+    param_delimiter partial_inserts partial_updates perform_validations persisted pk_attribute
+    pluralize_table_names populate_with_current_scope_attributes pretty_print previous_changes
+    previously_new_record previously_persisted primary_key_prefix_type primary_key_values_present
+    query_attribute query_cast_attribute raise_validation_error raw_timestamp_to_cache_version
+    read_attribute read_attribute_before_type_cast read_attribute_for_database
+    read_attribute_for_serialization read_attribute_for_validation read_store_attribute readonly
+    record_timestamps record_update_timestamps reject_new_record reload
+    remember_transaction_record_state report_deprecated_association respond_to_without_attributes
+    restore_attributes restore_transaction_record_state run_callbacks sanitize_for_mass_assignment
+    sanitize_forbidden_attributes save save_belongs_to_association save_collection_association
+    save_has_one_association saved_change_to_attribute saved_changes send serializable_add_includes
+    serializable_attributes serializable_hash should_record_timestamps signed_id
+    signed_id_verifier_secret skip_time_zone_conversion_for_attributes slice store_accessor_for
+    store_full_class_name store_full_sti_class strict_loaded_associations strict_loading
+    strict_loading_all strict_loading_mode strict_loading_n_plus_one_only surreptitiously_touch
+    table_name_prefix table_name_suffix time_zone_aware_attributes time_zone_aware_types
+    timestamp_attributes_for_create_in_model timestamp_attributes_for_update_in_model to_ary to_key
+    to_model to_partial_path toggle touch touch_deferred_attributes touch_later transaction
+    transaction_include_any_action trigger_transactional_callbacks type type_cast_attribute_value
+    type_for_attribute update update_attribute update_column update_columns valid validate
+    validate_belongs_to_association validate_collection_association validate_encryption_allowed
+    validate_has_one_association validates_absence_of validates_acceptance_of validates_comparison_of
+    validates_confirmation_of validates_exclusion_of validates_format_of validates_inclusion_of
+    validates_length_of validates_numericality_of validates_presence_of validates_size_of validates_with
+    validating_belongs_to_for validation_context values_at verify_readonly_attribute will_be_destroyed
+    will_save_change_to_attribute with_lock with_transaction_returning_status write_attribute
+    write_store_attribute
     """.split()
 )
 

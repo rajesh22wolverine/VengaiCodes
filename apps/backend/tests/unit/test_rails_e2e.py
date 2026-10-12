@@ -130,9 +130,14 @@ def test_rails_reserved_names_match_what_a_booted_app_defines(tmp_path):
         and name[0].isalpha()
     }
     missing_attributes = sorted(attributes - codegen_rails.RESERVED_ATTRIBUTES - {"id"})
-    assert not (missing_constants or missing_attributes), (
+    # Exact in both directions: a name Active Record allows shouldn't be refused.
+    # (Constants are only checked one way — some load later, e.g. in a console.)
+    extra_attributes = sorted(codegen_rails.RESERVED_ATTRIBUTES - attributes)
+    assert not (missing_constants or missing_attributes or extra_attributes), (
         "\nadd to codegen_rails.RESERVED_CONSTANTS: "
         + " ".join(missing_constants)
         + "\nadd to codegen_rails.RESERVED_ATTRIBUTES: "
         + " ".join(missing_attributes)
+        + "\nremove from codegen_rails.RESERVED_ATTRIBUTES: "
+        + " ".join(extra_attributes)
     )
