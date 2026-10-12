@@ -22,6 +22,8 @@
 #    - ASP.NET Core   -> the same SQL migrations again, applied by the
 #                        app's own C# runner (Data/Migrator.cs) — not EF
 #                        Core migrations, which only `dotnet ef` can write.
+#    - Rails          -> Active Record migrations in the migration DSL
+#                        (db/migrate/, rendered by migrations_rails; SQLite)
 #    - Express        -> migrate-mongo migrations (MongoDB)
 #
 #  How it works: every generation stores a db_schema.snapshot() of the
@@ -101,6 +103,7 @@ _TOOLS = {
     "axum": "sqlite-rs",
     "gin": "sqlite-go",
     "aspnet_core": "sqlite-cs",
+    "rails": "rails",
     "express": "migrate-mongo",
 }
 
@@ -152,6 +155,10 @@ _RUN_HINTS = {
     "sqlite-cs": (
         "Migrations are compiled into the app and applied every time it starts (dotnet run); "
         "undo the newest one: `dotnet run -- revert`."
+    ),
+    "rails": (
+        "Apply them with `bin/rails db:migrate` from backend/ (see what has run: "
+        "`bin/rails db:migrate:status`; undo the newest one: `bin/rails db:rollback`)."
     ),
     "migrate-mongo": (
         "Migrations run automatically every time the server starts. To run them by hand: "
@@ -293,6 +300,10 @@ def plan_migrations(
             from app.ai import migrations_flyway
 
             content = migrations_flyway.render_revision(rev, down_id, previous_snapshot)
+        elif _TOOLS[backend] == "rails":
+            from app.ai import migrations_rails
+
+            content = migrations_rails.render_revision(rev, down_id, previous_snapshot)
         elif _is_alembic(backend):
             content = _render_alembic_revision(rev, down_id, previous_snapshot)
         else:
@@ -413,6 +424,10 @@ def _revision_filename(backend: str, rev_id: str, slug: str) -> str:
         return f"backend/src/main/resources/db/migration/V{int(rev_id)}__{slug}.sql"
     if _TOOLS.get(backend) in _SQLITE_RUNNERS:
         return f"backend/migrations/{rev_id}_{slug}.sql"
+    if _TOOLS.get(backend) == "rails":
+        from app.ai import migrations_rails
+
+        return migrations_rails.filename(rev_id, slug)
     if _is_alembic(backend):
         return f"backend/migrations/versions/{rev_id}_{slug}.py"
     return f"backend/migrations/{rev_id}-{slug}.js"
@@ -426,6 +441,7 @@ def _revision_language(backend: str) -> str:
         "sqlite-rs": "sql",
         "sqlite-go": "sql",
         "sqlite-cs": "sql",
+        "rails": "ruby",
     }.get(_TOOLS.get(backend), "python")
 
 
@@ -1969,9 +1985,9 @@ def _support_files(
                 description="Applies the database migrations (compiled into the app) at startup",
             )
         ]
-    if _TOOLS[backend] in ("typeorm", "flyway"):
+    if _TOOLS[backend] in ("typeorm", "flyway", "rails"):
         # Found by location: TypeORM's src/migrations/*.ts pattern, Flyway's
-        # classpath:db/migration.
+        # classpath:db/migration, Rails' db/migrate/.
         return []
     if _TOOLS[backend] == "django":
         return [

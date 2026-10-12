@@ -145,6 +145,18 @@ VUE_ASPNET_STACK = {
     "codegen_target": "vue__aspnet_core__rest",
 }
 
+REACT_RAILS_STACK = {
+    **FASTAPI_STACK,
+    "backend_framework": "rails",
+    "backend_language": "ruby",
+    "codegen_target": "react__rails__rest",
+}
+VUE_RAILS_STACK = {
+    **REACT_RAILS_STACK,
+    "frontend_framework": "vue",
+    "codegen_target": "vue__rails__rest",
+}
+
 UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
 
 SUPPORTED_STACKS = [
@@ -168,6 +180,8 @@ SUPPORTED_STACKS = [
     VUE_GIN_STACK,
     REACT_ASPNET_STACK,
     VUE_ASPNET_STACK,
+    REACT_RAILS_STACK,
+    VUE_RAILS_STACK,
 ]
 STACK_IDS = [
     "react-fastapi",
@@ -190,6 +204,8 @@ STACK_IDS = [
     "vue-gin",
     "react-aspnet",
     "vue-aspnet",
+    "react-rails",
+    "vue-rails",
 ]
 
 # Where each backend writes a table's model.
@@ -203,6 +219,7 @@ MODEL_PATHS = {
     "axum": "backend/src/models/book.rs",
     "gin": "backend/models/book_model.go",
     "aspnet_core": "backend/Models/Book.cs",
+    "rails": "backend/app/models/book.rb",
     "express": "backend/models/book.js",
 }
 
@@ -268,14 +285,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, NestJS or Spring Boot (REST)"
+        == "React or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, NestJS, Rails or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 20
+    assert len(dc.supported_stacks()) == 22
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -331,7 +348,13 @@ def test_custom_slot_survives_regeneration_while_schema_change_applies(stack_inf
     first = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
     files = first["codegen"]["files"]
 
-    is_python = stack_info["backend_framework"] in ("fastapi", "flask", "django")
+    # Python and Ruby write a comment with #.
+    is_python = stack_info["backend_framework"] in (
+        "fastapi",
+        "flask",
+        "django",
+        "rails",
+    )
     model_path = MODEL_PATHS[stack_info["backend_framework"]]
     marker = (
         "# This block is preserved across future regenerations.\n"
@@ -526,6 +549,7 @@ def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
         "actix": 8080,
         "axum": 8080,
         "gin": 8080,
+        "rails": 3000,
     }.get(stack_info["backend_framework"], 5000)
     assert "'/api': {" in vite
     assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
@@ -616,7 +640,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 20
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 22
 
 
 # ─── Flask specifics ───

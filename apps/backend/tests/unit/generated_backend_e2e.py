@@ -15,6 +15,11 @@ regenerated against the SAME database; a confirmed column drop; `revert`
 of the newest migration, then of the whole history; and everything
 applied again from an empty database.
 
+What differs between backends is described by a Backend: how it is built
+and started, where its migrations live and how they are applied and undone
+(the backends that run the shared SQL files do it themselves at startup;
+Rails has `db:migrate` and `db:rollback`).
+
 Toolchains: a test asks for its toolchain with toolchain(). Without it the
 test is skipped — unless VENGAI_REQUIRE_TOOLCHAINS lists it, which the
 backend CI job does, so a missing toolchain fails there instead of passing
@@ -209,27 +214,26 @@ def app_env(database: str, **extra: str) -> dict:
     }
 
 
-def migration_files(data: dict) -> dict[str, str]:
-    return {
-        f["path"]: f["content"]
-        for f in data["codegen"]["files"]
-        if f["path"].startswith("backend/migrations/") and f["path"].endswith(".sql")
-    }
-
-
-def versions(database: str) -> list[tuple[int, str]]:
+def query(database: str, sql: str) -> list[tuple]:
     db = sqlite3.connect(database)
     try:
-        return db.execute(
-            "select version, name from _migrations order by version"
-        ).fetchall()
+        return db.execute(sql).fetchall()
     finally:
         db.close()
 
 
+def versions(database: str) -> list[tuple[int, str]]:
+    """What the runners of the shared SQL files record: (number, name)."""
+    return query(database, "select version, name from _migrations order by version")
+
+
+def sql_family_applied(database: str) -> list[int]:
+    return [version for version, _ in versions(database)]
+
+
 @dataclass
 class Backend:
-    """How one generated backend is built and started."""
+    """How one generated backend is built, started and migrated."""
 
     key: str  # the stack's backend_framework
     error_key: str  # where its error responses carry the sentence
@@ -237,10 +241,36 @@ class Backend:
     sources: tuple[str, ...]  # suffixes of the files a regeneration replaces
     build: Callable[[str], None]  # backend dir -> compiled, ready to run
     command: Callable[[str], list[str]]  # backend dir -> the server's argv
-    first_build_checks: Callable[[str], None] = lambda backend: None
+    first_build_checks: Callable[[str], None] = lambda folder: None
+    # Run before every start, with the environment the server gets — for a
+    # backend whose migrations are a command rather than part of startup.
+    prepare: Callable[[str, dict], None] = lambda folder, env: None
+    # The argv that undoes the newest migration (default: the server's + "revert").
+    revert: Callable[[str], list[str]] | None = None
+    # The migrations a database has had, as their numbers: 1, 2, 3, ...
+    applied: Callable[[str], list[int]] = sql_family_applied
+    # The tables the migration tool keeps for itself.
+    bookkeeping: frozenset = frozenset({"_migrations"})
+    # Where a revision's file is: (path prefix, suffix).
+    migrations: tuple[str, str] = ("backend/migrations/", ".sql")
+    # Whether the server (and revert) run from the project's own folder.
+    runs_in_project: bool = False
+
+    def cwd(self, folder: str, elsewhere: str) -> str:
+        return folder if self.runs_in_project else elsewhere
+
+    def migration_files(self, data: dict) -> dict[str, str]:
+        prefix, suffix = self.migrations
+        return {
+            f["path"]: f["content"]
+            for f in data["codegen"]["files"]
+            if f["path"].startswith(prefix) and f["path"].endswith(suffix)
+        }
 
 
-def initial_checks(app: Server, database: str, key: str) -> None:
+def initial_checks(app: Server, database: str, backend: Backend) -> None:
+    key = backend.error_key
+
     def problem(response):
         """(status, the error sentence)."""
         return response[0], (response[1] or {}).get(key)
@@ -259,13 +289,14 @@ def initial_checks(app: Server, database: str, key: str) -> None:
         "notes",
     } <= tables
     db.close()
-    assert versions(database) == [(1, "initial")]
+    assert backend.applied(database) == [1]
 
     status, root, headers = app.get("/")
     assert root == {"message": "Shop's (Demo API is running"}
     assert headers["Access-Control-Allow-Origin"] == "*"
+    # A browser's preflight is answered without reaching a route.
     status, _, headers = app.call("OPTIONS", "/api/customers")
-    assert status == 204 and "PUT" in headers["Access-Control-Allow-Methods"]
+    assert status in (200, 204) and "PUT" in headers["Access-Control-Allow-Methods"]
 
     # An empty table is [], never null.
     assert app.get("/api/products")[:2] == (200, [])
@@ -426,8 +457,11 @@ def initial_checks(app: Server, database: str, key: str) -> None:
     app.post("/api/products", {"sku": "KEEP", "title": "Kept", "stock_count": 4})
 
 
-def evolved_checks(app: Server, database: str, key: str) -> None:
-    assert versions(database) == [(1, "initial"), (2, "create_reviews_and_more")]
+def evolved_checks(app: Server, database: str, backend: Backend) -> None:
+    key = backend.error_key
+    assert backend.applied(database) == [1, 2]
+    if backend.applied is sql_family_applied:
+        assert versions(database)[1] == (2, "create_reviews_and_more")
     rows = app.get("/api/customers")[1]
     assert next(r for r in rows if r["email"] == "pre@x.io")["name"] == "anon", (
         "NULL backfilled before NOT NULL"
@@ -449,8 +483,8 @@ def evolved_checks(app: Server, database: str, key: str) -> None:
     db.close()
 
 
-def destroyed_checks(app: Server, database: str) -> None:
-    assert [v for v, _ in versions(database)] == [1, 2, 3]
+def destroyed_checks(app: Server, database: str, backend: Backend) -> None:
+    assert backend.applied(database) == [1, 2, 3]
     db = sqlite3.connect(database)
     columns = [r[1] for r in db.execute("pragma table_info('products')")]
     assert "stock_count" not in columns and "sku" in columns
@@ -466,9 +500,16 @@ def run_lifecycle(backend: Backend, tmp_path) -> None:
     database = str(tmp_path / "app.db")
     log_path = str(tmp_path / "server.log")
     stack_info = stack(backend.key)
+    env = app_env(database)
 
     def serve(folder: str) -> Server:
-        return Server(backend.command(folder), database, log_path, str(tmp_path))
+        backend.prepare(folder, env)
+        return Server(
+            backend.command(folder),
+            database,
+            log_path,
+            backend.cwd(folder, str(tmp_path)),
+        )
 
     first = dc.build_deterministic_codegen_data(FakeProject(SHOP), stack_info)
     assert first["validation_warnings"] == []
@@ -478,7 +519,7 @@ def run_lifecycle(backend: Backend, tmp_path) -> None:
     backend.first_build_checks(folder)
 
     with serve(folder) as app:
-        initial_checks(app, database, backend.error_key)
+        initial_checks(app, database, backend)
     db = sqlite3.connect(database)
     db.execute("insert into customers (email) values ('pre@x.io')")
     db.commit()
@@ -486,18 +527,21 @@ def run_lifecycle(backend: Backend, tmp_path) -> None:
 
     # Regenerating an unchanged schema adds nothing.
     same = dc.build_deterministic_codegen_data(FakeProject(SHOP, first), stack_info)
-    assert migration_files(same) == migration_files(first)
+    assert backend.migration_files(same) == backend.migration_files(first)
 
     second = dc.build_deterministic_codegen_data(
         FakeProject(evolved(SHOP), first), stack_info
     )
-    assert set(migration_files(second)) - set(migration_files(first)) == {
-        "backend/migrations/0002_create_reviews_and_more.sql"
-    }
+    added = set(backend.migration_files(second)) - set(backend.migration_files(first))
+    assert len(added) == 1 and "create_reviews_and_more" in added.pop()
+    for file, content in backend.migration_files(first).items():
+        assert backend.migration_files(second)[file] == content, (
+            "an earlier revision was rewritten"
+        )
     folder = write_backend(second, tmp_path, backend.sources)
     backend.build(folder)
     with serve(folder) as app:
-        evolved_checks(app, database, backend.error_key)
+        evolved_checks(app, database, backend)
 
     # A column drop is refused until the user confirms it.
     dropped = evolved(SHOP)
@@ -510,32 +554,36 @@ def run_lifecycle(backend: Backend, tmp_path) -> None:
     folder = write_backend(third, tmp_path, backend.sources)
     backend.build(folder)
     with serve(folder) as app:
-        destroyed_checks(app, database)
+        destroyed_checks(app, database, backend)
 
-    # `revert` undoes the newest migration: the dropped column is back.
-    revert = [*backend.command(folder), "revert"]
-    env = app_env(database)
-    run(revert, str(tmp_path), timeout=120, env=env)
-    assert [v for v, _ in versions(database)] == [1, 2]
+    # Undoing the newest migration brings the dropped column back.
+    revert = (
+        backend.revert(folder)
+        if backend.revert
+        else [*backend.command(folder), "revert"]
+    )
+    where = backend.cwd(folder, str(tmp_path))
+    run(revert, where, timeout=180, env=env)
+    assert backend.applied(database) == [1, 2]
     db = sqlite3.connect(database)
     assert "stock_count" in [r[1] for r in db.execute("pragma table_info('products')")]
     assert db.execute("select count(*) from reviews").fetchone()[0] == 1
+    assert db.execute("pragma foreign_key_check").fetchall() == []
     db.close()
 
     # The whole history goes down to nothing and back up again.
     for _ in range(2):
-        run(revert, str(tmp_path), timeout=120, env=env)
-    db = sqlite3.connect(database)
+        run(revert, where, timeout=180, env=env)
     left = {
         r[0]
-        for r in db.execute(
-            "select name from sqlite_master where type='table' and name not like 'sqlite_%'"
+        for r in query(
+            database,
+            "select name from sqlite_master where type='table' and name not like 'sqlite_%'",
         )
     }
-    db.close()
-    assert left == {"_migrations"} and versions(database) == []
+    assert left == set(backend.bookkeeping) and backend.applied(database) == []
     with serve(folder) as app:
-        assert [v for v, _ in versions(database)] == [1, 2, 3]
+        assert backend.applied(database) == [1, 2, 3]
         assert [r["email"] for r in app.get("/api/customers")[1]] == [
             "a@x.io",
             "b@x.io",
@@ -601,38 +649,66 @@ _SAMPLE_VALUES = {
 }
 
 
+def _without_table(tables: list[dict], name: str) -> None:
+    tables[:] = [t for t in tables if t["name"] != name]
+    for other in tables:
+        other["foreign_keys"] = [
+            fk for fk in other.get("foreign_keys", []) if fk["references_table"] != name
+        ]
+
+
+def _without_field(table: dict, field: str) -> None:
+    table["key_fields"] = [f for f in table["key_fields"] if f != field]
+    table["foreign_keys"] = [
+        fk for fk in table.get("foreign_keys", []) if fk["field"] != field
+    ]
+    table["field_specs"] = [
+        s for s in table.get("field_specs", []) if s["name"] != field
+    ]
+
+
+_REFUSED_TABLE = re.compile(r'The table "(.+?)" ')
+_REFUSED_FIELD = re.compile(r'The fields? "(.+?)"(?: and "(.+?)")? in "(.+?)" ')
+
+
 def awkward_tables(backend_key: str) -> list[dict]:
-    """AWKWARD_TABLES without what this backend's schema check refuses (a
-    C# class can't be called Type) — what's left has to compile."""
+    """AWKWARD_TABLES without what this backend refuses — first the schema
+    check every backend shares (a C# class can't be called Type), then the
+    generator's own name rules (a Ruby class can't be called Data). What's
+    left has to build and run."""
     tables = copy.deepcopy(AWKWARD_TABLES)
-    for _ in range(50):
+    for _ in range(80):
         issues = db_schema.validate_tables(tables, backend_key)
-        if not issues:
-            return tables
-        issue = issues[0]
-        table = tables[issue.table_index]
-        if issue.kind == "field":
-            gone = table["key_fields"].pop(issue.index)
-            table["foreign_keys"] = [
-                fk for fk in table.get("foreign_keys", []) if fk["field"] != gone
-            ]
-        elif issue.kind == "table":
-            tables.remove(table)
-            for other in tables:
-                other["foreign_keys"] = [
-                    fk
-                    for fk in other.get("foreign_keys", [])
-                    if fk["references_table"] != table["name"]
-                ]
-        else:
-            raise AssertionError(f"can't route around: {issue.message}")
+        if issues:
+            issue = issues[0]
+            table = tables[issue.table_index]
+            if issue.kind == "field":
+                _without_field(table, table["key_fields"][issue.index])
+            elif issue.kind == "table":
+                _without_table(tables, table["name"])
+            else:
+                raise AssertionError(f"can't route around: {issue.message}")
+            continue
+        try:
+            dc.build_deterministic_codegen_data(FakeProject(tables), stack(backend_key))
+        except dc.DeterministicCodegenError as refused:
+            problem = str(refused).split("\n")[-1]
+            if match := _REFUSED_FIELD.search(problem):
+                table = next(t for t in tables if t["name"] == match.group(3))
+                _without_field(table, match.group(2) or match.group(1))
+            elif match := _REFUSED_TABLE.search(problem):
+                _without_table(tables, match.group(1))
+            else:
+                raise
+            continue
+        return tables
     raise AssertionError("the awkward tables never became valid")
 
 
-def build_awkward_names(backend: Backend, tmp_path) -> None:
-    """The generated project still compiles, and still round-trips every
+def build_awkward_names(backend: Backend, tmp_path) -> str:
+    """The generated project still builds, and still round-trips every
     field, when its tables and fields are named like the things its own
-    code is made of."""
+    code is made of. Returns the project's folder."""
     tables = awkward_tables(backend.key)
     assert len(tables) >= 8, [t["name"] for t in tables]
     data = dc.build_deterministic_codegen_data(FakeProject(tables), stack(backend.key))
@@ -641,9 +717,13 @@ def build_awkward_names(backend: Backend, tmp_path) -> None:
     backend.build(folder)
     backend.first_build_checks(folder)
     database = str(tmp_path / "app.db")
+    backend.prepare(folder, app_env(database))
     schema = db_schema.resolve_schema(tables, backend=backend.key)
     with Server(
-        backend.command(folder), database, str(tmp_path / "server.log"), str(tmp_path)
+        backend.command(folder),
+        database,
+        str(tmp_path / "server.log"),
+        backend.cwd(folder, str(tmp_path)),
     ) as app:
         for table in schema.tables:
             url = f"/api/{table.sql_name}"
@@ -661,3 +741,4 @@ def build_awkward_names(backend: Backend, tmp_path) -> None:
                         f"{column.column}: no row in {column.fk.ref_table} has id 999."
                         in json.dumps(body)
                     ), (url, body)
+    return folder
