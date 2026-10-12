@@ -8,6 +8,9 @@
 #        stack's generated code (a keyword once converted to that
 #        language's naming, or a name the framework already uses) —
 #        db_schema refuses it in the Architecture editor
+#    stored_table_problem            a table stored under a name the
+#        framework or its migration tool keeps for itself (Laravel's
+#        `migrations`, Rails' `schema_migrations`, ...)
 #    language_rules_for_prompt       the language + framework rules added
 #        to every AI code prompt (codegen_shared.generate_text_validated)
 #    naming_constraints_for_prompt   names the Architecture AI must avoid
@@ -114,6 +117,16 @@ def table_problem(slug: str, backend: str | None) -> str | None:
     return None
 
 
+def stored_table_problem(sql_name: str, backend: str | None) -> str | None:
+    """Why a table can't be stored under this name in the chosen backend's
+    database (the framework or its migration tool creates a table of that
+    name itself), or None. Phrased to follow '"<sql_name>" is …'."""
+    fw = framework(backend)
+    if fw is None or sql_name not in fw.reserved_tables:
+        return None
+    return fw.reserved_tables[sql_name]
+
+
 def _bullets(title: str, rules: tuple[str, ...]) -> list[str]:
     return [f"{title}:"] + [f"- {r}" for r in rules] if rules else []
 
@@ -167,6 +180,12 @@ def naming_constraints_for_prompt(backend: str | None) -> str:
         )
     if fw.member_named_like_type_forbidden:
         notes.append("a field with the same name as its table")
+    if fw.reserved_tables:
+        notes.append(
+            "a table stored as "
+            + " or ".join(sorted(fw.reserved_tables))
+            + " (the framework keeps those tables for itself)"
+        )
     return f"For {fw.label}, avoid: " + "; ".join(notes) + "." if notes else ""
 
 
@@ -259,6 +278,7 @@ def catalog() -> dict:
                 "default_port": f.default_port,
                 "reserved_field_names": f.reserved_fields,
                 "reserved_type_names": sorted(f.reserved_types),
+                "reserved_table_names": f.reserved_tables,
                 "docs": f.docs,
                 "rules": list(f.rules),
             }

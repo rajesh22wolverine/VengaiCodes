@@ -114,6 +114,42 @@ def test_table_problem(backend, slug, problem):
         assert problem in reason
 
 
+def test_every_backend_names_the_tables_it_keeps_for_itself():
+    """Every backend's migration tool keeps its history in a table (or
+    collection) of the app's own database."""
+    backends = [k for k in BACKEND_FRAMEWORKS if k != "none"]
+    assert [k for k in backends if not knowledge.framework(k).reserved_tables] == []
+
+
+@pytest.mark.parametrize(
+    "backend,table,stored_as,problem",
+    [
+        ("laravel", "Migration", "migrations", "Laravel keeps its migration history"),
+        ("nestjs", "migration", "migrations", "TypeORM keeps its migration history"),
+        ("rails", "Schema Migration", "schema_migrations", "Active Record keeps"),
+        ("django", "Django Migration", "django_migrations", "Django keeps"),
+        # SQLite won't create a table named sqlite_…, whichever SQL backend.
+        ("gin", "SQLite Sequence", "sqlite_sequences", "SQLite keeps for itself"),
+        ("fastapi", "sqlite stat", "sqlite_stats", "SQLite keeps for itself"),
+        # An ordinary table wherever the name isn't taken.
+        ("rails", "Migration", "migrations", None),
+        ("fastapi", "Migration", "migrations", None),
+        ("gin", "Schema Migration", "schema_migrations", None),
+        ("express", "SQLite Sequence", "sqlite_sequences", None),
+    ],
+)
+def test_a_table_cant_be_stored_where_the_stack_keeps_its_own(
+    backend, table, stored_as, problem
+):
+    issues = db_schema.validate_tables([{"name": table, "key_fields": ["x"]}], backend)
+    if problem is None:
+        assert issues == []
+        return
+    assert len(issues) == 1 and issues[0].kind == "table", issues
+    assert f'it would be stored as "{stored_as}", ' in issues[0].message
+    assert problem in issues[0].message
+
+
 def test_the_architecture_editor_refuses_names_the_stack_cant_use():
     def messages(tables, backend):
         return [i.message for i in db_schema.validate_tables(tables, backend)]
@@ -174,6 +210,10 @@ def test_architecture_prompt_names_what_to_avoid():
         }
     )
     assert "For Ruby on Rails, avoid:" in directive and "type" in directive
+    assert (
+        "a table stored as ar_internal_metadata or schema_migrations "
+        "(the framework keeps those tables for itself)" in directive
+    )
 
 
 def test_phase_rules_sit_before_the_final_instruction():

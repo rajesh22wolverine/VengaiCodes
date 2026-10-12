@@ -97,8 +97,7 @@ def test_generated_laravel_app_runs_and_migrates_a_real_database(tmp_path):
 # Named like the classes the app is made of (a model App\Models\Controller
 # beside the base controller; models called ApiError and RequestFields beside
 # the App\Support classes), with fields named like Eloquent's own methods and
-# settings, which a model must never mistake for its columns. "Migration" is
-# refused: its table would be Laravel's own `migrations`.
+# settings, which a model must never mistake for its columns.
 LARAVEL_AWKWARD_TABLES = [
     {
         "name": "Controller",
@@ -113,7 +112,6 @@ LARAVEL_AWKWARD_TABLES = [
         "key_fields": ["fill", "row", "parse", "shown", "controller_id"],
         "foreign_keys": [{"field": "controller_id", "references_table": "Controller"}],
     },
-    {"name": "Migration", "key_fields": ["up", "down", "within_transaction"]},
 ]
 
 

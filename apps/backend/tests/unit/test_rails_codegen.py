@@ -373,7 +373,9 @@ def test_rails_survives_tables_and_fields_named_like_its_own_code():
     tables = e2e.awkward_tables("rails")
     names = [t["name"] for t in tables]
     # Data is a class of Ruby's own; `class` is a method every object has.
-    assert "Data" not in names and len(names) == len(e2e.AWKWARD_TABLES) - 1
+    # Nor can a table be stored as schema_migrations, Active Record's own.
+    assert "Schema Migration" not in names and "Migration" in names
+    assert "Data" not in names and len(names) == len(e2e.AWKWARD_TABLES) - 2
     table = next(t for t in tables if t["name"] == "Table")
     assert "class" not in table["key_fields"] and "event" in table["key_fields"]
     data = dc.build_deterministic_codegen_data(

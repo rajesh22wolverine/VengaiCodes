@@ -104,10 +104,9 @@ def controller_class(class_name: str) -> str:
 
 
 # Class names PHP keeps for itself beyond its keywords and type names,
-# which the schema check already refuses.
+# which the schema check already refuses (as it refuses a table stored as
+# `migrations`, where `php artisan migrate` records what has run).
 _RESERVED_CLASSES = frozenset({"self", "parent"})
-# Where `php artisan migrate` records what has run (Laravel's default).
-MIGRATIONS_TABLE = "migrations"
 
 
 def name_problems(schema: db_schema.ResolvedSchema) -> list[str]:
@@ -117,12 +116,7 @@ def name_problems(schema: db_schema.ResolvedSchema) -> list[str]:
     owners: dict[str, db_schema.ResolvedTable] = {}
     for t in schema.tables:
         folded = t.class_name.lower()
-        if t.sql_name == MIGRATIONS_TABLE:
-            problems.append(
-                f'The table "{t.name}" would be stored as {t.sql_name}, the table Laravel '
-                "keeps its migration history in — rename the table in Architecture."
-            )
-        elif folded in _RESERVED_CLASSES:
+        if folded in _RESERVED_CLASSES:
             problems.append(
                 f'The table "{t.name}" would produce a class named {t.class_name}, '
                 "a name PHP keeps for itself — rename the table in Architecture."

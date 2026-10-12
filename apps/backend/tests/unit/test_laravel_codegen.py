@@ -251,8 +251,8 @@ def test_laravel_model_fields_cover_every_kind_of_column():
         ),
         (
             [{"name": "Migration", "key_fields": ["title"]}],
-            'The table "Migration" would be stored as migrations, the table Laravel '
-            "keeps its migration history in",
+            'Table name "Migration" can\'t be used — it would be stored as "migrations", '
+            "the table Laravel keeps its migration history in.",
         ),
     ],
     ids=["self", "parent", "case", "framework-type", "migrations-table"],
@@ -346,7 +346,7 @@ def test_laravel_survives_tables_and_fields_named_like_its_own_code():
     tables = e2e.awkward_tables("laravel", LARAVEL_AWKWARD_TABLES)
     names = [t["name"] for t in tables]
     # Every one but Migration, whose table would be Laravel's own `migrations`.
-    assert "Migration" not in names, names
+    assert "Migration" not in names and "Schema Migration" in names, names
     assert len(names) == len(e2e.AWKWARD_TABLES) + len(LARAVEL_AWKWARD_TABLES) - 1
     data = dc.build_deterministic_codegen_data(
         FakeProject(tables=tables), REACT_LARAVEL_STACK

@@ -528,6 +528,17 @@ def _reserved_reason(slug: str, backend: str | None, field: bool = False) -> str
     return None
 
 
+def _stored_name_reason(sql_name: str, backend: str | None) -> str | None:
+    """Why no table can be stored under this name: a table the framework or
+    its migration tool creates itself (knowledge registry), or a name SQLite
+    won't create. Every SQL backend generated here runs on SQLite except
+    Spring Boot (H2) — refused there too, so a project keeps its tables
+    when it moves to another backend."""
+    if backend not in MONGOOSE_BACKENDS and sql_name.startswith("sqlite_"):
+        return "a name SQLite keeps for itself (it refuses every table name starting with sqlite_)"
+    return knowledge.stored_table_problem(sql_name, backend)
+
+
 def _analyze(
     tables_in: list[Any], backend: str | None
 ) -> tuple[list[SchemaIssue], ResolvedSchema]:
@@ -594,6 +605,15 @@ def _analyze(
             )
             continue
         sql_name = table_sql_name(name)
+        reason = _stored_name_reason(sql_name, backend)
+        if reason:
+            add(
+                (ti, name),
+                "table",
+                None,
+                f'Table name "{name}" can\'t be used — it would be stored as "{sql_name}", {reason}.',
+            )
+            continue
         if sql_name in by_sql:
             add(
                 (ti, name),

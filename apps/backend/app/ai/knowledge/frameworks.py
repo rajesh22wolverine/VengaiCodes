@@ -32,6 +32,10 @@ class FrameworkSpec:
     field_case: str = "key"
     reserved_fields: dict[str, str] = field(default_factory=dict)  # slug -> why
     reserved_types: frozenset[str] = frozenset()  # model class names that clash
+    # Tables (or collections) the framework or its migration tool creates in
+    # the app's own database: stored name -> what it is. A user table stored
+    # under one of these names would collide with it.
+    reserved_tables: dict[str, str] = field(default_factory=dict)
     member_named_like_type_forbidden: bool = False
     orm: str = ""
     migrations: str = ""
@@ -64,6 +68,9 @@ _add(
         field_case="snake",
         orm="SQLAlchemy 2 (async)",
         migrations="Alembic",
+        reserved_tables={
+            "alembic_version": "the table Alembic keeps its migration history in"
+        },
         layout={
             "models": "backend/models/<table>.py",
             "routes": "backend/routes/api.py",
@@ -98,6 +105,9 @@ _add(
         },
         orm="Flask-SQLAlchemy",
         migrations="Flask-Migrate (Alembic)",
+        reserved_tables={
+            "alembic_version": "the table Alembic keeps its migration history in"
+        },
         layout={
             "factory": "backend/app/__init__.py (create_app)",
             "models": "backend/app/models/<table>.py",
@@ -139,6 +149,10 @@ _add(
         },
         orm="Django ORM",
         migrations="Django migrations (makemigrations / migrate)",
+        reserved_tables={
+            "django_migrations": "the table Django keeps its migration history in",
+            "django_content_type": "a table of django.contrib.contenttypes",
+        },
         layout={
             "settings": "backend/config/settings.py",
             "models": "backend/api/models/<table>.py",
@@ -171,6 +185,10 @@ _add(
         field_case="key",
         orm="Mongoose (MongoDB)",
         migrations="migrate-mongo",
+        reserved_tables={
+            "changelog": "the collection migrate-mongo keeps its migration history in",
+            "changelog_lock": "the collection migrate-mongo locks migrations with",
+        },
         layout={
             "entry": "backend/server.js",
             "models": "backend/models/<table>.js",
@@ -212,6 +230,10 @@ _add(
         },
         orm="TypeORM / Prisma",
         migrations="TypeORM migrations",
+        reserved_tables={
+            "migrations": "the table TypeORM keeps its migration history in",
+            "typeorm_metadata": "the table TypeORM keeps its own metadata in",
+        },
         layout={
             "entry": "backend/src/main.ts",
             "module": "backend/src/app.module.ts",
@@ -249,6 +271,9 @@ _add(
         ),
         orm="Spring Data JPA (Hibernate)",
         migrations="Flyway",
+        reserved_tables={
+            "flyway_schema_history": "the table Flyway keeps its migration history in"
+        },
         layout={
             "entry": "backend/src/main/java/<pkg>/Application.java",
             "entities": "backend/src/main/java/<pkg>/model/<Entity>.java",
@@ -310,6 +335,10 @@ _add(
         ),
         orm="Active Record",
         migrations="Active Record migrations",
+        reserved_tables={
+            "schema_migrations": "the table Active Record keeps its migration history in",
+            "ar_internal_metadata": "the table Active Record keeps its own metadata in",
+        },
         layout={
             "models": "backend/app/models/<table>.rb",
             "controllers": "backend/app/controllers/<tables>_controller.rb",
@@ -362,6 +391,9 @@ _add(
         ),
         orm="Eloquent",
         migrations="Laravel migrations",
+        reserved_tables={
+            "migrations": "the table Laravel keeps its migration history in"
+        },
         layout={
             "models": "backend/app/Models/<Model>.php",
             "controllers": "backend/app/Http/Controllers/<Model>Controller.php",
@@ -398,6 +430,9 @@ _add(
         ),
         orm="Entity Framework Core",
         migrations="EF Core migrations",
+        reserved_tables={
+            "_migrations": "the table the generated app keeps its migration history in"
+        },
         layout={
             "entry": "backend/Program.cs",
             "models": "backend/Models/<Model>.cs",
@@ -431,6 +466,9 @@ for _key, _label in (("actix", "Actix Web"), ("axum", "Axum")):
             reserved_types=_words("String Vec Option Result Box Some None Ok Err Self"),
             orm="sqlx (SQLite)",
             migrations="sqlx migrations",
+            reserved_tables={
+                "_migrations": "the table the generated app keeps its migration history in"
+            },
             layout={
                 "entry": "backend/src/main.rs",
                 "models": "backend/src/models.rs",
@@ -461,6 +499,9 @@ _add(
         field_case="pascal",
         orm="GORM",
         migrations="golang-migrate / GORM AutoMigrate",
+        reserved_tables={
+            "_migrations": "the table the generated app keeps its migration history in"
+        },
         layout={
             "entry": "backend/main.go",
             "models": "backend/models/<table>.go",

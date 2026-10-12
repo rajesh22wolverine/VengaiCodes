@@ -603,7 +603,10 @@ def run_lifecycle(backend: Backend, tmp_path) -> None:
 
 
 # Names a generator has to survive: keywords of the languages generated here,
-# names its own code uses, and names of framework types.
+# names its own code uses, names of framework types, and tables stored under
+# the names migration tools keep their history in (`migrations` is Laravel's
+# and TypeORM's, `schema_migrations` Rails'; every other backend has to run
+# them as ordinary tables).
 AWKWARD_TABLES = [
     {
         "name": "Type",
@@ -645,6 +648,8 @@ AWKWARD_TABLES = [
     {"name": "Error", "key_fields": ["message", "status", "detail", "key"]},
     {"name": "Context", "key_fields": ["request", "response", "user", "url"]},
     {"name": "Item", "key_fields": ["s", "in", "c", "f", "p", "m", "t"]},
+    {"name": "Migration", "key_fields": ["step", "batch"]},
+    {"name": "Schema Migration", "key_fields": ["note"]},
 ]
 
 
