@@ -18,6 +18,9 @@ skipped = 0
 # copy of these follows whatever scaffold the AI used and isn't guaranteed
 # to match, so overwriting the template's version breaks the build (see
 # package.json, which gets the same treatment via merge_package_json.py).
+# The template's configs are React's, though: prepare_frontend_build.py,
+# run after the merge, changes what a Vue, Svelte, plain HTML/JS or Angular
+# frontend needs changed.
 PROTECTED_FILES = {
     "package.json",
     "postcss.config.js",

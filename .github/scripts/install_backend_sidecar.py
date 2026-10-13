@@ -63,6 +63,11 @@ SIDECAR_PORTS = {
     "gin": 8080,
 }
 
+# Where a generated frontend's API calls can be written: React's .js/.jsx,
+# Vue's and Svelte's single-file components, Angular's and any other
+# TypeScript.
+FRONTEND_SOURCE_SUFFIXES = (".js", ".jsx", ".mjs", ".ts", ".tsx", ".vue", ".svelte")
+
 # GitHub's windows-latest/ubuntu-latest runners are both x86_64 — this
 # script only ever runs on those two, from build-windows-installer.yml and
 # build-linux-installer.yml, so there is no need to detect anything finer.
@@ -157,7 +162,9 @@ def rewrite_frontend_api_base(sidecar_base_url: str) -> None:
         "`/graphql`": f"`{sidecar_base_url}/graphql`",
     }
     touched = 0
-    for path in glob.glob("src/**/*.js*", recursive=True):
+    for path in glob.glob("src/**/*", recursive=True):
+        if not path.endswith(FRONTEND_SOURCE_SUFFIXES) or not os.path.isfile(path):
+            continue
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         original = content
@@ -170,12 +177,17 @@ def rewrite_frontend_api_base(sidecar_base_url: str) -> None:
     print(f"Rewrote API base URL to {sidecar_base_url} in {touched} frontend file(s)")
 
 
-framework = os.environ.get("BACKEND_FRAMEWORK", "")
-port = SIDECAR_PORTS.get(framework)
-if port is None:
-    print(f"No sidecar bundling wired up for backend framework {framework!r} — skipping")
-    raise SystemExit(0)
+def main() -> None:
+    framework = os.environ.get("BACKEND_FRAMEWORK", "")
+    port = SIDECAR_PORTS.get(framework)
+    if port is None:
+        print(f"No sidecar bundling wired up for backend framework {framework!r} — skipping")
+        raise SystemExit(0)
 
-install_binary(framework)
-patch_tauri_conf()
-rewrite_frontend_api_base(f"http://127.0.0.1:{port}")
+    install_binary(framework)
+    patch_tauri_conf()
+    rewrite_frontend_api_base(f"http://127.0.0.1:{port}")
+
+
+if __name__ == "__main__":
+    main()

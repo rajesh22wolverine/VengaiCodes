@@ -115,11 +115,19 @@ def write_backend(data: dict, root, sources: tuple[str, ...]) -> str:
 class Server:
     """The generated app, serving on a free port: PORT in its environment,
     and "{port}" in its command replaced by it (`php artisan serve` takes
-    the port as an option)."""
+    the port as an option). `port` asks for one in particular (a frontend
+    built to call a fixed address)."""
 
-    def __init__(self, command: list[str], env: dict, log_path: str, cwd: str):
+    def __init__(
+        self,
+        command: list[str],
+        env: dict,
+        log_path: str,
+        cwd: str,
+        port: int | None = None,
+    ):
         with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
+            probe.bind(("127.0.0.1", port or 0))
             self.port = probe.getsockname()[1]
         self.log_path = log_path
         self.log = open(log_path, "ab")

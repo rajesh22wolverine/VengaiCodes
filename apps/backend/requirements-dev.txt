@@ -8,4 +8,8 @@
 -r requirements.txt
 
 pytest==8.0.0
+# Drives a real browser through the generated frontends
+# (tests/unit/generated_frontend_e2e.py). Its Chromium is a separate
+# download: python -m playwright install chromium
+playwright==1.61.0
 ruff==0.15.22

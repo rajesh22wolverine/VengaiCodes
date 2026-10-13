@@ -210,6 +210,15 @@ jobs:
           echo "so required build tooling (vite, tauri CLI, tailwind, etc.) survives injection."
           python3 ../.github/scripts/merge_package_json.py
 
+      # The template is a React + Vite project; this makes it build whatever
+      # frontend was injected (Vue, Svelte, plain HTML/JS, Angular) with that
+      # framework's own tools, and checks the build's entry point exists.
+      - name: Set the frontend up for its own framework
+        working-directory: build
+        shell: bash
+        run: |
+          python3 ../.github/scripts/prepare_frontend_build.py
+
       - name: Update Tauri bundle metadata from merged package.json
         working-directory: build
         shell: bash
@@ -232,26 +241,12 @@ jobs:
         run: |
           python3 ../.github/scripts/install_backend_sidecar.py
 
-      - name: Verify injected frontend
+      - name: Show what will be built
         working-directory: build
         shell: bash
         run: |
           echo "Files inside build:"
           find . -maxdepth 3 -type f
-
-          if [ -f src/main.jsx ]; then
-            echo "src/main.jsx found"
-          else
-            echo "src/main.jsx NOT FOUND"
-            exit 1
-          fi
-
-          if [ -f index.html ]; then
-            echo "index.html found"
-          else
-            echo "index.html NOT FOUND"
-            exit 1
-          fi
 
       - name: Install frontend dependencies
         working-directory: build
@@ -263,8 +258,6 @@ jobs:
         shell: bash
         run: |
           test -d node_modules || (echo "node_modules not found" && exit 1)
-          test -f node_modules/.bin/vite || (echo "Vite not installed" && exit 1)
-          npx vite --version
 
       - name: Build Linux installer
         working-directory: build
