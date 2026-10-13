@@ -169,7 +169,7 @@ VUE_LARAVEL_STACK = {
     "codegen_target": "vue__laravel__rest",
 }
 
-UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "angular"}
+UNSUPPORTED_STACK = {**FASTAPI_STACK, "frontend_framework": "flutter"}
 
 SUPPORTED_STACKS = [
     FASTAPI_STACK,
@@ -260,6 +260,24 @@ STACK_IDS += [
 SUPPORTED_STACKS += HTML_STACKS
 HTML_FASTAPI_STACK = HTML_STACKS[0]
 
+# … and an Angular one, the frontend written in TypeScript.
+ANGULAR_STACKS = [
+    {
+        **stack,
+        "frontend_framework": "angular",
+        "frontend_language": "typescript",
+        "codegen_target": stack["codegen_target"].replace("svelte__", "angular__"),
+    }
+    for stack in SVELTE_STACKS
+]
+STACK_IDS += [
+    stack_id.replace("svelte-", "angular-")
+    for stack_id in STACK_IDS
+    if stack_id.startswith("svelte-")
+]
+SUPPORTED_STACKS += ANGULAR_STACKS
+ANGULAR_FASTAPI_STACK = ANGULAR_STACKS[0]
+
 
 def _book_screen_path(stack_info: dict) -> str:
     """Where the Book table's screen is written: a component named after
@@ -268,6 +286,8 @@ def _book_screen_path(stack_info: dict) -> str:
     frontend = stack_info["frontend_framework"]
     if frontend == "html_css_js":
         return "frontend/src/screens/book.js"
+    if frontend == "angular":
+        return "frontend/src/app/screens/book.component.ts"
     suffix = {"react": "jsx", "vue": "vue", "svelte": "svelte"}[frontend]
     return f"frontend/src/screens/BookScreen.{suffix}"
 
@@ -350,14 +370,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "plain HTML/JS, React, Svelte or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, Laravel, NestJS, Rails or Spring Boot (REST)"
+        == "Angular, plain HTML/JS, React, Svelte or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, Laravel, NestJS, Rails or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 48
+    assert len(dc.supported_stacks()) == 60
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -597,14 +617,19 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
     screen = files[_book_screen_path(stack_info)]
     id_key = "_id" if stack_info["backend_framework"] == "express" else "id"
     assert f'const ID_KEY = "{id_key}";' in screen
-    assert "item[ID_KEY]" in screen
+    # An Angular template reads it through the component: item[idKey].
+    assert "item[ID_KEY]" in screen or "item[idKey]" in screen
     assert "item.id" not in screen and "item._id" not in screen
 
 
 @pytest.mark.parametrize("stack_info", SUPPORTED_STACKS, ids=STACK_IDS)
 def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
     data = dc.build_deterministic_codegen_data(FakeProject(), stack_info)
-    vite = _by_path(data)["frontend/vite.config.js"]
+    files = _by_path(data)
+    angular = stack_info["frontend_framework"] == "angular"
+    # `ng serve` has its own proxy file, named in angular.json.
+    vite = files["frontend/proxy.conf.js" if angular else "frontend/vite.config.js"]
+    variable = "API_PROXY" if angular else "VITE_API_PROXY"
     port = {
         "fastapi": 8000,
         "django": 8000,
@@ -617,7 +642,12 @@ def test_vite_dev_server_proxies_api_to_the_backend(stack_info):
         "laravel": 8000,
     }.get(stack_info["backend_framework"], 5000)
     assert "'/api': {" in vite
-    assert f'process.env.VITE_API_PROXY || "http://localhost:{port}"' in vite
+    assert f'process.env.{variable} || "http://localhost:{port}"' in vite
+    if angular:
+        serve = json.loads(files["frontend/angular.json"])["projects"][
+            "library-manager"
+        ]["architect"]["serve"]
+        assert serve["options"] == {"proxyConfig": "proxy.conf.js"}
 
 
 def test_foreign_keys_follow_the_backend_not_the_frontend():
@@ -692,6 +722,50 @@ def test_svelte_project_is_an_es_module_package_that_loads_its_styles():
         "import BookScreen from './screens/BookScreen.svelte';"
         in files["frontend/src/App.svelte"]
     )
+
+
+# ─── Angular specifics ───
+def test_angular_screen_is_the_component_app_component_imports():
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), ANGULAR_FASTAPI_STACK)
+    )
+    screen = files["frontend/src/app/screens/book.component.ts"]
+    root = files["frontend/src/app/app.component.ts"]
+    assert "selector: 'app-book'," in screen
+    assert "export class BookComponent implements OnInit {" in screen
+    assert "import { BookComponent } from './screens/book.component';" in root
+    assert '<app-book *ngIf="active === 0"></app-book>' in root
+    # Typed: the field list, and the helpers through crud.d.ts.
+    assert "const FIELDS: Field[] = [" in screen
+    assert "frontend/src/lib/crud.d.ts" in files
+    assert "frontend/src/lib/crud.js" in files
+    # Signals and OnPush; no FormsModule (it would switch off the
+    # browser's own "required" check on the form).
+    assert "changeDetection: ChangeDetectionStrategy.OnPush," in screen
+    assert "readonly items = signal<Row[]>([]);" in screen
+    assert "FormsModule" not in screen and "ngModel" not in screen
+    # One slot in the template, one in the class.
+    assert "<!-- VENGAI:CUSTOM:book_screen:start -->" in screen
+    assert "// VENGAI:CUSTOM:book_screen_component:start" in screen
+
+
+def test_only_angular_projects_get_the_typescript_helper_types():
+    for stack in (FASTAPI_STACK, SVELTE_FASTAPI_STACK, HTML_FASTAPI_STACK):
+        files = _by_path(dc.build_deterministic_codegen_data(FakeProject(), stack))
+        assert "frontend/src/lib/crud.d.ts" not in files
+
+
+def test_angular_refuses_a_table_named_like_its_root_component():
+    tables = [{"name": "App", "key_fields": ["title"]}]
+    with pytest.raises(dc.DeterministicCodegenError) as refused:
+        dc.build_deterministic_codegen_data(
+            FakeProject(tables=tables), ANGULAR_FASTAPI_STACK
+        )
+    assert 'The table "App" would produce a component named AppComponent' in str(
+        refused.value
+    )
+    # Every other frontend names its screens differently.
+    dc.build_deterministic_codegen_data(FakeProject(tables=tables), FASTAPI_STACK)
 
 
 # ─── Plain HTML/JS specifics ───
@@ -785,7 +859,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 48
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 60
 
 
 # ─── Flask specifics ───

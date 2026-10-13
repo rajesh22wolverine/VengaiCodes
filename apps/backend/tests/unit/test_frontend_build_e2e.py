@@ -2,8 +2,9 @@
 End-to-end test of the deterministic (no-AI) frontends — nothing is mocked.
 Each generated frontend is written to a folder, its packages are installed
 with the real npm and it is built with its real bundler (`npm run build`:
-Vite compiling every screen), which is what the installer workflows do with
-it before wrapping it in a desktop or mobile app.
+Vite, or the Angular CLI, compiling every screen), which is what the
+installer workflows do with it before wrapping it in a desktop or mobile
+app.
 
 A syntax check can't see what this does: a config file the bundler refuses
 to load, a component the framework's compiler rejects, a stylesheet nothing
@@ -18,6 +19,7 @@ tests are skipped — unless VENGAI_REQUIRE_TOOLCHAINS lists "node", which the
 backend CI job sets so a missing toolchain can't pass as a skip.
 """
 
+import os
 import pathlib
 import shutil
 
@@ -60,11 +62,14 @@ def test_generated_frontend_installs_and_builds(frontend):
     root = pathlib.Path(e2e.cache_dir(f"frontend-{frontend}"))
     folder = _write_frontend(data, root)
 
-    e2e.run([npm, "install", "--no-audit", "--no-fund"], folder, timeout=900)
-    e2e.run([npm, "run", "build"], folder, timeout=600)
+    # The Angular CLI asks about usage data the first time it runs.
+    env = {**os.environ, "NG_CLI_ANALYTICS": "false"}
+    e2e.run([npm, "install", "--no-audit", "--no-fund"], folder, 900, env)
+    e2e.run([npm, "run", "build"], folder, 900, env)
 
+    # Vite writes dist/index.html; the Angular CLI dist/<project>/browser/.
     dist = root / "frontend" / "dist"
-    assert (dist / "index.html").is_file()
+    assert list(dist.rglob("index.html")), "no index.html was built"
     scripts = "".join(p.read_text(encoding="utf-8") for p in dist.rglob("*.js"))
     styles = "".join(p.read_text(encoding="utf-8") for p in dist.rglob("*.css"))
     # Every table's screen is in the bundle …

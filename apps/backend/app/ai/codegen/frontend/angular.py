@@ -11,6 +11,7 @@
 #  matters more here than for any other web frontend.
 # ═══════════════════════════════════════════════════════════════
 
+import json
 import re
 
 from app.ai.codegen.manifests.package_json import build_package_json
@@ -226,7 +227,25 @@ _TSCONFIG_SPEC_JSON = """{
 """
 
 
-def _angular_json(project_name: str) -> str:
+# `ng serve` reads this when angular.json names it: the screens call
+# relative /api URLs, and in development those go to the backend's own
+# port (what the Vite frontends' vite.config.js does).
+def _proxy_conf_js(api_proxy_target: str) -> str:
+    return f"""// Development only: `ng serve` sends /api/* to the backend (set API_PROXY to override).
+module.exports = {{
+  '/api': {{
+    target: process.env.API_PROXY || {json.dumps(api_proxy_target)},
+    changeOrigin: true,
+    secure: false,
+  }},
+}};
+"""
+
+
+def _angular_json(project_name: str, proxy: bool = False) -> str:
+    serve_options = (
+        '\n          "options": { "proxyConfig": "proxy.conf.js" },' if proxy else ""
+    )
     return f"""{{
   "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
   "version": 1,
@@ -259,7 +278,7 @@ def _angular_json(project_name: str) -> str:
           "defaultConfiguration": "development"
         }},
         "serve": {{
-          "builder": "@angular-devkit/build-angular:dev-server",
+          "builder": "@angular-devkit/build-angular:dev-server",{serve_options}
           "configurations": {{
             "production": {{ "buildTarget": "{project_name}:build:production" }},
             "development": {{ "buildTarget": "{project_name}:build:development" }}
@@ -339,7 +358,7 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
         GeneratedFile(
             path="frontend/angular.json",
             language="json",
-            content=_angular_json(slug),
+            content=_angular_json(slug, proxy=bool(ctx.api_proxy_target)),
             description="Angular CLI project config",
         ),
         GeneratedFile(
@@ -377,7 +396,20 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     kebabs = [_screen_kebab_from_path(f) for f in ctx.screen_files] or ["home"]
+    proxy = (
+        [
+            GeneratedFile(
+                path="frontend/proxy.conf.js",
+                language="javascript",
+                content=_proxy_conf_js(ctx.api_proxy_target),
+                description="Dev server proxy to the backend",
+            )
+        ]
+        if ctx.api_proxy_target
+        else []
+    )
     return [
+        *proxy,
         GeneratedFile(
             path="frontend/src/index.html",
             language="html",
