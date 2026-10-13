@@ -10,6 +10,7 @@
 import re
 
 from app.ai.codegen.manifests.package_json import build_package_json
+from app.ai.codegen.manifests.vite_config import build_vite_config
 from app.ai.codegen.types import FileResult, FrontendAdapter, ScreenCtx, WiringCtx
 from app.ai.codegen_shared import (
     GRAPHQL_CALLING_CONVENTION,
@@ -226,6 +227,20 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
 
 def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
     slugs = [_screen_slug_from_path(f) for f in ctx.screen_files] or ["home"]
+    # Vite builds plain JS without a config; one is only needed to send the
+    # dev server's /api/* to the backend.
+    vite_config = (
+        [
+            GeneratedFile(
+                path="frontend/vite.config.js",
+                language="javascript",
+                content=build_vite_config(None, None, ctx.api_proxy_target),
+                description="Vite dev server config",
+            )
+        ]
+        if ctx.api_proxy_target
+        else []
+    )
     return [
         GeneratedFile(
             path="frontend/index.html",
@@ -233,6 +248,7 @@ def entry_point_files(ctx: WiringCtx) -> list[GeneratedFile]:
             content=_index_html(ctx.project_name),
             description="Vite HTML entry point",
         ),
+        *vite_config,
         GeneratedFile(
             path="frontend/src/main.js",
             language="javascript",

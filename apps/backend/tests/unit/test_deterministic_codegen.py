@@ -242,7 +242,35 @@ STACK_IDS += [
 ]
 SUPPORTED_STACKS += SVELTE_STACKS
 SVELTE_FASTAPI_STACK = SVELTE_STACKS[0]
-SCREEN_SUFFIX = {"react": "jsx", "vue": "vue", "svelte": "svelte"}
+
+# … and a twin with no framework at all.
+HTML_STACKS = [
+    {
+        **stack,
+        "frontend_framework": "html_css_js",
+        "codegen_target": stack["codegen_target"].replace("svelte__", "html_css_js__"),
+    }
+    for stack in SVELTE_STACKS
+]
+STACK_IDS += [
+    stack_id.replace("svelte-", "html-")
+    for stack_id in STACK_IDS
+    if stack_id.startswith("svelte-")
+]
+SUPPORTED_STACKS += HTML_STACKS
+HTML_FASTAPI_STACK = HTML_STACKS[0]
+
+
+def _book_screen_path(stack_info: dict) -> str:
+    """Where the Book table's screen is written: a component named after
+    the table's class — or, without a framework, a module named after
+    its slug (which main.js imports it by)."""
+    frontend = stack_info["frontend_framework"]
+    if frontend == "html_css_js":
+        return "frontend/src/screens/book.js"
+    suffix = {"react": "jsx", "vue": "vue", "svelte": "svelte"}[frontend]
+    return f"frontend/src/screens/BookScreen.{suffix}"
+
 
 # Where each backend writes a table's model.
 MODEL_PATHS = {
@@ -322,14 +350,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React, Svelte or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, Laravel, NestJS, Rails or Spring Boot (REST)"
+        == "plain HTML/JS, React, Svelte or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, Laravel, NestJS, Rails or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 36
+    assert len(dc.supported_stacks()) == 48
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -566,8 +594,7 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
                 is None
             ), f["path"]
     files = _by_path(data)
-    ext = SCREEN_SUFFIX[stack_info["frontend_framework"]]
-    screen = files[f"frontend/src/screens/BookScreen.{ext}"]
+    screen = files[_book_screen_path(stack_info)]
     id_key = "_id" if stack_info["backend_framework"] == "express" else "id"
     assert f'const ID_KEY = "{id_key}";' in screen
     assert "item[ID_KEY]" in screen
@@ -667,6 +694,48 @@ def test_svelte_project_is_an_es_module_package_that_loads_its_styles():
     )
 
 
+# ─── Plain HTML/JS specifics ───
+def test_plain_js_screen_is_a_module_main_js_imports_by_name():
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), HTML_FASTAPI_STACK)
+    )
+    screen = files["frontend/src/screens/book.js"]
+    assert "export function render(container) {" in screen
+    assert (
+        "import { render as render_book } from './screens/book.js';"
+        in files["frontend/src/main.js"]
+    )
+    # No framework — and a row's text is never read as markup.
+    assert "innerHTML" not in screen
+    for framework in ("'react'", "'vue'", "'svelte'"):
+        assert framework not in screen
+    assert '{ key: "price", label: "price", type: "float"' in screen
+    assert "// VENGAI:CUSTOM:book_screen:start" in screen
+
+
+def test_plain_js_project_has_a_vite_config_only_for_the_api_proxy():
+    """Vite builds plain JS without a config; the generated one exists to
+    send the dev server's /api/* to the backend, and names no plugin."""
+    from app.ai.codegen.frontend import html_css_js
+    from app.ai.codegen.types import WiringCtx
+
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), HTML_FASTAPI_STACK)
+    )
+    vite = files["frontend/vite.config.js"]
+    assert "plugins" not in vite and "'/api': {" in vite
+    without_proxy = WiringCtx(
+        project_name="x",
+        model_files=[],
+        routes_files=[],
+        screen_files=[],
+        endpoints=[],
+        tables=[],
+    )
+    paths = [f.path for f in html_css_js.entry_point_files(without_proxy)]
+    assert "frontend/vite.config.js" not in paths
+
+
 def test_express_backend_package_json_has_express_and_mongoose():
     data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
     pkg = json.loads(_by_path(data)["backend/package.json"])
@@ -716,7 +785,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 36
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 48
 
 
 # ─── Flask specifics ───
