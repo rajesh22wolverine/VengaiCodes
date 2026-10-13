@@ -126,9 +126,14 @@ class Server:
         cwd: str,
         port: int | None = None,
     ):
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", port or 0))
-            self.port = probe.getsockname()[1]
+        if port:
+            # No probe: Linux refuses a second bind to a port a server has
+            # only just released, which the server itself is allowed.
+            self.port = port
+        else:
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                self.port = probe.getsockname()[1]
         self.log_path = log_path
         self.log = open(log_path, "ab")
         self.proc = subprocess.Popen(
