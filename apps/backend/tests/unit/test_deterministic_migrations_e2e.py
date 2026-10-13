@@ -428,6 +428,56 @@ def test_generated_fastapi_app_migrates_and_evolves_a_real_database(tmp_path):
     assert "ROUND TRIP OK" in out
 
 
+# Every way a decimal column can be declared. SHOP's only decimal is required
+# with a default — the one shape that never showed the fault below.
+DECIMALS = [
+    {
+        "name": "quotes",
+        "key_fields": ["label", "list_price", "discount", "deposit"],
+        "field_specs": [
+            {"name": "label", "type": "string", "nullable": False},
+            {"name": "list_price", "type": "decimal", "nullable": False},
+            {"name": "discount", "type": "decimal"},
+            {
+                "name": "deposit",
+                "type": "decimal",
+                "nullable": False,
+                "default": "0.00",
+            },
+        ],
+    }
+]
+
+DECIMAL_CHECKS = """
+with TestClient(main.app) as c:
+    r = c.post("/api/quotes", json={"label": "a", "list_price": "100.00"})
+    check(r.status_code == 201, r.text)
+    row = r.json()
+    check(row["discount"] is None, "left out -> null")
+    check(float(row["deposit"]) == 0 and float(row["list_price"]) == 100, str(row))
+    r = c.post("/api/quotes", json={"label": "b", "list_price": "1", "discount": "12.50"})
+    check(r.status_code == 201 and float(r.json()["discount"]) == 12.5, r.text)
+    # The optional one is still held to two decimal places.
+    r = c.post("/api/quotes", json={"label": "c", "list_price": "1", "discount": "1.234"})
+    check(r.status_code == 422, r.text)
+    r = c.put(f"/api/quotes/{row['id']}", json={"discount": "5"})
+    check(r.status_code == 200 and float(r.json()["discount"]) == 5, r.text)
+    r = c.put(f"/api/quotes/{row['id']}", json={"discount": None})
+    check(r.status_code == 200 and r.json()["discount"] is None, "set back to null")
+print("DECIMALS OK")
+"""
+
+
+def test_generated_fastapi_app_starts_with_every_kind_of_decimal_field(tmp_path):
+    """An optional decimal stopped the whole app from starting: pydantic
+    refuses digit limits on a field typed Optional[Decimal], and it does
+    so when the request model's class is defined — at import."""
+    data = dc.build_deterministic_codegen_data(FakeProject(DECIMALS), FASTAPI_STACK)
+    assert data["validation_warnings"] == []
+    backend = _write_backend(data, tmp_path)
+    assert "DECIMALS OK" in _run_app_script(backend, DECIMAL_CHECKS)
+
+
 def test_models_and_migrations_describe_the_same_database(tmp_path):
     """`alembic check` compares the model classes with the migrated
     database and fails on any difference — the proof that models/<t>.py

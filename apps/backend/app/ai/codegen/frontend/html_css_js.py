@@ -157,7 +157,7 @@ function showScreen(index) {{
 
 document.body.innerHTML = `
   <div class="min-h-screen flex flex-col">
-    <nav id="nav" class="flex gap-2 p-3 border-b border-gray-200"></nav>
+    <nav id="nav" class="flex flex-wrap gap-2 p-3 border-b border-gray-200"></nav>
     <main id="screen" class="flex-1"></main>
   </div>
 `;

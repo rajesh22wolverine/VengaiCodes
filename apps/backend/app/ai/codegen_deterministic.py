@@ -432,6 +432,7 @@ def _sqlalchemy_model_file(
 _ROUTES_IMPORTED_NAMES = frozenset(
     {
         "APIRouter",
+        "Annotated",
         "Any",
         "AsyncSession",
         "BaseModel",
@@ -483,6 +484,7 @@ class _PyTypes:
 # The same, for the Flask routes file (app/routes/api.py).
 _FLASK_ROUTES_IMPORTED_NAMES = frozenset(
     {
+        "Annotated",
         "Any",
         "ApiError",
         "BaseModel",
@@ -530,6 +532,15 @@ def _pydantic_field_line(
         return f"    {col.column}: {ann}" + (
             f" = Field({', '.join(constraints)})" if constraints else ""
         )
+    if col.nullable and col.type == "decimal":
+        # The limits go on the Decimal itself. Pydantic (2.6, what the generated
+        # requirements pin) refuses them on a field whose type is
+        # Optional[Decimal] — "Unknown constraint max_digits" as the class is
+        # defined, so the app never starts.
+        return (
+            f"    {col.column}: Optional[Annotated[{ann}, "
+            f"Field({', '.join(constraints)})]] = None"
+        )
     if col.nullable and type_code != "Any":
         ann = f"Optional[{ann}]"
     # A NOT NULL field that may be left out keeps its plain type: omitting it
@@ -540,6 +551,17 @@ def _pydantic_field_line(
     return (
         f"    {col.column}: {ann} = Field({', '.join(['default=None', *constraints])})"
     )
+
+
+def _typing_import(tables: list[db_schema.ResolvedTable], uses_any: bool) -> str:
+    """A routes file's `from typing import …` line, for the request models
+    _pydantic_field_line writes."""
+    names = ["Optional"]
+    if uses_any:
+        names.insert(0, "Any")
+    if any(c.type == "decimal" and c.nullable for t in tables for c in t.columns):
+        names.insert(0, "Annotated")
+    return "from typing import " + ", ".join(names)
 
 
 def _constraint_entries(table: db_schema.ResolvedTable) -> list[tuple[str, int, str]]:
@@ -720,7 +742,7 @@ def generate_routes_file_fastapi(schema: db_schema.ResolvedSchema) -> GeneratedF
         "import re",
     ]
     lines += stdlib
-    lines.append(f"from typing import {'Any, ' if uses_any else ''}Optional")
+    lines.append(_typing_import(tables, uses_any))
     pydantic_names = (
         ["BaseModel"]
         + (["ConfigDict"] if uses_config else [])
@@ -1008,7 +1030,7 @@ def generate_routes_file_flask(schema: db_schema.ResolvedSchema) -> GeneratedFil
         "import re",
     ]
     lines += stdlib
-    lines.append(f"from typing import {'Any, ' if uses_any else ''}Optional")
+    lines.append(_typing_import(tables, uses_any))
     pydantic_names = (
         ["BaseModel"]
         + (["ConfigDict"] if uses_config else [])

@@ -82,7 +82,7 @@ def _build_app_vue(names: list[str]) -> str:
     template = (
         "\n\n<template>\n"
         '  <div class="min-h-screen flex flex-col">\n'
-        '    <nav v-if="screens.length > 1" class="flex gap-2 p-3 border-b border-gray-200">\n'
+        '    <nav v-if="screens.length > 1" class="flex flex-wrap gap-2 p-3 border-b border-gray-200">\n'
         "      <button\n"
         '        v-for="(s, i) in screens"\n'
         '        :key="s.name"\n'

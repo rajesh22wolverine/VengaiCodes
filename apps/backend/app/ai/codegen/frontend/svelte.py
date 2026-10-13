@@ -93,7 +93,7 @@ def _build_app_svelte(names: list[str]) -> str:
     template = (
         '\n\n<div class="min-h-screen flex flex-col">\n'
         "  {#if screens.length > 1}\n"
-        '    <nav class="flex gap-2 p-3 border-b border-gray-200">\n'
+        '    <nav class="flex flex-wrap gap-2 p-3 border-b border-gray-200">\n'
         "      {#each screens as s, i}\n"
         "        <button\n"
         "          on:click={() => (active = i)}\n"
