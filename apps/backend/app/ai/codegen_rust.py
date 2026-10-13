@@ -52,7 +52,7 @@ _ROW_TYPE = {
     "datetime": "fields::Timestamp",
     "json": "fields::JsonText",
 }
-# … and in the request struct (what serde reads and checks).
+# … and in the request struct (what fields::read reads a sent value as).
 _INPUT_TYPE = {
     "string": "String",
     "text": "String",
@@ -189,6 +189,7 @@ def model_file(
 
     row = ["    pub id: i64,"]
     inputs: list[str] = []
+    reads: list[str] = []
     checks: list[str] = []
     references: list[str] = []
     assigns: list[str] = []
@@ -201,22 +202,22 @@ def model_file(
         row.append(
             f"    pub {c}: {f'Option<{row_type}>' if col['nullable'] else row_type},"
         )
-        inputs += [
-            '    #[serde(default, deserialize_with = "fields::present")]',
-            f"    pub {c}: fields::Patch<{_INPUT_TYPE[kind]}>,",
-        ]
+        inputs.append(f"    pub {c}: fields::Patch<{_INPUT_TYPE[kind]}>,")
+        reads.append(
+            f"            {c}: fields::read(body, {rust_str(c)}, &mut errors),"
+        )
         if not col["nullable"] and col["default"] is None:
             needs_creating = True
             checks.append(
-                f"        fields::required(&self.{c}, {rust_str(c)}, creating, &mut errors);"
+                f"        fields::required(body, {rust_str(c)}, creating, &mut errors);"
             )
         elif not col["nullable"]:
             checks.append(
-                f"        fields::not_null(&self.{c}, {rust_str(c)}, &mut errors);"
+                f"        fields::not_null(body, {rust_str(c)}, &mut errors);"
             )
         if kind == "string" and base.get("length"):
             checks.append(
-                f"        fields::max_chars(&self.{c}, {base['length']}, {rust_str(c)}, &mut errors);"
+                f"        fields::max_chars(&input.{c}, {base['length']}, {rust_str(c)}, &mut errors);"
             )
         assigns += [
             f"        if let Some(value) = self.{c} {{",
@@ -251,11 +252,25 @@ def model_file(
         "    pub updated_at: fields::Timestamp,",
     ]
 
-    creating = "creating" if needs_creating else "_creating"
-    if checks:
-        validate_body = ["        let mut errors = Vec::new();", *checks]
+    if reads:
+        read_fn = [
+            f"    fn read(body: &fields::Body, {'creating' if needs_creating else '_creating'}: bool)"
+            " -> Result<Self, ApiError> {",
+            "        let mut errors = Vec::new();",
+            "        let input = Self {",
+            *reads,
+            "        };",
+            *checks,
+            "        fields::finish(errors)?;",
+            "        Ok(input)",
+            "    }",
+        ]
     else:
-        validate_body = ["        let errors = Vec::new();"]
+        read_fn = [
+            "    fn read(_body: &fields::Body, _creating: bool) -> Result<Self, ApiError> {",
+            "        Ok(Self {})",
+            "    }",
+        ]
     if assigns:
         assign_body = [
             "        let mut columns = Vec::new();",
@@ -307,17 +322,15 @@ def model_file(
         f"/// The body of POST and PUT /api/{doc(t.sql_name)}. A field left out is None (the",
         "/// database default applies, or PUT keeps the value); one sent as null is",
         "/// Some(None), which a required field refuses.",
-        "#[derive(Debug, Default, serde::Deserialize)]",
+        "#[derive(Debug)]",
         f"pub struct {name}Input {{",
         *inputs,
         "}",
         "",
         f"impl {name}Input {{",
-        "    /// Every problem with the request at once, as one 422.",
-        f"    fn validate(&self, {creating}: bool) -> Result<(), ApiError> {{",
-        *validate_body,
-        "        fields::finish(errors)",
-        "    }",
+        "    /// Reads a request's body — or answers every problem with it at once, as",
+        "    /// one 422: first the values of the wrong kind, then what's missing.",
+        *read_fn,
         *reference_fn,
         "",
         "    /// The columns this request sets, with their values in the same order.",
@@ -339,8 +352,8 @@ def model_file(
         "        .ok_or_else(|| ApiError::not_found(LABEL, id))",
         "}",
         "",
-        f"pub async fn create(pool: &SqlitePool, input: {name}Input) -> Result<{name}, ApiError> {{",
-        "    input.validate(true)?;",
+        f"pub async fn create(pool: &SqlitePool, body: &fields::Body) -> Result<{name}, ApiError> {{",
+        f"    let input = {name}Input::read(body, true)?;",
         *reference_call,
         "    let (columns, values) = input.assignments()?;",
         "    let sql = if columns.is_empty() {",
@@ -360,9 +373,9 @@ def model_file(
         "}",
         "",
         "/// Changes only the fields the request sends, like the other generated backends.",
-        f"pub async fn update(pool: &SqlitePool, id: i64, input: {name}Input) -> Result<{name}, ApiError> {{",
+        f"pub async fn update(pool: &SqlitePool, id: i64, body: &fields::Body) -> Result<{name}, ApiError> {{",
         "    find(pool, id).await?;",
-        "    input.validate(false)?;",
+        f"    let input = {name}Input::read(body, false)?;",
         *reference_call,
         "    let (columns, mut values) = input.assignments()?;",
         '    let mut sets: Vec<String> = columns.iter().map(|column| format!("{column} = ?")).collect();',
@@ -475,8 +488,8 @@ def _actix_routes(t: db_schema.ResolvedTable) -> str:
         "}",
         "",
         "async fn create(pool: web::Data<SqlitePool>, body: web::Bytes) -> Result<HttpResponse, ApiError> {",
-        "    let input = fields::parse_body(&body)?;",
-        "    Ok(HttpResponse::Created().json(model::create(&pool, input).await?))",
+        "    let body = fields::parse_body(&body)?;",
+        "    Ok(HttpResponse::Created().json(model::create(&pool, &body).await?))",
         "}",
         "",
         "async fn read(pool: web::Data<SqlitePool>, id: web::Path<String>) -> Result<HttpResponse, ApiError> {",
@@ -490,8 +503,8 @@ def _actix_routes(t: db_schema.ResolvedTable) -> str:
         "    body: web::Bytes,",
         ") -> Result<HttpResponse, ApiError> {",
         "    let id = fields::parse_id(&id)?;",
-        "    let input = fields::parse_body(&body)?;",
-        "    Ok(HttpResponse::Ok().json(model::update(&pool, id, input).await?))",
+        "    let body = fields::parse_body(&body)?;",
+        "    Ok(HttpResponse::Ok().json(model::update(&pool, id, &body).await?))",
         "}",
         "",
         "async fn remove(pool: web::Data<SqlitePool>, id: web::Path<String>) -> Result<HttpResponse, ApiError> {",
@@ -539,8 +552,8 @@ def _axum_routes(t: db_schema.ResolvedTable) -> str:
         "    State(pool): State<SqlitePool>,",
         "    body: Bytes,",
         f") -> Result<(StatusCode, Json<{row}>), ApiError> {{",
-        "    let input = fields::parse_body(&body)?;",
-        "    Ok((StatusCode::CREATED, Json(model::create(&pool, input).await?)))",
+        "    let body = fields::parse_body(&body)?;",
+        "    Ok((StatusCode::CREATED, Json(model::create(&pool, &body).await?)))",
         "}",
         "",
         "async fn read(",
@@ -557,8 +570,8 @@ def _axum_routes(t: db_schema.ResolvedTable) -> str:
         "    body: Bytes,",
         f") -> Result<Json<{row}>, ApiError> {{",
         "    let id = fields::parse_id(&id)?;",
-        "    let input = fields::parse_body(&body)?;",
-        "    Ok(Json(model::update(&pool, id, input).await?))",
+        "    let body = fields::parse_body(&body)?;",
+        "    Ok(Json(model::update(&pool, id, &body).await?))",
         "}",
         "",
         "async fn remove(State(pool): State<SqlitePool>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {",
@@ -773,8 +786,8 @@ _FIELDS_RS = """//! Field helpers shared by every table's model — written by V
 #![allow(dead_code)]
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, SecondsFormat};
-use serde::de::{DeserializeOwned, Error as _};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
+use serde_json::Value;
 
 use crate::error::ApiError;
 
@@ -785,28 +798,24 @@ pub const DECIMAL_PLACES: usize = __PLACES__;
 pub const NOW_SQL: &str = "__NOW_SQL__";
 const STORED: &str = "%Y-%m-%d %H:%M:%S%.6f";
 
+/// A request's JSON object: the value sent for each field.
+pub type Body = serde_json::Map<String, Value>;
+
 /// A request field: None = left out, Some(None) = sent as null.
 pub type Patch<T> = Option<Option<T>>;
 
-/// serde helper for Patch fields: a field that is present, even as null, is Some.
-pub fn present<'de, T, D>(deserializer: D) -> Result<Patch<T>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
+/// What the value sent for a field can be read as.
+pub trait FromJson: Sized {
+    /// The value — or what was expected instead, in the words the API answers.
+    fn from_json(value: &Value) -> Result<Self, String>;
 }
 
-/// A request body as `T`: 400 for anything but a JSON object, 422 naming the
-/// field for a value of the wrong kind.
-pub fn parse_body<T: DeserializeOwned>(body: &[u8]) -> Result<T, ApiError> {
-    let value: serde_json::Value = serde_json::from_slice(body)
-        .map_err(|_| ApiError::new(400, "Send the record as a JSON object."))?;
-    if !value.is_object() {
-        return Err(ApiError::new(400, "Send the record as a JSON object."));
+/// A request's body: 400 for anything but a JSON object.
+pub fn parse_body(body: &[u8]) -> Result<Body, ApiError> {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(fields)) => Ok(fields),
+        _ => Err(ApiError::new(400, "Send the record as a JSON object.")),
     }
-    serde_path_to_error::deserialize(value)
-        .map_err(|err| ApiError::new(422, format!("{}: {}", err.path(), err.inner())))
 }
 
 /// The {id} in a route's path.
@@ -814,18 +823,64 @@ pub fn parse_id(text: &str) -> Result<i64, ApiError> {
     text.parse().map_err(|_| ApiError::new(400, "id: not a valid id"))
 }
 
+/// One field of a request. A value of the wrong kind is added to `errors`,
+/// named by its field, so every problem is answered at once (see finish).
+pub fn read<T: FromJson>(body: &Body, field: &str, errors: &mut Vec<String>) -> Patch<T> {
+    match body.get(field)? {
+        Value::Null => Some(None),
+        value => match T::from_json(value) {
+            Ok(value) => Some(Some(value)),
+            Err(expected) => {
+                errors.push(format!("{field}: {expected}"));
+                None
+            }
+        },
+    }
+}
+
+impl FromJson for String {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        value.as_str().map(str::to_string).ok_or_else(|| "expected text".to_string())
+    }
+}
+
+impl FromJson for i64 {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        value.as_i64().ok_or_else(|| "expected a whole number".to_string())
+    }
+}
+
+impl FromJson for f64 {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        value.as_f64().ok_or_else(|| "expected a number".to_string())
+    }
+}
+
+impl FromJson for bool {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        value.as_bool().ok_or_else(|| "expected true or false".to_string())
+    }
+}
+
+/// A JSON field takes any JSON value.
+impl FromJson for Value {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        Ok(value.clone())
+    }
+}
+
 /// A NOT NULL field with no default: needed on create, never null.
-pub fn required<T>(value: &Patch<T>, field: &str, creating: bool, errors: &mut Vec<String>) {
-    match value {
+pub fn required(body: &Body, field: &str, creating: bool, errors: &mut Vec<String>) {
+    match body.get(field) {
         None if creating => errors.push(format!("{field}: is required")),
-        Some(None) => errors.push(format!("{field}: may not be null")),
+        Some(Value::Null) => errors.push(format!("{field}: may not be null")),
         _ => {}
     }
 }
 
 /// A NOT NULL field with a default: may be left out, never null.
-pub fn not_null<T>(value: &Patch<T>, field: &str, errors: &mut Vec<String>) {
-    if let Some(None) = value {
+pub fn not_null(body: &Body, field: &str, errors: &mut Vec<String>) {
+    if let Some(Value::Null) = body.get(field) {
         errors.push(format!("{field}: may not be null"));
     }
 }
@@ -852,14 +907,15 @@ pub fn finish(errors: Vec<String>) -> Result<(), ApiError> {
 #[derive(Debug, Clone, Copy)]
 pub struct DecimalValue(pub f64);
 
-impl<'de> Deserialize<'de> for DecimalValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = match serde_json::Value::deserialize(deserializer)? {
-            serde_json::Value::Number(n) => n.as_f64().map(|f| f.to_string()).unwrap_or_default(),
-            serde_json::Value::String(s) => s.trim().to_string(),
+impl FromJson for DecimalValue {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        let text = match value {
+            // A number may be written 1.25e1; its digits are what get checked.
+            Value::Number(n) => n.as_f64().map(|f| f.to_string()).unwrap_or_default(),
+            Value::String(s) => s.trim().to_string(),
             _ => String::new(),
         };
-        decimal(&text).map(DecimalValue).map_err(D::Error::custom)
+        decimal(&text).map(DecimalValue)
     }
 }
 
@@ -883,12 +939,13 @@ fn decimal(text: &str) -> Result<f64, String> {
 #[derive(Debug, Clone)]
 pub struct DateValue(pub String);
 
-impl<'de> Deserialize<'de> for DateValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d")
+impl FromJson for DateValue {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        value
+            .as_str()
+            .and_then(|text| NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d").ok())
             .map(|day| DateValue(day.format("%Y-%m-%d").to_string()))
-            .map_err(|_| D::Error::custom("expected a date like 2024-01-31"))
+            .ok_or_else(|| "expected a date like 2024-01-31".to_string())
     }
 }
 
@@ -897,17 +954,17 @@ impl<'de> Deserialize<'de> for DateValue {
 #[derive(Debug, Clone)]
 pub struct DateTimeValue(pub String);
 
-impl<'de> Deserialize<'de> for DateTimeValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        let text = text.trim();
+impl FromJson for DateTimeValue {
+    fn from_json(value: &Value) -> Result<Self, String> {
+        // Anything but text reads as "", which is no date and time either.
+        let text = value.as_str().unwrap_or_default().trim();
         let naive = text.replace('T', " ");
-        let utc = DateTime::parse_from_rfc3339(text)
+        DateTime::parse_from_rfc3339(text)
             .map(|when| when.naive_utc())
             .or_else(|_| NaiveDateTime::parse_from_str(&naive, "%Y-%m-%d %H:%M:%S%.f"))
             .or_else(|_| NaiveDateTime::parse_from_str(&naive, "%Y-%m-%d %H:%M"))
-            .map_err(|_| D::Error::custom("expected a date and time like 2024-01-31T09:30:00Z"))?;
-        Ok(DateTimeValue(utc.format(STORED).to_string()))
+            .map(|utc| DateTimeValue(utc.format(STORED).to_string()))
+            .map_err(|_| "expected a date and time like 2024-01-31T09:30:00Z".to_string())
     }
 }
 

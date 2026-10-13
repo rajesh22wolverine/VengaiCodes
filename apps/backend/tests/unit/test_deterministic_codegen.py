@@ -977,23 +977,29 @@ def test_rust_layout_and_wiring(stack_info):
     assert "pub is_available: Option<bool>," in model
     assert "pub published_at: Option<fields::Timestamp>," in model
     assert "pub title: fields::Patch<String>," in model
-    assert 'fields::max_chars(&self.title, 255, "title", &mut errors);' in model
+    # Read field by field, so every problem is answered at once.
+    assert 'title: fields::read(body, "title", &mut errors),' in model
+    assert 'fields::max_chars(&input.title, 255, "title", &mut errors);' in model
     assert "VENGAI:CUSTOM:book_model:start" in model
     routes = files["backend/src/routes/book.rs"]
     main = files["backend/src/main.rs"]
     cargo = files["backend/Cargo.toml"]
     assert "migrate::run(&pool)" in main and '== Some("revert")' in main
-    assert 'sqlx = { version = "0.8"' in cargo and "serde_path_to_error" in cargo
+    assert 'sqlx = { version = "0.8"' in cargo and 'serde_json = "1"' in cargo
     if framework == "actix":
         assert 'web::resource("/api/books/{id}")' in routes
         assert "impl ResponseError for ApiError" in files["backend/src/error.rs"]
-        assert "Cors::permissive()" in main and 'actix-web = "4"' in cargo
+        # A plain "*": permissive() would echo the origin and allow credentials.
+        assert ".send_wildcard()" in main and "Cors::permissive()" not in main
+        assert 'actix-web = "4"' in cargo
     else:
         assert (
             '.route("/api/books/{id}", get(read).put(update).delete(remove))' in routes
         )
         assert "impl IntoResponse for ApiError" in files["backend/src/error.rs"]
-        assert "CorsLayer::permissive()" in main and 'axum = "0.8"' in cargo
+        # A preflight is answered with what it asks about, not with "*".
+        assert "AllowMethods::mirror_request()" in main
+        assert "CorsLayer::permissive()" not in main and 'axum = "0.8"' in cargo
     assert "cargo run -- revert" in files["README_SETUP.md"]
 
 

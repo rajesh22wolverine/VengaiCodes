@@ -22,13 +22,16 @@
 #  go build; test_aspnet_e2e.py: dotnet build with warnings as errors;
 #  test_rails_e2e.py: bundle install, rails db:migrate, rails server;
 #  test_laravel_e2e.py: composer install, php -l, artisan migrate,
-#  artisan serve; then each server against a real SQLite file). Those tests
+#  artisan serve; test_rust_e2e.py: cargo build of the Actix Web and the
+#  Axum crate with warnings as errors; then each server against a real
+#  SQLite file). Those tests
 #  skip on a machine without the toolchain; VENGAI_REQUIRE_TOOLCHAINS
 #  below turns a missing one into a failure here, so "skipped" can never
 #  pass for "verified". Go is pinned to the version the installer
 #  workflows build the desktop sidecar with (and go.mod declares); .NET
 #  to the release the generated project file targets; PHP to the oldest
-#  release the generated composer.json accepts.
+#  release the generated composer.json accepts; Rust is stable, as in the
+#  installer workflows.
 # ═══════════════════════════════════════════════════════════════
 
 name: Backend CI
@@ -49,14 +52,17 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
-      VENGAI_REQUIRE_TOOLCHAINS: go,dotnet,ruby,php
+      VENGAI_REQUIRE_TOOLCHAINS: go,dotnet,ruby,php,rust
       # Where the generated Rails app's gems go: one cached install, shared
       # by every project the tests generate.
       BUNDLE_PATH: /home/runner/.bundle-generated
       # And the generated Laravel app's Composer downloads.
       COMPOSER_CACHE_DIR: /home/runner/.composer-generated
+      # And what the generated Rust crates compile into (their Cargo target
+      # directory is VENGAI_E2E_CACHE/cargo-target).
+      VENGAI_E2E_CACHE: /home/runner/.vengai-e2e
       DOTNET_NOLOGO: "1"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
 
@@ -131,6 +137,24 @@ jobs:
           path: /home/runner/.composer-generated
           key: generated-composer-${{ runner.os }}-${{ hashFiles('apps/backend/app/ai/codegen_laravel.py') }}
           restore-keys: generated-composer-${{ runner.os }}-
+
+      - name: Set up Rust (builds the generated Actix Web and Axum backends)
+        id: rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # The generated crates' dependencies, downloaded and compiled (sqlx
+      # with its bundled SQLite, tokio, actix-web, axum: minutes from
+      # nothing, seconds from here). Keyed on the compiler, whose every
+      # release recompiles all of it, and on the files that name the crates.
+      - name: Cache the generated Rust apps' crates and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            /home/runner/.vengai-e2e/cargo-target
+          key: generated-rust-${{ runner.os }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('apps/backend/app/ai/codegen_rust.py', 'apps/backend/app/ai/codegen/backend/rust_common.py', 'apps/backend/app/ai/codegen/backend/actix.py', 'apps/backend/app/ai/codegen/backend/axum.py') }}
+          restore-keys: generated-rust-${{ runner.os }}-${{ steps.rust.outputs.cachekey }}-
 
       - name: Lint (ruff)
         run: ruff check apps/backend/app

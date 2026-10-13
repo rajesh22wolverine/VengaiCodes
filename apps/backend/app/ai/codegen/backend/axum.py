@@ -316,10 +316,17 @@ async fn main() {{
 # rust_common.migrations_main_rs): axum 0.8 (sqlx 0.8's generation), the
 # tables from src/migrate.rs, every table's routes from routes::router, and
 # the screens' cross-origin calls (a packaged app's window isn't the API's
-# origin) allowed.
-_MIGRATIONS_SERVE = """    let app = routes::router()
+# origin) allowed: any origin as a plain "*", and a preflight answered with
+# the method and headers it asks about — CorsLayer::permissive() answers
+# those with "*" too, which never covers an Authorization header.
+_MIGRATIONS_SERVE = """    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_headers(AllowHeaders::mirror_request())
+        .max_age(Duration::from_secs(3600));
+    let app = routes::router()
         .route("/", get(root))
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(pool);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
@@ -369,7 +376,8 @@ def entry_point_files(ctx: WiringCtx, migrations: bool = False) -> list[Generate
                     [
                         "use axum::routing::get;",
                         "use axum::Json;",
-                        "use tower_http::cors::CorsLayer;",
+                        "use std::time::Duration;",
+                        "use tower_http::cors::{AllowHeaders, AllowMethods, Any, CorsLayer};",
                     ],
                     "#[tokio::main]",
                     "",

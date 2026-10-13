@@ -117,7 +117,7 @@ class Server:
     and "{port}" in its command replaced by it (`php artisan serve` takes
     the port as an option)."""
 
-    def __init__(self, command: list[str], database: str, log_path: str, cwd: str):
+    def __init__(self, command: list[str], env: dict, log_path: str, cwd: str):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             self.port = probe.getsockname()[1]
@@ -126,7 +126,7 @@ class Server:
         self.proc = subprocess.Popen(
             [arg.replace("{port}", str(self.port)) for arg in command],
             cwd=cwd,
-            env=app_env(database, PORT=str(self.port)),
+            env={**env, "PORT": str(self.port)},
             stdout=self.log,
             stderr=subprocess.STDOUT,
             # Its own process group, so a server that runs in a child process
@@ -164,10 +164,10 @@ class Server:
                 os.killpg(self.proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass  # the whole group is already gone
-        self.log.close()
         if error is not None:
             # What the server said, next to the assertion that failed.
             print(f"--- server log ---\n{self.output()}")
+        self.log.close()
 
     def call(self, method: str, path: str, body=None, raw: bytes | None = None):
         data = (
@@ -226,6 +226,18 @@ def app_env(database: str, **extra: str) -> dict:
     }
 
 
+def cache_dir(name: str) -> str:
+    """A build cache kept between runs (a Rust target directory, installed
+    packages): VENGAI_E2E_CACHE/<name>, by default under ~/.cache rather
+    than the temp folder, which Windows empties when the disk runs low."""
+    root = os.environ.get("VENGAI_E2E_CACHE") or os.path.join(
+        os.path.expanduser("~"), ".cache", "vengaicode-e2e"
+    )
+    path = os.path.join(root, name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def query(database: str, sql: str) -> list[tuple]:
     db = sqlite3.connect(database)
     try:
@@ -267,9 +279,16 @@ class Backend:
     migrations: tuple[str, str] = ("backend/migrations/", ".sql")
     # Whether the server (and revert) run from the project's own folder.
     runs_in_project: bool = False
+    # Environment beyond DATABASE_PATH, for a database path (Rust reads a
+    # DATABASE_URL instead).
+    env: Callable[[str], dict] = lambda database: {}
 
     def cwd(self, folder: str, elsewhere: str) -> str:
         return folder if self.runs_in_project else elsewhere
+
+    def environment(self, database: str) -> dict:
+        """What the server, its migrations and revert run with."""
+        return app_env(database, **self.env(database))
 
     def migration_files(self, data: dict) -> dict[str, str]:
         prefix, suffix = self.migrations
@@ -512,13 +531,13 @@ def run_lifecycle(backend: Backend, tmp_path) -> None:
     database = str(tmp_path / "app.db")
     log_path = str(tmp_path / "server.log")
     stack_info = stack(backend.key)
-    env = app_env(database)
+    env = backend.environment(database)
 
     def serve(folder: str) -> Server:
         backend.prepare(folder, env)
         return Server(
             backend.command(folder),
-            database,
+            env,
             log_path,
             backend.cwd(folder, str(tmp_path)),
         )
@@ -734,11 +753,12 @@ def build_awkward_names(backend: Backend, tmp_path, extra: list[dict] = ()) -> s
     backend.build(folder)
     backend.first_build_checks(folder)
     database = str(tmp_path / "app.db")
-    backend.prepare(folder, app_env(database))
+    env = backend.environment(database)
+    backend.prepare(folder, env)
     schema = db_schema.resolve_schema(tables, backend=backend.key)
     with Server(
         backend.command(folder),
-        database,
+        env,
         str(tmp_path / "server.log"),
         backend.cwd(folder, str(tmp_path)),
     ) as app:

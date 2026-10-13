@@ -285,10 +285,18 @@ async fn main() -> std::io::Result<()> {{
 # Migrations mode (the deterministic generator only — see
 # rust_common.migrations_main_rs): the tables come from src/migrate.rs,
 # every table's routes from routes::configure, and the screens' cross-origin
-# calls (a packaged app's window isn't the API's origin) are allowed.
+# calls (a packaged app's window isn't the API's origin) are allowed — as a
+# plain "*" like every other generated backend: Cors::permissive() would
+# echo the caller's origin back and allow credentials with it.
 _MIGRATIONS_SERVE = """    HttpServer::new(move || {
+        let cors = Cors::default()
+            .allow_any_origin()
+            .allow_any_method()
+            .allow_any_header()
+            .send_wildcard()
+            .max_age(3600);
         App::new()
-            .wrap(Cors::permissive())
+            .wrap(cors)
             .app_data(web::Data::new(pool.clone()))
             .route("/", web::get().to(root))
             .configure(routes::configure)

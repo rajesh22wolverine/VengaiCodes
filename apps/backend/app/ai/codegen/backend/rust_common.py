@@ -332,7 +332,6 @@ def migrations_cargo_toml(project_name: str, web_dependencies: list[str]) -> str
             'chrono = { version = "0.4", default-features = false, features = ["std"] }',
             'serde = { version = "1", features = ["derive"] }',
             'serde_json = "1"',
-            'serde_path_to_error = "0.1"',
             'sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }',
         ]
     )
