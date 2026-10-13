@@ -15,11 +15,16 @@ def build_package_json(
     scripts: dict[str, str],
     dependencies: dict[str, str],
     dev_dependencies: dict[str, str] | None = None,
+    es_modules: bool = False,
 ) -> str:
+    """es_modules: the package's own .js files (vite.config.js, the
+    Tailwind and PostCSS configs) are ES modules, not CommonJS — which
+    a config importing an ESM-only plugin has to be."""
     pkg: dict = {
         "name": name,
         "version": "0.1.0",
         "private": True,
+        **({"type": "module"} if es_modules else {}),
         "scripts": scripts,
         "dependencies": dependencies,
     }

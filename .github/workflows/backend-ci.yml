@@ -24,7 +24,9 @@
 #  test_laravel_e2e.py: composer install, php -l, artisan migrate,
 #  artisan serve; test_rust_e2e.py: cargo build of the Actix Web and the
 #  Axum crate with warnings as errors; then each server against a real
-#  SQLite file). Those tests
+#  SQLite file) — and the generated frontends (test_frontend_build_e2e.py:
+#  npm install and the Vite build of the React, Vue and Svelte projects,
+#  on the Node release the installer workflows use). Those tests
 #  skip on a machine without the toolchain; VENGAI_REQUIRE_TOOLCHAINS
 #  below turns a missing one into a failure here, so "skipped" can never
 #  pass for "verified". Go is pinned to the version the installer
@@ -54,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      VENGAI_REQUIRE_TOOLCHAINS: go,dotnet,ruby,php,rust
+      VENGAI_REQUIRE_TOOLCHAINS: go,dotnet,ruby,php,rust,node
       # Where the generated Rails app's gems go: one cached install, shared
       # by every project the tests generate.
       BUNDLE_PATH: /home/runner/.bundle-generated
@@ -155,6 +157,20 @@ jobs:
             /home/runner/.vengai-e2e/cargo-target
           key: generated-rust-${{ runner.os }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('apps/backend/app/ai/codegen_rust.py', 'apps/backend/app/ai/codegen/backend/rust_common.py', 'apps/backend/app/ai/codegen/backend/actix.py', 'apps/backend/app/ai/codegen/backend/axum.py') }}
           restore-keys: generated-rust-${{ runner.os }}-${{ steps.rust.outputs.cachekey }}-
+
+      - name: Set up Node (builds the generated React, Vue and Svelte frontends)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The generated frontends' packages, as npm downloaded them. Keyed on
+      # the files that name the packages.
+      - name: Cache the generated frontends' npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: generated-npm-${{ runner.os }}-${{ hashFiles('apps/backend/app/ai/codegen/frontend/*.py', 'apps/backend/app/ai/codegen/manifests/*.py') }}
+          restore-keys: generated-npm-${{ runner.os }}-
 
       - name: Lint (ruff)
         run: ruff check apps/backend/app

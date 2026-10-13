@@ -113,6 +113,7 @@ def _build_app_svelte(names: list[str]) -> str:
 
 
 _MAIN_JS = """import App from './App.svelte';
+import './index.css';
 
 const app = new App({
   target: document.getElementById('app'),
@@ -123,15 +124,17 @@ export default app;
 
 _INDEX_CSS = "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n"
 
+# package.json says "type": "module" (see manifest_files), so the configs
+# beside it are ES modules too.
 _TAILWIND_CONFIG = """/** @type {import('tailwindcss').Config} */
-module.exports = {
+export default {
   content: ["./index.html", "./src/**/*.{svelte,js}"],
   theme: { extend: {} },
   plugins: [],
 };
 """
 
-_POSTCSS_CONFIG = """module.exports = {
+_POSTCSS_CONFIG = """export default {
   plugins: {
     tailwindcss: {},
     autoprefixer: {},
@@ -170,6 +173,9 @@ def manifest_files(ctx: WiringCtx) -> list[GeneratedFile]:
             "postcss": "^8.4.35",
             "autoprefixer": "^10.4.17",
         },
+        # @sveltejs/vite-plugin-svelte is ESM-only: Vite can't load it
+        # from a vite.config.js that is CommonJS.
+        es_modules=True,
     )
     return [
         GeneratedFile(

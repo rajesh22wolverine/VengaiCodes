@@ -224,6 +224,26 @@ STACK_IDS = [
     "vue-laravel",
 ]
 
+# Svelte with every backend: a frontend only changes the screens, so each
+# React pairing has a Svelte twin.
+SVELTE_STACKS = [
+    {
+        **stack,
+        "frontend_framework": "svelte",
+        "codegen_target": stack["codegen_target"].replace("react__", "svelte__"),
+    }
+    for stack in SUPPORTED_STACKS
+    if stack["frontend_framework"] == "react"
+]
+STACK_IDS += [
+    stack_id.replace("react-", "svelte-")
+    for stack_id in STACK_IDS
+    if stack_id.startswith("react-")
+]
+SUPPORTED_STACKS += SVELTE_STACKS
+SVELTE_FASTAPI_STACK = SVELTE_STACKS[0]
+SCREEN_SUFFIX = {"react": "jsx", "vue": "vue", "svelte": "svelte"}
+
 # Where each backend writes a table's model.
 MODEL_PATHS = {
     "fastapi": "backend/models/book.py",
@@ -302,14 +322,14 @@ def test_unsupported_stack():
 def test_supported_stacks_label_and_list():
     assert (
         dc.supported_stacks_label()
-        == "React or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, Laravel, NestJS, Rails or Spring Boot (REST)"
+        == "React, Svelte or Vue with Actix, ASP.NET Core, Axum, Django, Express, FastAPI, Flask, Gin, Laravel, NestJS, Rails or Spring Boot (REST)"
     )
     assert {
         "frontend": "vue",
         "backend": "fastapi",
         "api_style": "rest",
     } in dc.supported_stacks()
-    assert len(dc.supported_stacks()) == 24
+    assert len(dc.supported_stacks()) == 36
 
 
 # ─── Requires at least one table (both pairings) ───
@@ -546,7 +566,7 @@ def test_every_pairing_parses_and_uses_its_backends_id_key(stack_info):
                 is None
             ), f["path"]
     files = _by_path(data)
-    ext = "jsx" if stack_info["frontend_framework"] == "react" else "vue"
+    ext = SCREEN_SUFFIX[stack_info["frontend_framework"]]
     screen = files[f"frontend/src/screens/BookScreen.{ext}"]
     id_key = "_id" if stack_info["backend_framework"] == "express" else "id"
     assert f'const ID_KEY = "{id_key}";' in screen
@@ -609,6 +629,44 @@ def test_vue_screen_uses_mongoose_id_convention():
     assert "VENGAI:CUSTOM:book_screen:start" in screen
 
 
+# ─── Svelte specifics ───
+def test_svelte_screen_is_a_svelte_4_component_with_a_custom_slot():
+    data = dc.build_deterministic_codegen_data(FakeProject(), SVELTE_FASTAPI_STACK)
+    screen = _by_path(data)["frontend/src/screens/BookScreen.svelte"]
+    assert screen.splitlines()[:2] == ["<script>", "import { onMount } from 'svelte';"]
+    assert "on:submit|preventDefault={handleCreate}" in screen
+    assert "{#each items as item (item[ID_KEY])}" in screen
+    assert '{ key: "price", label: "price", type: "float"' in screen
+    assert "<!-- VENGAI:CUSTOM:book_screen:start -->" in screen
+    # Svelte refuses bind:value on an input whose type isn't fixed, so the
+    # one input that takes its type from the field sets its value itself.
+    start = screen.index("{:else}")
+    typed_input = screen[start : screen.index("{/if}", start)]
+    assert "type={INPUT_TYPES[field.type] || 'text'}" in typed_input
+    assert "bind:" not in typed_input and "on:input=" in typed_input
+    # Svelte 4, like the adapter's own files: no runes.
+    assert "$state" not in screen and "$props" not in screen
+
+
+def test_svelte_project_is_an_es_module_package_that_loads_its_styles():
+    """What `vite build` needs and a syntax check can't see: the Svelte
+    Vite plugin is ESM-only, so vite.config.js (and the configs beside
+    it) must be ES modules, and the stylesheet is only in the build if
+    the entry file imports it. test_frontend_build_e2e.py runs the build."""
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(), SVELTE_FASTAPI_STACK)
+    )
+    assert json.loads(files["frontend/package.json"])["type"] == "module"
+    for config in ("frontend/tailwind.config.js", "frontend/postcss.config.js"):
+        assert "export default {" in files[config], config
+        assert "module.exports" not in files[config], config
+    assert "import './index.css';" in files["frontend/src/main.js"]
+    assert (
+        "import BookScreen from './screens/BookScreen.svelte';"
+        in files["frontend/src/App.svelte"]
+    )
+
+
 def test_express_backend_package_json_has_express_and_mongoose():
     data = dc.build_deterministic_codegen_data(FakeProject(), EXPRESS_STACK)
     pkg = json.loads(_by_path(data)["backend/package.json"])
@@ -658,7 +716,7 @@ def test_stacks_endpoint_lists_every_pairing_and_needs_sign_in():
     finally:
         app.dependency_overrides.clear()
     assert body["label"] == dc.supported_stacks_label()
-    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 24
+    assert len(body["stacks"]) == len(dc.SUPPORTED_STACKS) == 36
 
 
 # ─── Flask specifics ───
