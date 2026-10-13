@@ -118,7 +118,7 @@ def _build_app_component_ts(kebabs: list[str]) -> str:
         f"  imports: [CommonModule, {import_names}],\n"
         "  template: `\n"
         '    <div class="min-h-screen flex flex-col">\n'
-        '      <nav *ngIf="screens.length > 1" class="flex gap-2 p-3 border-b border-gray-200">\n'
+        '      <nav *ngIf="screens.length > 1" class="flex flex-wrap gap-2 p-3 border-b border-gray-200">\n'
         "        <button\n"
         '          *ngFor="let s of screens; let i = index"\n'
         '          (click)="active = i"\n'

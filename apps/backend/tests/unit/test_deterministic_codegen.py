@@ -686,6 +686,25 @@ def test_vue_screen_uses_mongoose_id_convention():
     assert "VENGAI:CUSTOM:book_screen:start" in screen
 
 
+# ─── Every frontend's shell ───
+@pytest.mark.parametrize(
+    "stack_info, shell",
+    [
+        (FASTAPI_STACK, "frontend/src/App.jsx"),
+        (VUE_FASTAPI_STACK, "frontend/src/App.vue"),
+        (SVELTE_FASTAPI_STACK, "frontend/src/App.svelte"),
+        (ANGULAR_FASTAPI_STACK, "frontend/src/app/app.component.ts"),
+        (HTML_FASTAPI_STACK, "frontend/src/main.js"),
+    ],
+    ids=["react", "vue", "svelte", "angular", "html"],
+)
+def test_the_navigation_wraps_when_there_are_many_screens(stack_info, shell):
+    """One button per table: a dozen tables ran off the side of a laptop
+    window, with the last screens out of reach."""
+    files = _by_path(dc.build_deterministic_codegen_data(FakeProject(), stack_info))
+    assert "flex flex-wrap gap-2 p-3 border-b" in files[shell]
+
+
 # ─── Svelte specifics ───
 def test_svelte_screen_is_a_svelte_4_component_with_a_custom_slot():
     data = dc.build_deterministic_codegen_data(FakeProject(), SVELTE_FASTAPI_STACK)
@@ -943,6 +962,58 @@ def test_flask_routes_and_app_factory():
     for pin in ("flask==", "flask-sqlalchemy==", "pydantic==", "alembic=="):
         assert pin in requirements, pin
     assert "python run.py" in files["README_SETUP.md"]
+
+
+@pytest.mark.parametrize(
+    "stack_info, routes_path",
+    [
+        (FASTAPI_STACK, "backend/routes/api.py"),
+        (VUE_FLASK_STACK, "backend/app/routes/api.py"),
+    ],
+    ids=["fastapi", "flask"],
+)
+def test_an_optional_decimal_field_defines_and_keeps_its_limits(
+    stack_info, routes_path
+):
+    """Pydantic refuses digit limits on a field typed Optional[Decimal] — as
+    the request model's class is defined, so the generated app wouldn't
+    start. The limits go on the Decimal instead. Both Python routes files
+    write their request models the same way; this defines them for real."""
+    from decimal import Decimal
+
+    tables = [
+        {
+            "name": "quotes",
+            "key_fields": ["label", "discount"],
+            "field_specs": [{"name": "discount", "type": "decimal"}],
+        }
+    ]
+    files = _by_path(
+        dc.build_deterministic_codegen_data(FakeProject(tables=tables), stack_info)
+    )
+    routes = files[routes_path]
+    assert "from typing import Annotated, Optional" in routes
+    assert (
+        "    discount: Optional[Annotated[Decimal, Field(max_digits=12, decimal_places=2)]] = None"
+        in routes
+    )
+
+    start = routes.index("class QuotesCreate(BaseModel):")
+    end = routes.index("\n\n\n", routes.index("class QuotesUpdate(BaseModel):"))
+    namespace: dict = {}
+    exec(
+        "from decimal import Decimal\n"
+        "from typing import Annotated, Optional\n"
+        "from pydantic import BaseModel, Field\n" + routes[start:end],
+        namespace,
+    )
+    for name in ("QuotesCreate", "QuotesUpdate"):
+        model = namespace[name]
+        assert model(discount="12.50").discount == Decimal("12.50")
+        assert model().discount is None
+        assert model(discount=None).discount is None
+        with pytest.raises(ValueError):
+            model(discount="1.234")
 
 
 @pytest.mark.parametrize("field", ["query", "query_class", "model_dump", "sa"])

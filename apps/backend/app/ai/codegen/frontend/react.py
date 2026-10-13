@@ -96,7 +96,7 @@ export default function App() {{
   return (
     <div className="min-h-screen flex flex-col">
       {{SCREENS.length > 1 && (
-        <nav className="flex gap-2 p-3 border-b border-gray-200">
+        <nav className="flex flex-wrap gap-2 p-3 border-b border-gray-200">
           {{SCREENS.map((s, i) => (
             <button
               key={{s.name}}
